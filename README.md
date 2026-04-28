@@ -14,7 +14,8 @@ A lightweight personal planner. Goals, tasks, projects, notes — backed by a Go
 
 - **Connect Google** — sign in with the BYO OAuth client; Minerva auto-creates (or finds) a `Minerva` spreadsheet in your Drive and seeds it with the meta tabs (`_config`, `_prefs`, `_log`) and four section tabs (`goals`, `tasks`, `projects`, `notes`), each with a header row + a type-hint row that defines how the app renders it.
 - **Local store + sync** — every connect pulls the spreadsheet into a private IndexedDB mirror in your browser. Settings shows per-tab row counts and last-sync time; **Sync now** does a manual push-then-pull.
-- **Edit anything** — every section list view has click-to-edit cells, an **+ Add row** button, and a per-row delete. Inline editors per type: text, number, date, datetime, checkbox, dropdown (`select`), URL, color, plus a textarea for long-form. Edits write to the local store first (instantly visible), get marked dirty, then a coalescing background queue pushes them back to your spreadsheet. Pulling preserves any pending local edits so you never lose work-in-progress.
+- **Edit anything** — every section list view has click-to-edit cells, an **+ Add row** button, and a per-row delete. Inline editors per type: text, number, date, datetime, checkbox, dropdown (`select`), URL, color, multi-select chips (`multiselect`), star rating (`rating`), progress slider (`progress`), and ref/ref-multi pickers populated from the referenced tab — plus a textarea for long-form. Edits write to the local store first (instantly visible), get marked dirty, then a coalescing background queue pushes them back to your spreadsheet. Pulling preserves any pending local edits so you never lose work-in-progress.
+- **Telegram bot** — paste a bot token (BotFather, ~3 min) and a chat ID into Settings. Minerva pings your chat once per task per day for anything due/overdue, while a tab is open. Manual *Test connection* / *Detect chat ID* / *Send test message* buttons are right next to the inputs. Setup walkthrough: [`docs/setup-telegram.md`](docs/setup-telegram.md).
 - **Quick share** — build a note, question, or poll; get a stable URL and a crisp QR code. No login required. The data lives in the URL itself, so nothing is uploaded.
 - **Public viewer** — anyone with the link sees the same card you do, scannable from a phone via QR.
 - **Theme picker** — five themes: `auto · light · dark · sepia · vt323-yellow` (homage to [thefarshad.com](https://thefarshad.com)).
@@ -106,6 +107,7 @@ assets/bootstrap.js    find-or-create the user's Minerva spreadsheet
 assets/sync.js         pull/push between local store and Sheets, dirty-queue
 assets/render.js       schema parser + type-aware cell renderers
 assets/editors.js      type-aware inline editors (Phase 3 CRUD)
+assets/telegram.js     Telegram Bot API wrapper (sendMessage, getUpdates, ...)
 assets/app.js          hash router + views
 CNAME                  custom domain for GitHub Pages
 .nojekyll              tells Pages not to run Jekyll

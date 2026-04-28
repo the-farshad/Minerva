@@ -645,6 +645,126 @@
     paintStatus();
     paintLocal();
 
+    var tgPanel = el('div', { class: 'tg-panel' });
+    paintTg();
+
+    function paintTg() {
+      var tg = readTg();
+      var hasToken = !!tg.token;
+      var hasChat = !!tg.chatId;
+      var enabled = hasToken && hasChat && !tg.disabled;
+
+      var tgForm = el('form', { class: 'form', onsubmit: function (e) {
+        e.preventDefault();
+        var f = new FormData(tgForm);
+        writeTg({
+          token:  String(f.get('tgToken')  || '').trim(),
+          chatId: String(f.get('tgChatId') || '').trim()
+        });
+        scheduleReminders();
+        paintTg();
+        flash(tgPanel, 'Saved.');
+      } },
+        field('Bot token',
+          el('input', { name: 'tgToken', type: 'text',
+            value: tg.token || '',
+            placeholder: '123456789:ABCdefGHIjklMNOpqrsTUVwxyz',
+            autocomplete: 'off', spellcheck: 'false' }),
+          'From @BotFather → /newbot. Stays in your browser only.'
+        ),
+        field('Chat ID',
+          el('input', { name: 'tgChatId', type: 'text',
+            value: tg.chatId || '',
+            placeholder: 'detect after you message your bot',
+            autocomplete: 'off', spellcheck: 'false' }),
+          'The Telegram chat reminders will go to. Use Detect to fill this in automatically.'
+        ),
+        el('div', { class: 'form-actions' },
+          el('button', { class: 'btn', type: 'submit' }, 'Save'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            disabled: !hasToken,
+            onclick: async function () {
+              var t = readTg().token;
+              if (!t) return;
+              try {
+                var me = await M.telegram.getMe(t);
+                flash(tgPanel, 'Connected as @' + (me.username || me.first_name) + '.');
+              } catch (err) {
+                flash(tgPanel, 'getMe failed: ' + err.message, 'error');
+              }
+            } }, 'Test connection'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            disabled: !hasToken,
+            onclick: async function () {
+              var t = readTg().token;
+              if (!t) return;
+              try {
+                var id = await M.telegram.detectChatId(t);
+                if (!id) {
+                  flash(tgPanel, 'No recent messages — send /start to your bot in Telegram first.', 'error');
+                  return;
+                }
+                writeTg({ chatId: id });
+                paintTg();
+                flash(tgPanel, 'Chat ID set: ' + id);
+              } catch (err) {
+                flash(tgPanel, 'getUpdates failed: ' + err.message, 'error');
+              }
+            } }, 'Detect chat ID'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            disabled: !(hasToken && hasChat),
+            onclick: async function () {
+              var t = readTg();
+              try {
+                await M.telegram.sendMessage(t.token, t.chatId, '*Minerva connected* ✅');
+                flash(tgPanel, 'Test message sent.');
+              } catch (err) {
+                flash(tgPanel, 'sendMessage failed: ' + err.message, 'error');
+              }
+            } }, 'Send test message'),
+          (hasToken || hasChat)
+            ? el('button', { class: 'btn btn-ghost', type: 'button',
+                onclick: async function () {
+                  if (!confirm('Clear local Telegram config? Your bot in Telegram is not affected.')) return;
+                  localStorage.removeItem(TG_KEY);
+                  if (tgTimer) { clearInterval(tgTimer); tgTimer = null; }
+                  paintTg();
+                } }, 'Clear Telegram config')
+            : null
+        ),
+        (hasToken && hasChat)
+          ? el('div', { class: 'form-actions' },
+              el('label', { class: 'small' },
+                el('input', { type: 'checkbox', checked: !tg.disabled,
+                  onchange: function (e) {
+                    writeTg({ disabled: !e.target.checked });
+                    if (e.target.checked) scheduleReminders();
+                    else if (tgTimer) { clearInterval(tgTimer); tgTimer = null; }
+                    paintTg();
+                  }
+                }),
+                ' Daily reminders for due tasks (while a tab is open)'
+              )
+            )
+          : null
+      );
+
+      var note;
+      if (!hasToken) note = 'Paste a bot token to start. ';
+      else if (!hasChat) note = 'Token saved. Send /start to your bot in Telegram, then click Detect chat ID. ';
+      else if (tg.disabled) note = 'Reminders disabled. ';
+      else note = 'Connected. Reminders fire while a Minerva tab is open. ';
+
+      tgPanel.replaceChildren(
+        el('h3', null, 'Telegram bot'),
+        el('p', { class: 'small muted' }, note,
+          el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-telegram.md',
+                    target: '_blank', rel: 'noopener' }, 'Setup walkthrough →')
+        ),
+        tgForm
+      );
+    }
+
     return el('section', { class: 'view' },
       el('h2', null, 'Settings'),
       el('p', { class: 'lead' },
@@ -653,7 +773,8 @@
       ),
       form,
       status,
-      localPanel
+      localPanel,
+      tgPanel
     );
   }
 
@@ -864,6 +985,91 @@
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
 
+  // ---- Telegram reminders -------------------------------------------
+
+  var TG_KEY = 'minerva.telegram.v1';
+
+  function readTg() {
+    try { return JSON.parse(localStorage.getItem(TG_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  function writeTg(patch) {
+    var cur = readTg();
+    var next = Object.assign({}, cur, patch);
+    localStorage.setItem(TG_KEY, JSON.stringify(next));
+    return next;
+  }
+
+  function todayStr() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function alreadyPinged(rowId, date) {
+    var sent = readTg().sent || {};
+    return sent[date] && sent[date][rowId];
+  }
+  function markPinged(rowId, date) {
+    var cur = readTg();
+    var sent = cur.sent || {};
+    // prune any non-today date keys to keep storage small
+    Object.keys(sent).forEach(function (k) { if (k !== date) delete sent[k]; });
+    if (!sent[date]) sent[date] = {};
+    sent[date][rowId] = 1;
+    writeTg({ sent: sent });
+  }
+
+  async function tickReminders() {
+    var tg = readTg();
+    if (!tg.token || !tg.chatId || tg.disabled) return;
+
+    // Find the tasks tab — _config tells us which.
+    var tasksRow = (configCache || []).find(function (r) {
+      return r.slug === 'tasks' || r.tab === 'tasks';
+    });
+    var tasksTab = tasksRow ? tasksRow.tab : 'tasks';
+
+    var rows;
+    try { rows = await M.db.getAllRows(tasksTab); }
+    catch (e) { return; }
+
+    var date = todayStr();
+    var dueOrOverdue = (rows || []).filter(function (r) {
+      if (r._deleted) return false;
+      var status = String(r.status || '').toLowerCase();
+      if (status === 'done') return false;
+      if (!r.due) return false;
+      return String(r.due).slice(0, 10) <= date;
+    });
+
+    for (var i = 0; i < dueOrOverdue.length; i++) {
+      var r = dueOrOverdue[i];
+      if (alreadyPinged(r.id, date)) continue;
+      var line = '*' + (r.title || r.id) + '*';
+      var dueStr = String(r.due).slice(0, 10);
+      var prefix = dueStr < date ? '⏰ overdue (' + dueStr + ')' : '⏰ due today';
+      var msg = prefix + ': ' + line;
+      if (r.priority) msg += '\n_priority: ' + r.priority + '_';
+      try {
+        await M.telegram.sendMessage(tg.token, tg.chatId, msg);
+        markPinged(r.id, date);
+      } catch (e) {
+        console.warn('[Minerva tg]', e);
+        break;
+      }
+    }
+  }
+
+  // Schedule a periodic reminder check while the tab is open.
+  var tgTimer = null;
+  function scheduleReminders() {
+    if (tgTimer) { clearInterval(tgTimer); tgTimer = null; }
+    var tg = readTg();
+    if (!tg.token || !tg.chatId || tg.disabled) return;
+    tickReminders();
+    tgTimer = setInterval(tickReminders, 30 * 60 * 1000); // every 30 min
+  }
+
   function navActive() {
     var h = location.hash || '#/';
     if (h === '#/' || h === '' || h === '#') return '#/';
@@ -889,6 +1095,7 @@
     bindPicker();
     await refreshConfig();
     await route();
+    scheduleReminders();
   }
 
   window.addEventListener('hashchange', route);
