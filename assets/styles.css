@@ -636,6 +636,91 @@ table.rows tr.row-dirty td:first-child {
   outline: none;
   min-width: 4ch;
 }
+
+/* multiselect / ref-multi chip toggles */
+.editor-multi {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  padding: 0.35rem;
+  border-radius: 6px;
+  width: 100%;
+}
+.chip-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.chip-btn:hover { color: var(--fg); border-color: var(--accent); }
+.chip-btn.on {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+.editor-multi .done-btn {
+  margin-left: auto;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+/* rating clickable stars */
+.editor-rating {
+  display: inline-flex;
+  gap: 0.1rem;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+}
+.star-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #cccccc;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0 0.05rem;
+  cursor: pointer;
+  transition: color .1s, transform .05s;
+}
+.star-btn.on { color: #f4ba2a; }
+.star-btn:hover { color: #f4ba2a; transform: scale(1.1); }
+.star-btn:active { transform: scale(0.95); }
+
+/* progress slider */
+.editor-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  width: 100%;
+}
+.editor-progress input[type=range] {
+  flex: 1;
+  accent-color: var(--accent);
+  margin: 0;
+  min-width: 5rem;
+}
+.progress-label {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 2.5rem;
+  text-align: right;
+}
 .editor.editor-text { min-width: 8ch; }
 .editor.editor-check { width: auto; transform: scale(1.2); }
 .editor.editor-color { padding: 0.1rem; height: 2rem; }
