@@ -908,6 +908,86 @@ table.kv th {
 }
 table.kv tbody tr:hover { background: var(--surface); }
 
+/* --- help overlay ------------------------------------------ */
+
+.help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: fade-in .15s ease-out;
+}
+.help-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  box-shadow: var(--shadow);
+  max-width: 380px;
+  width: 100%;
+}
+.help-panel h3 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+.help-panel table.kv { margin: 0; }
+.help-panel table.kv td:first-child { width: 5.5rem; white-space: nowrap; }
+@keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
+
+/* --- push indicator (bottom-right pill) -------------------- */
+
+.push-indicator {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 900;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.82rem;
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.push-indicator::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* --- mobile-friendly tweaks -------------------------------- */
+
+@media (max-width: 700px) {
+  header { padding-top: 1rem; }
+  .head-row { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+  .head-pickers { width: 100%; gap: 0.4rem; }
+  .seg { font-size: 0.78rem; }
+  .seg button { padding: 0.3rem 0.5rem; min-width: 1.8rem; }
+  nav#nav {
+    display: flex;
+    overflow-x: auto;
+    max-width: 100%;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  nav#nav .nav-link { white-space: nowrap; flex: 0 0 auto; }
+  main { padding: 1rem 1rem 5rem; }
+  .table-wrap { font-size: 0.86rem; }
+  .help-panel { max-width: 100%; }
+}
+
 /* --- accessibility ------------------------------------------ */
 
 @media (prefers-reduced-motion: reduce) {
