@@ -1804,9 +1804,42 @@
     pushIndicator.hidden = !pushInFlight;
   }
 
+  // ---- service worker registration + offline indicator ---------------
+
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    if (location.protocol === 'file:') return; // never registers from file://
+    navigator.serviceWorker.register('sw.js').catch(function (e) {
+      console.warn('[Minerva sw]', e);
+    });
+  }
+
+  var offlineIndicator = null;
+  function ensureOfflineIndicator() {
+    if (offlineIndicator) return;
+    offlineIndicator = document.createElement('div');
+    offlineIndicator.className = 'offline-indicator';
+    offlineIndicator.hidden = true;
+    offlineIndicator.textContent = 'Offline — local edits will sync when you reconnect';
+    document.body.appendChild(offlineIndicator);
+  }
+  function paintOnlineState() {
+    ensureOfflineIndicator();
+    offlineIndicator.hidden = navigator.onLine !== false;
+  }
+
   async function boot() {
     bindPicker();
     ensurePushIndicator();
+    ensureOfflineIndicator();
+    paintOnlineState();
+    window.addEventListener('online', function () {
+      paintOnlineState();
+      // a transition online → trigger any pending pushes
+      if (pushPending || (!pushInFlight)) schedulePush();
+    });
+    window.addEventListener('offline', paintOnlineState);
+    registerServiceWorker();
     await refreshConfig();
 
     // Restore last view if the user landed on a bare URL.
