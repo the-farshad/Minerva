@@ -210,8 +210,10 @@
     var results = [];
     for (var i = 0; i < allMeta.length; i++) {
       var t = allMeta[i].tab;
-      // Don't push meta tabs from the app — let users edit those directly in Sheets.
-      if (t.charAt(0) === '_') continue;
+      // _log is append-only audit; never push it from the app. _config and
+      // _prefs are user-facing meta and DO get pushed (in-app section adds
+      // and preference toggles need to round-trip back to the spreadsheet).
+      if (t === '_log') continue;
       try {
         var r = await pushTab(token, ssId, t);
         results.push(r);

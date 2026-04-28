@@ -1424,6 +1424,41 @@ table.kv tbody tr:hover { background: var(--surface); }
   text-overflow: ellipsis;
 }
 
+/* --- preset gallery ----------------------------------------- */
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.6rem;
+  margin: 0.7rem 0 0;
+}
+.preset-card {
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  align-items: flex-start;
+}
+.preset-card.preset-taken {
+  opacity: 0.55;
+  background: transparent;
+}
+.preset-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.preset-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 0.3rem; }
+.preset-body h4 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.preset-body p { margin: 0; }
+.preset-body .btn { align-self: flex-start; padding: 0.25rem 0.7rem; font-size: 0.82rem; }
+
 /* --- offline indicator (bottom-left pill) ------------------ */
 
 .offline-indicator {

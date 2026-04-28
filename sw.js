@@ -10,7 +10,7 @@
 
 'use strict';
 
-var CACHE_VERSION = 'minerva-v6';
+var CACHE_VERSION = 'minerva-v7';
 var SHELL = [
   './',
   './index.html',
@@ -28,6 +28,7 @@ var SHELL = [
   './assets/editors.js',
   './assets/telegram.js',
   './assets/ical.js',
+  './assets/presets.js',
   './assets/app.js',
   './docs/assets/minerva-logo.png',
   './manifest.webmanifest'

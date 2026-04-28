@@ -1321,9 +1321,101 @@
     var notifyPanel = el('div', { class: 'tg-panel' });
     var tgPanel = el('div', { class: 'tg-panel' });
     var icalPanel = el('div', { class: 'tg-panel' });
+    var presetsPanel = el('div', { class: 'tg-panel' });
     paintNotify();
     paintIcal();
+    paintPresets();
     paintTg();
+
+    function paintPresets() {
+      var c = readConfig();
+      var st = M.auth ? M.auth.getState() : { hasToken: false };
+      var connected = st.hasToken && c.spreadsheetId;
+
+      var children = [
+        el('h3', null, 'Add a section'),
+        el('p', { class: 'small muted' },
+          connected
+            ? 'One-click presets — pick one and Minerva creates the tab in your spreadsheet, seeds the schema, and adds it to your nav. You can rename columns or extend the schema directly in Sheets afterward.'
+            : 'Connect first. Each preset creates a new tab in your spreadsheet plus a row in `_config`.'
+        )
+      ];
+
+      if (connected) {
+        var existingSlugs = (configCache || []).map(function (r) { return r.slug; });
+        var grid = el('div', { class: 'preset-grid' });
+        (M.presets || []).forEach(function (p) {
+          var taken = existingSlugs.indexOf(p.slug) >= 0;
+          var card = el('div', { class: 'preset-card' + (taken ? ' preset-taken' : '') },
+            el('div', { class: 'preset-icon' }, p.icon || '○'),
+            el('div', { class: 'preset-body' },
+              el('h4', null, p.title),
+              el('p', { class: 'small muted' }, p.description),
+              taken
+                ? el('span', { class: 'small muted' }, '✓ already added')
+                : el('button', { class: 'btn btn-ghost', type: 'button',
+                    onclick: async function () {
+                      try {
+                        flash(presetsPanel, 'Adding ' + p.title + '…');
+                        await addPreset(p);
+                        await refreshConfig();
+                        renderNav(navActive());
+                        paintPresets();
+                        flash(presetsPanel, 'Added ' + p.title + '. Check the nav above.');
+                      } catch (err) {
+                        flash(presetsPanel, 'Failed: ' + (err && err.message || err), 'error');
+                      }
+                    }
+                  }, 'Add')
+            )
+          );
+          grid.appendChild(card);
+        });
+        children.push(grid);
+      }
+      presetsPanel.replaceChildren.apply(presetsPanel, children);
+    }
+
+    async function addPreset(p) {
+      var c = readConfig();
+      if (!c.clientId || !c.spreadsheetId) throw new Error('Connect first.');
+      var token = await M.auth.getToken(c.clientId);
+
+      // 1. Ensure the tab exists; create + seed if not.
+      var ss = await M.sheets.getSpreadsheet(token, c.spreadsheetId);
+      var existing = (ss.sheets || []).map(function (s) { return s.properties.title; });
+      if (existing.indexOf(p.slug) < 0) {
+        await M.sheets.batchUpdate(token, c.spreadsheetId, [{
+          addSheet: { properties: { title: p.slug } }
+        }]);
+        var values = [p.schema.headers.slice(), p.schema.types.slice()];
+        await M.sheets.updateValues(token, c.spreadsheetId, p.slug + '!A1', values);
+      }
+
+      // 2. Append the _config row locally; the dirty-queue push lifts it to Sheets.
+      var configMeta = await M.db.getMeta('_config');
+      if (!configMeta || !configMeta.headers) throw new Error('Sync first — _config schema not cached.');
+      var maxOrder = (configCache || []).reduce(function (m, r) {
+        var n = Number(r.order) || 0;
+        return n > m ? n : m;
+      }, 0);
+      var row = await addRow('_config', configMeta.headers);
+      row.slug = p.slug;
+      row.title = p.title;
+      row.icon = p.icon;
+      row.tab = p.slug;
+      row.order = maxOrder + 1;
+      row.enabled = 'TRUE';
+      row.defaultSort = p.defaultSort || '';
+      row.defaultFilter = p.defaultFilter || '';
+      row._dirty = 1;
+      await M.db.upsertRow('_config', row);
+      schedulePush();
+
+      // 3. Pull the new tab into the local store so the section is immediately viewable.
+      try { await M.sync.pullTab(token, c.spreadsheetId, p.slug); } catch (e) { /* non-fatal */ }
+      try { await M.sync.pullTab(token, c.spreadsheetId, '_config'); } catch (e) { /* non-fatal */ }
+    }
 
     function paintIcal() {
       var c = readConfig();
@@ -1554,6 +1646,7 @@
       form,
       status,
       localPanel,
+      presetsPanel,
       notifyPanel,
       icalPanel,
       tgPanel
