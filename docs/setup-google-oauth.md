@@ -48,7 +48,7 @@ Fill in the **App information**:
 |---|---|
 | App name | `Minerva` (or any) |
 | User support email | your email |
-| App logo | leave empty |
+| App logo | optional — `docs/assets/minerva-logo.png` in this repo (512×512 PNG) |
 | App domain | leave empty |
 | Authorized domains | leave empty |
 | Developer contact information | your email |
@@ -125,7 +125,7 @@ Copy it — that's the value you'll paste into Minerva. (You can find it again a
 
 A Google sign-in popup appears.
 
-> **You will see a yellow warning** — *"Google hasn't verified this app"*. This is expected: the app is in Testing mode, used only by people on your test-users list. Click **Advanced → Go to Minerva (unsafe)**. It's not actually unsafe — *it's your app, calling Google with your credentials*.
+> **You will see a yellow warning** — *"Google hasn't verified this app"*. This is expected: the app is in Testing mode, used only by people on your test-users list. Click **Advanced → Go to Minerva (unsafe)**. It's not actually unsafe — *it's your app, calling Google with your credentials*. You'll only see this once per scope grant; the silent token refreshes Minerva does after that don't re-show the screen.
 
 Grant the requested permissions. Minerva creates a `Minerva` spreadsheet in your Drive (if it doesn't already exist), seeds it, and pulls everything into the local store.
 
