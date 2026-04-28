@@ -67,11 +67,11 @@
 
     <h2>OAuth scopes Minerva requests, and what each does</h2>
     <ul>
-      <li><code>spreadsheets</code> — read and write your <em>Minerva</em> spreadsheet.</li>
-      <li><code>drive.file</code> — find your <em>Minerva</em> spreadsheet on reconnect. This scope sees <em>only</em> files this app created or that you explicitly opened with it — <em>not</em> your full Drive.</li>
+      <li><code>drive.file</code> — read and write <em>only</em> your <em>Minerva</em> spreadsheet (the file Minerva created). The Sheets API works under this scope for app-created files. Minerva is unable to see anything else in your Drive.</li>
       <li><code>userinfo.email</code> — display "Connected as &lt;your email&gt;" in the app.</li>
       <li><code>openid</code> — standard OpenID Connect identity claim.</li>
     </ul>
+    <p>All three scopes above are classified as non-sensitive by Google.</p>
     <p>You can revoke these at any time at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Apps with access</a>.</p>
 
     <h2>Children</h2>

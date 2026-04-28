@@ -59,16 +59,15 @@ Click **Save and Continue**.
 
 Click **Add or Remove Scopes**.
 
-In the modal, search and tick exactly these four:
+In the modal, search and tick exactly these three:
 
-- `.../auth/spreadsheets` — *See, edit, create, and delete all your Google Sheets spreadsheets*
 - `.../auth/drive.file` — *See, edit, create, and delete only the specific Google Drive files you use with this app*
 - `.../auth/userinfo.email` — *See your primary Google Account email address*
 - `openid` — *Associate you with your personal info on Google*
 
 Click **Update**, then **Save and Continue**.
 
-> The `drive.file` scope (not full-Drive) is intentional. Minerva only ever sees files it created or that you explicitly opened with it.
+> The `drive.file` scope (not full-Drive, not the broader `spreadsheets` scope) is intentional. Minerva only ever sees files *it itself created* or that you explicitly opened with it. Sheets API calls work on those files under this scope. As a side benefit, all three of these scopes are **non-sensitive**, so Google does *not* show the "Google hasn't verified this app" yellow warning during consent. (The `access_denied` test-users-list check still applies.)
 
 ### Test users
 
@@ -125,7 +124,7 @@ Copy it — that's the value you'll paste into Minerva. (You can find it again a
 
 A Google sign-in popup appears.
 
-> **You will see a yellow warning** — *"Google hasn't verified this app"*. This is expected: the app is in Testing mode, used only by people on your test-users list. Click **Advanced → Go to Minerva (unsafe)**. It's not actually unsafe — *it's your app, calling Google with your credentials*. You'll only see this once per scope grant; the silent token refreshes Minerva does after that don't re-show the screen.
+> Because Minerva uses only non-sensitive scopes, you should *not* see the "Google hasn't verified this app" yellow warning. If you ever do — typically because you're testing a fork that added the broader `spreadsheets` scope back — click **Advanced → Go to Minerva (unsafe)**. It's not actually unsafe; it's your app calling Google with your credentials.
 
 Grant the requested permissions. Minerva creates a `Minerva` spreadsheet in your Drive (if it doesn't already exist), seeds it, and pulls everything into the local store.
 
@@ -162,8 +161,7 @@ Option 1 is the only one consistent with "your data lives in your account, nothi
 
 | Scope | What it lets Minerva do |
 |---|---|
-| `spreadsheets` | Read and write the `Minerva` spreadsheet. |
-| `drive.file` | Find the `Minerva` spreadsheet on reconnect (only files this app created/opened — *not* full-Drive read). |
+| `drive.file` | Read and write *only* the `Minerva` spreadsheet (it's the file Minerva created). The Sheets API works under this scope for app-created files. Critically: this scope does *not* give Minerva visibility into the rest of your Drive. |
 | `userinfo.email` | Show "Connected as `<your-email>`" in the app. |
 | `openid` | Standard OpenID identity claim. |
 
