@@ -55,6 +55,30 @@
     return s;
   }
 
+  function renderMarkdown(value) {
+    if (value == null || value === '') return document.createTextNode('');
+    var src = String(value);
+    if (typeof marked === 'undefined' || !marked.parse) {
+      return span(null, truncate(src, 140));
+    }
+    var div = document.createElement('div');
+    div.className = 'md-cell';
+    try {
+      // marked sanitizes raw HTML out by default in v12 (sanitize was removed
+      // but raw HTML rendering is still off without explicit options). Good
+      // enough — this is the user's own data anyway.
+      div.innerHTML = marked.parse(src, { breaks: true, gfm: true });
+      // open external links in a new tab.
+      div.querySelectorAll('a[href^="http"]').forEach(function (a) {
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+      });
+    } catch (e) {
+      div.textContent = truncate(src, 140);
+    }
+    return div;
+  }
+
   function slugify(v) {
     return String(v).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   }
@@ -228,8 +252,18 @@
       case 'color':       return renderColor(value);
       case 'image':       return renderImage(value);
       case 'number':      return span('num', value == null ? '' : String(value));
-      case 'longtext':
       case 'markdown':
+        return renderMarkdown(value);
+      case 'longtext': {
+        // longtext is treated as plain prose with paragraph breaks preserved.
+        var s = String(value == null ? '' : value);
+        if (!s) return document.createTextNode('');
+        var pre = document.createElement('div');
+        pre.className = 'md-cell';
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.textContent = s;
+        return pre;
+      }
       case 'json':
       case 'code':
       case 'text':
