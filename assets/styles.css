@@ -522,6 +522,196 @@ code {
   border-radius: 3px;
 }
 
+/* --- section cards (home) ----------------------------------- */
+
+.section-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0 1.25rem;
+}
+.section-card {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-decoration: none;
+  color: var(--fg);
+  transition: border-color .15s, background .15s, transform .05s;
+}
+.section-card:hover { border-color: var(--accent); background: var(--surface-2); }
+.section-card:active { transform: translateY(1px); }
+.section-card-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.section-card-body { min-width: 0; }
+.section-card-body h3 {
+  margin: 0 0 0.15rem;
+  font-size: 0.98rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+/* --- section list view -------------------------------------- */
+
+.view-section h2 { font-size: 1.4rem; }
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin: 0.75rem 0 1rem;
+}
+table.rows {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+table.rows thead tr {
+  background: var(--surface-2);
+  position: sticky;
+  top: 0;
+}
+table.rows th,
+table.rows td {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+table.rows th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+table.rows tbody tr:last-child td { border-bottom: 0; }
+table.rows tbody tr:hover { background: var(--surface-2); }
+table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display: block; }
+
+/* --- typed cell renderers ----------------------------------- */
+
+/* progress bar */
+.pbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 100px;
+}
+.pbar-fill {
+  display: inline-block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  flex: 0 0 auto;
+  min-width: 1px;
+  transition: width .15s;
+}
+.pbar { position: relative; }
+.pbar::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 3rem;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  z-index: 0;
+}
+.pbar-fill { position: relative; z-index: 1; }
+.pbar-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+/* stars */
+.stars {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  color: #f4ba2a;
+}
+
+/* chip / chips */
+.chip {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.78rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.chip-todo,
+.chip-low,
+.chip-planning,
+.chip-paused { color: var(--muted); }
+.chip-doing,
+.chip-active,
+.chip-med { color: #c87800; border-color: #e0a040; }
+.chip-done { color: var(--ok); border-color: var(--ok); background: transparent; }
+.chip-high { color: var(--error); border-color: var(--error); background: transparent; }
+.chip-ref { text-decoration: none; font-weight: 500; }
+.chip-ref:hover { color: var(--accent); border-color: var(--accent); }
+
+/* check */
+.check { font-size: 1rem; line-height: 1; }
+.check-on { color: var(--ok); }
+.check-off { color: var(--muted); }
+
+/* link cell */
+.cell-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.cell-link:hover { text-decoration: underline; }
+
+/* ref cell */
+.cell-ref {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+.cell-ref:hover { text-decoration: underline; }
+
+/* color swatch */
+.swatch {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  vertical-align: -0.15em;
+}
+.color-cell { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85em; }
+
+/* image cell */
+.cell-img {
+  max-width: 80px;
+  max-height: 60px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+}
+
 /* --- settings panels --------------------------------------- */
 
 .auth-status,

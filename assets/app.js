@@ -89,12 +89,47 @@
 
   function setBusy(b) { content.setAttribute('aria-busy', b ? 'true' : 'false'); }
 
+  // _config cache — refreshed after every sync. Drives nav + home cards.
+  var configCache = null;
+
+  async function refreshConfig() {
+    try {
+      var rows = await M.db.getAllRows('_config');
+      configCache = rows || [];
+    } catch (e) {
+      configCache = [];
+    }
+  }
+
+  function isEnabled(r) {
+    return r.enabled === 'TRUE' || r.enabled === true || r.enabled === 'true';
+  }
+
+  function sectionRows() {
+    if (!configCache || !configCache.length) return [];
+    return configCache.slice()
+      .filter(isEnabled)
+      .filter(function (r) { return r.slug && r.tab; })
+      .sort(function (a, b) {
+        return (Number(a.order) || 0) - (Number(b.order) || 0);
+      });
+  }
+
   function renderNav(active) {
-    var items = [
-      { hash: '#/',         label: 'Home' },
-      { hash: '#/share',    label: 'Quick share' },
-      { hash: '#/settings', label: 'Settings' }
-    ];
+    var items = [{ hash: '#/', label: 'Home' }];
+    var cfg = readConfig();
+    var hasSheet = !!cfg.spreadsheetId;
+    if (hasSheet) {
+      sectionRows().forEach(function (r) {
+        items.push({
+          hash: '#/s/' + encodeURIComponent(r.slug),
+          label: ((r.icon ? r.icon + ' ' : '') + (r.title || r.slug))
+        });
+      });
+    }
+    items.push({ hash: '#/share', label: 'Quick share' });
+    items.push({ hash: '#/settings', label: 'Settings' });
+
     navEl.innerHTML = '';
     items.forEach(function (it) {
       navEl.appendChild(el('a', {
@@ -138,19 +173,55 @@
 
   // ---- views ----
 
-  function viewHome() {
+  async function viewHome() {
     var cfg = readConfig();
     var st = M.auth ? M.auth.getState() : { hasToken: false, email: null };
     var connected = st.hasToken && cfg.spreadsheetId;
 
-    var primaryCta = connected
-      ? el('a', { class: 'btn', href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Open your spreadsheet ↗')
-      : (cfg.clientId
-          ? el('a', { class: 'btn', href: '#/settings' }, 'Connect your Google account →')
-          : el('a', { class: 'btn', href: '#/settings' }, 'Set up in Settings →'));
+    if (connected) {
+      var sections = sectionRows();
+      var cards = await Promise.all(sections.map(async function (r) {
+        var count = 0, lastSync = null;
+        try {
+          count = await M.db.countTab(r.tab);
+          var meta = await M.db.getMeta(r.tab);
+          if (meta) lastSync = meta.lastPulledAt || null;
+        } catch (e) { /* ignore */ }
+        return el('a', { class: 'section-card', href: '#/s/' + encodeURIComponent(r.slug) },
+          el('div', { class: 'section-card-icon' }, r.icon || '○'),
+          el('div', { class: 'section-card-body' },
+            el('h3', null, r.title || r.slug),
+            el('p', { class: 'small muted' },
+              count + ' row' + (count === 1 ? '' : 's'),
+              lastSync ? ' · synced ' + M.render.relativeTime(lastSync) : ''
+            )
+          )
+        );
+      }));
+      return el('section', { class: 'view' },
+        el('h2', null, 'Welcome back' + (st.email ? ', ' + st.email : '')),
+        el('p', { class: 'lead' },
+          'Your sections live in ',
+          el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'your spreadsheet'),
+          '. Adding a new section is a row in ', el('code', null, '_config'), ' plus a tab — no code change.'
+        ),
+        sections.length
+          ? el('div', { class: 'section-cards' }, cards)
+          : el('p', { class: 'muted' }, 'No sections yet. Open Settings and click Sync now.'),
+        el('div', { class: 'cta-row' },
+          el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Quick share & QR'),
+          el('a', { class: 'btn btn-ghost', href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Open spreadsheet ↗'),
+          el('a', { class: 'btn btn-ghost', href: '#/settings' }, 'Settings')
+        )
+      );
+    }
 
+    // Not connected — landing.
+    var primaryCta = cfg.clientId
+      ? el('a', { class: 'btn', href: '#/settings' }, 'Connect your Google account →')
+      : el('a', { class: 'btn', href: '#/settings' }, 'Set up in Settings →');
     return el('section', { class: 'view' },
-      el('h2', null, connected ? 'Welcome back' + (st.email ? ', ' + st.email : '') : 'Welcome to Minerva'),
+      el('h2', null, 'Welcome to Minerva'),
       el('p', { class: 'lead' },
         'Minerva is a lightweight personal planner — goals, tasks, projects, notes — stored in a Google Sheet that ',
         el('em', null, 'you'),
@@ -164,12 +235,76 @@
       el('div', { class: 'cta-row' },
         primaryCta,
         el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Quick share & QR')
-      ),
-      el('p', { class: 'small muted' }, connected
-        ? 'Phase 1 connected. Dynamic sections (Phase 2) read straight from your `_config` tab — coming next.'
-        : 'Phase 1 — auth + spreadsheet bootstrap. Dynamic sections from the spreadsheet land next.'
       )
     );
+  }
+
+  async function viewSection(slug) {
+    var cfg = readConfig();
+    var sec = (configCache || []).find(function (r) { return r.slug === slug; });
+    if (!sec) {
+      return el('section', { class: 'view' },
+        el('h2', null, 'Section not found'),
+        el('p', null, 'No section with slug ', el('code', null, slug), ' in `_config`.'),
+        el('p', null, el('a', { href: '#/' }, 'Go home →'), ' · ',
+                       el('a', { href: '#/settings' }, 'Sync now'))
+      );
+    }
+    var meta = await M.db.getMeta(sec.tab);
+    var rows = await M.db.getAllRows(sec.tab);
+    var sorted = M.render.applySort(rows, sec.defaultSort);
+    var filtered = M.render.applyFilter(sorted, sec.defaultFilter);
+
+    var sheetLink = cfg.spreadsheetId
+      ? el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Edit in Sheets ↗')
+      : null;
+
+    var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
+    if (rows.length !== filtered.length) meta1 += ' (of ' + rows.length + ')';
+    var metaParts = [meta1];
+    if (sec.defaultSort) metaParts.push('sorted by ' + sec.defaultSort);
+    if (sec.defaultFilter) metaParts.push('filtered: ' + sec.defaultFilter);
+
+    return el('section', { class: 'view view-section' },
+      el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)),
+      el('p', { class: 'lead' },
+        metaParts.join(' · '),
+        sheetLink ? ' · ' : null, sheetLink
+      ),
+      renderSectionTable(meta, filtered),
+      el('p', { class: 'small muted' },
+        'Read-only in Phase 2. Inline editing arrives next, with writes flushing back to your spreadsheet.'
+      )
+    );
+  }
+
+  function renderSectionTable(meta, rows) {
+    if (!meta || !meta.headers || !meta.headers.length) {
+      return el('p', { class: 'muted' }, 'No schema cached yet — open Settings and click Sync now.');
+    }
+    if (!rows.length) {
+      return el('p', { class: 'muted' }, 'No rows yet. Add some in your spreadsheet, then Sync now.');
+    }
+    var visibleCols = [];
+    for (var i = 0; i < meta.headers.length; i++) {
+      var h = meta.headers[i];
+      if (M.render.isInternal(h)) continue;
+      if (h === 'id') continue;          // hidden ULID
+      visibleCols.push({ name: h, type: meta.types[i] || 'text' });
+    }
+    var thead = el('thead', null,
+      el('tr', null, visibleCols.map(function (c) { return el('th', null, c.name); }))
+    );
+    var tbody = el('tbody', null, rows.map(function (row) {
+      return el('tr', null, visibleCols.map(function (c) {
+        var td = el('td', null);
+        td.appendChild(M.render.renderCell(row[c.name], c.type));
+        return td;
+      }));
+    }));
+    var wrap = el('div', { class: 'table-wrap' });
+    wrap.appendChild(el('table', { class: 'rows' }, thead, tbody));
+    return wrap;
   }
 
   function viewSettings() {
@@ -326,8 +461,10 @@
         paintStatus('syncing');
         var token = await M.auth.getToken(c.clientId);
         var results = await M.sync.pullAll(token, c.spreadsheetId);
+        await refreshConfig();
         paintStatus();
         await paintLocal();
+        renderNav(navActive());
         var errs = results.filter(function (r) { return r.error; });
         if (errs.length) {
           flash(localPanel, 'Synced with ' + errs.length + ' tab error(s) — see console.', 'error');
@@ -355,8 +492,10 @@
         writeConfig({ spreadsheetId: bs.spreadsheetId });
         paintStatus('syncing');
         await M.sync.pullAll(token, bs.spreadsheetId);
+        await refreshConfig();
         paintStatus();
         await paintLocal();
+        renderNav(navActive());
         flash(status, bs.fresh ? 'Spreadsheet created, seeded, and pulled.' : 'Connected and synced.');
       } catch (err) {
         paintStatus();
@@ -550,27 +689,49 @@
 
   // ---- router ----
 
-  function route() {
+  async function route() {
     setBusy(true);
     var hash = location.hash || '#/';
     var view, active = '';
+    var sectionMatch;
 
-    if (hash === '#/' || hash === '' || hash === '#') {
-      view = viewHome(); active = '#/';
-    } else if (hash === '#/settings') {
-      view = viewSettings(); active = '#/settings';
-    } else if (/^#\/share(\/.*)?$/.test(hash)) {
-      view = viewShare(); active = '#/share';
-    } else if (/^#\/p\/.+/.test(hash)) {
-      view = viewPublic(hash.replace(/^#\/p\//, ''));
-    } else {
-      view = viewNotFound(hash);
+    try {
+      if (hash === '#/' || hash === '' || hash === '#') {
+        view = await viewHome(); active = '#/';
+      } else if (hash === '#/settings') {
+        view = viewSettings(); active = '#/settings';
+      } else if (/^#\/share(\/.*)?$/.test(hash)) {
+        view = viewShare(); active = '#/share';
+      } else if (/^#\/p\/.+/.test(hash)) {
+        view = viewPublic(hash.replace(/^#\/p\//, ''));
+      } else if ((sectionMatch = hash.match(/^#\/s\/(.+)$/))) {
+        var slug = decodeURIComponent(sectionMatch[1]);
+        view = await viewSection(slug);
+        active = '#/s/' + encodeURIComponent(slug);
+      } else {
+        view = viewNotFound(hash);
+      }
+    } catch (err) {
+      view = el('section', { class: 'view' },
+        el('h2', null, 'Something went wrong'),
+        el('p', null, 'Render error: ', el('code', null, String(err && err.message || err))),
+        el('p', null, el('a', { href: '#/' }, 'Go home →'))
+      );
     }
 
     renderNav(active);
     content.replaceChildren(view);
     setBusy(false);
     window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  function navActive() {
+    var h = location.hash || '#/';
+    if (h === '#/' || h === '' || h === '#') return '#/';
+    if (/^#\/s\//.test(h)) return h;
+    if (/^#\/share/.test(h)) return '#/share';
+    if (h === '#/settings') return '#/settings';
+    return '';
   }
 
   // ---- keyboard shortcuts ----
@@ -585,9 +746,10 @@
 
   // ---- boot ----
 
-  function boot() {
+  async function boot() {
     bindPicker();
-    route();
+    await refreshConfig();
+    await route();
   }
 
   window.addEventListener('hashchange', route);
