@@ -1214,10 +1214,18 @@
   function renderCard(p) {
     var kind = String(p.kind || 'note').toLowerCase();
     var kindLabel = kind.charAt(0).toUpperCase() + kind.slice(1);
+
+    var bodyEl = null;
+    if (p.body) {
+      // Render the body as markdown for richer share cards.
+      bodyEl = el('div', { class: 'card-body' });
+      bodyEl.appendChild(M.render.renderCell(p.body, 'markdown'));
+    }
+
     return el('article', { class: 'card card-' + kind },
       el('div', { class: 'card-kind' }, kindLabel),
       p.title ? el('h3', { class: 'card-title' }, p.title) : null,
-      p.body ? el('p', { class: 'card-body' }, p.body) : null,
+      bodyEl,
       (p.choices && p.choices.length)
         ? el('ul', { class: 'card-choices' }, p.choices.map(function (c) { return el('li', null, c); }))
         : null
