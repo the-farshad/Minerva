@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto" data-font="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terms of Service — Minerva</title>
+<meta name="description" content="Minerva terms of service. MIT-licensed open-source app, provided as-is.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path fill='%237aa7ff' d='M14 6h36a8 8 0 0 1 8 8v36a8 8 0 0 1-8 8H14a8 8 0 0 1-8-8V14a8 8 0 0 1 8-8zm6 36h6V30h-6v12zm12 0h6V18h-6v24zm12 0h6V24h-6v18z'/></svg>">
+
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem('minerva.theme');
+    var f = localStorage.getItem('minerva.font');
+    if (['auto','light','dark','sepia','vt323'].indexOf(t) >= 0) document.documentElement.setAttribute('data-theme', t);
+    if (['system','inter','roboto','ubuntu','vazir','atkinson','vt323'].indexOf(f) >= 0) document.documentElement.setAttribute('data-font', f);
+  } catch (e) { /* ignore */ }
+})();
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Inter:wght@400;500;600&family=Roboto:wght@400;500;700&family=Ubuntu:wght@400;500;700&family=Vazirmatn:wght@400;500;700&family=VT323&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<header>
+  <div class="head-row">
+    <div class="head-titles">
+      <a href="./" class="back" title="Back to Minerva" aria-label="Back to Minerva">←</a>
+      <h1>Terms of Service</h1>
+    </div>
+  </div>
+  <p class="subtitle">Minerva — last updated 2026-04-28.</p>
+</header>
+
+<main>
+  <section class="view">
+    <p class="lead">Minerva is a free, open-source, static web app. It is provided as-is, with no warranties. Your data is yours, stored in your own Google account; Minerva is just a user interface to it.</p>
+
+    <h2>License</h2>
+    <p>The Minerva source code is published under the <a href="https://github.com/the-farshad/Minerva/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>. You may fork it, modify it, host your own copy, or redistribute it under the terms of that license.</p>
+
+    <h2>The hosted instance</h2>
+    <p>The hosted instance at <a href="https://minerva.thefarshad.com">minerva.thefarshad.com</a> is provided as a courtesy. It may change, go down, or be discontinued at any time. There is no service level agreement and no support obligation. If continuity matters to you, <a href="https://github.com/the-farshad/Minerva#run-your-own-copy">fork the repository and host your own copy</a> — the hosted instance and a self-hosted copy are functionally identical.</p>
+
+    <h2>Your data</h2>
+    <p>Minerva does not store your data on any server. Your data lives in:</p>
+    <ul>
+      <li>Your Google Drive (the <em>Minerva</em> spreadsheet).</li>
+      <li>Your browser's <code>localStorage</code> and <code>IndexedDB</code> (caches and preferences).</li>
+    </ul>
+    <p>You are responsible for backing up your Google account using <a href="https://takeout.google.com" target="_blank" rel="noopener">Google Takeout</a> or any other tool of your choice. Minerva does not back up your data and cannot recover it.</p>
+
+    <h2>Acceptable use</h2>
+    <p>Don't use Minerva to do anything illegal in your jurisdiction or to violate <a href="https://policies.google.com/terms" target="_blank" rel="noopener">Google's Terms of Service</a>. The public-share feature embeds the data you provide into a URL anyone with the URL can read — don't share things you wouldn't share publicly.</p>
+
+    <h2>No warranty</h2>
+    <p>Minerva is provided <strong>"AS IS"</strong>, without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the authors or copyright holders be liable for any claim, damages, or other liability — whether in an action of contract, tort, or otherwise — arising from your use of the software, including any data loss, loss of business, or other consequential damage.</p>
+
+    <h2>Privacy</h2>
+    <p>See the <a href="privacy.html">privacy policy</a>.</p>
+
+    <h2>Contact</h2>
+    <p><a href="mailto:me@thefarshad.com">me@thefarshad.com</a></p>
+
+    <h2>Changes to these terms</h2>
+    <p>If these terms change, the date at the top will be updated. Continued use of the hosted instance after changes constitutes acceptance.</p>
+  </section>
+</main>
+
+<footer>
+  <p>
+    <a href="./">home</a>
+    · <a href="privacy.html">privacy</a>
+    · <a href="https://github.com/the-farshad/Minerva" target="_blank" rel="noopener">source</a>
+  </p>
+</footer>
+
+</body>
+</html>
