@@ -1069,32 +1069,97 @@ table.kv th {
 }
 table.kv tbody tr:hover { background: var(--surface); }
 
-/* --- help overlay ------------------------------------------ */
+/* --- modal overlays (help, capture, search) --------------- */
 
+.modal-overlay,
 .help-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
   z-index: 1000;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 1rem;
-  animation: fade-in .15s ease-out;
+  padding: 4rem 1rem 1rem;
+  animation: fade-in .12s ease-out;
 }
+.modal-panel,
 .help-panel {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
+  padding: 1.1rem 1.4rem;
   box-shadow: var(--shadow);
-  max-width: 380px;
+  max-width: 520px;
   width: 100%;
 }
-.help-panel h3 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+.help-overlay { align-items: center; padding: 1rem; }
+.help-panel { max-width: 380px; }
+.help-panel h3,
+.modal-panel h3 { margin: 0 0 0.75rem; font-size: 1.05rem; }
 .help-panel table.kv { margin: 0; }
-.help-panel table.kv td:first-child { width: 5.5rem; white-space: nowrap; }
+.help-panel table.kv td:first-child { width: 7.5rem; white-space: nowrap; }
 @keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
+
+/* capture */
+.capture-panel .form { gap: 0.6rem; }
+.capture-panel .editor { width: 100%; }
+
+/* search */
+.search-input {
+  font: inherit;
+  width: 100%;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  padding: 0.65rem 0.85rem;
+  outline: none;
+  font-size: 1rem;
+}
+.search-results {
+  margin-top: 0.6rem;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.search-hit {
+  display: block;
+  padding: 0.55rem 0.7rem;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--fg);
+  border: 1px solid transparent;
+  margin-bottom: 0.2rem;
+}
+.search-hit:hover,
+.search-hit.selected {
+  background: var(--surface);
+  border-color: var(--border);
+}
+.search-hit.selected { border-color: var(--accent); }
+.search-hit-section {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  margin-bottom: 0.15rem;
+}
+.search-hit-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-hit-sub {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* --- push indicator (bottom-right pill) -------------------- */
 
