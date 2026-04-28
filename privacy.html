@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto" data-font="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Minerva</title>
+<meta name="description" content="Minerva privacy policy. There are no servers, no telemetry, no analytics. Your data lives in your Google account.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path fill='%237aa7ff' d='M14 6h36a8 8 0 0 1 8 8v36a8 8 0 0 1-8 8H14a8 8 0 0 1-8-8V14a8 8 0 0 1 8-8zm6 36h6V30h-6v12zm12 0h6V18h-6v24zm12 0h6V24h-6v18z'/></svg>">
+
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem('minerva.theme');
+    var f = localStorage.getItem('minerva.font');
+    if (['auto','light','dark','sepia','vt323'].indexOf(t) >= 0) document.documentElement.setAttribute('data-theme', t);
+    if (['system','inter','roboto','ubuntu','vazir','atkinson','vt323'].indexOf(f) >= 0) document.documentElement.setAttribute('data-font', f);
+  } catch (e) { /* ignore */ }
+})();
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Inter:wght@400;500;600&family=Roboto:wght@400;500;700&family=Ubuntu:wght@400;500;700&family=Vazirmatn:wght@400;500;700&family=VT323&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<header>
+  <div class="head-row">
+    <div class="head-titles">
+      <a href="./" class="back" title="Back to Minerva" aria-label="Back to Minerva">←</a>
+      <h1>Privacy Policy</h1>
+    </div>
+  </div>
+  <p class="subtitle">Minerva — last updated 2026-04-28.</p>
+</header>
+
+<main>
+  <section class="view">
+    <p class="lead">Minerva does not collect, store, or transmit any of your data. There are no servers because there is no backend. Your data lives in <em>your</em> Google account, owned and accessed by you.</p>
+
+    <h2>What Minerva is</h2>
+    <p>Minerva is a static web app — HTML, CSS, and JavaScript files served from GitHub Pages. When you load it, the files run in your browser and call Google's APIs directly using your own OAuth grant. There is no Minerva server in between.</p>
+
+    <h2>What is stored, and where</h2>
+    <ul>
+      <li><strong>In your browser's <code>localStorage</code>:</strong> your OAuth Client ID, your spreadsheet ID, your access token (until it expires), your email address (after first connect), and your theme/font preferences. Cleared when you click <em>Clear local config</em> in Settings or clear this site's data in your browser.</li>
+      <li><strong>In your browser's <code>IndexedDB</code>:</strong> a mirror of your Minerva spreadsheet, kept for offline reads and fast rendering. Cleared when you click <em>Clear local mirror</em> in Settings or clear this site's data.</li>
+      <li><strong>In your Google Drive:</strong> one spreadsheet named <em>Minerva</em>, created by Minerva when you first connect. Owned by you. Never read or written by anyone but you.</li>
+    </ul>
+    <p>That is the complete list. Nothing else is stored anywhere.</p>
+
+    <h2>What requests your browser makes</h2>
+    <p>When you use Minerva, your browser talks to:</p>
+    <ul>
+      <li><strong>Google</strong> (<code>accounts.google.com</code>, <code>sheets.googleapis.com</code>, <code>www.googleapis.com</code>, <code>oauth2.googleapis.com</code>) — for OAuth and to read/write <em>your</em> spreadsheet. Subject to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a>.</li>
+      <li><strong>Google Fonts</strong> (<code>fonts.googleapis.com</code>, <code>fonts.gstatic.com</code>) — to load the optional web fonts (Inter, Roboto, Ubuntu, Vazirmatn, Atkinson Hyperlegible, VT323). Subject to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a>.</li>
+      <li><strong>jsDelivr</strong> (<code>cdn.jsdelivr.net</code>) — to load the QR-code library. Subject to the <a href="https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net" target="_blank" rel="noopener">jsDelivr privacy policy</a>.</li>
+    </ul>
+    <p>Minerva uses no other third parties. There are no analytics, no error reporters, no advertising trackers, no fingerprinting, no cookies set by Minerva itself. Minerva receives no data because Minerva runs no server.</p>
+
+    <h2>The public-share feature</h2>
+    <p>When you build a card via <em>Quick share</em>, the title, body, and choices are encoded into the URL itself — they live in the URL hash, not on a server. Anyone with the URL sees the same card. The URL is generated locally; nothing is uploaded. Treat anything you put into a public share as public.</p>
+
+    <h2>OAuth scopes Minerva requests, and what each does</h2>
+    <ul>
+      <li><code>spreadsheets</code> — read and write your <em>Minerva</em> spreadsheet.</li>
+      <li><code>drive.file</code> — find your <em>Minerva</em> spreadsheet on reconnect. This scope sees <em>only</em> files this app created or that you explicitly opened with it — <em>not</em> your full Drive.</li>
+      <li><code>userinfo.email</code> — display "Connected as &lt;your email&gt;" in the app.</li>
+      <li><code>openid</code> — standard OpenID Connect identity claim.</li>
+    </ul>
+    <p>You can revoke these at any time at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Apps with access</a>.</p>
+
+    <h2>Children</h2>
+    <p>Minerva is not directed at children under 13.</p>
+
+    <h2>Contact</h2>
+    <p>Minerva is maintained by the same person who hosts <a href="https://thefarshad.com" target="_blank" rel="noopener">thefarshad.com</a>. For privacy questions, email <a href="mailto:me@thefarshad.com">me@thefarshad.com</a>.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If this policy changes, the date at the top will be updated. Minerva has no way to notify you of changes (no email list, no accounts), so check back here if you care to know.</p>
+  </section>
+</main>
+
+<footer>
+  <p>
+    <a href="./">home</a>
+    · <a href="terms.html">terms</a>
+    · <a href="https://github.com/the-farshad/Minerva" target="_blank" rel="noopener">source</a>
+  </p>
+</footer>
+
+</body>
+</html>
