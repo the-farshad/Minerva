@@ -1175,6 +1175,34 @@ table.kv tbody tr:hover { background: var(--surface); }
   text-overflow: ellipsis;
 }
 
+/* --- offline indicator (bottom-left pill) ------------------ */
+
+.offline-indicator {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  z-index: 900;
+  background: var(--error);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0.4rem 0.95rem;
+  font-size: 0.8rem;
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: calc(100vw - 2rem);
+}
+.offline-indicator::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0.9;
+}
+
 /* --- push indicator (bottom-right pill) -------------------- */
 
 .push-indicator {

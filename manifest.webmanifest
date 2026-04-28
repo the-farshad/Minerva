@@ -1,0 +1,38 @@
+{
+  "name": "Minerva",
+  "short_name": "Minerva",
+  "description": "A lightweight personal planner backed by a Google Sheet you own.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0d10",
+  "theme_color": "#2e5aac",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "docs/assets/minerva-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "docs/assets/minerva-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "Quick share",
+      "url": "./#/share",
+      "description": "Build a public note, question, or poll card"
+    },
+    {
+      "name": "Settings",
+      "url": "./#/settings",
+      "description": "Configure connection and preferences"
+    }
+  ]
+}
