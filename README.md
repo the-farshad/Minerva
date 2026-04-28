@@ -1,8 +1,6 @@
 # Minerva
 
-A lightweight personal planner. Goals, tasks, projects, notes — backed by a Google Sheet **you** own. The app is a static site; there are no servers, no databases, no accounts. Public sharing with QR codes is built in.
-
-> **Status — Phase 3.** End-to-end CRUD: dynamic section list views with click-to-edit cells, type-aware editors, add/delete row, and a serialized push back to Sheets via a dirty-row queue. On top of Phases 0–2: static shell, themes, fonts, public share with QR, Google Sign-In, automatic spreadsheet bootstrap, schema-driven nav, IndexedDB local mirror.
+A lightweight personal planner. Goals, tasks, projects, notes, habits — backed by a Google Sheet **you** own. The app is a static site; there are no servers, no databases, no accounts. Public sharing with QR codes, a calendar feed, and a Telegram bot are built in.
 
 **Live (hosted instance):** <https://minerva.thefarshad.com>
 
@@ -12,16 +10,35 @@ A lightweight personal planner. Goals, tasks, projects, notes — backed by a Go
 
 ## What works today
 
-- **Connect Google** — sign in with the BYO OAuth client; Minerva auto-creates (or finds) a `Minerva` spreadsheet in your Drive and seeds it with the meta tabs (`_config`, `_prefs`, `_log`) and four section tabs (`goals`, `tasks`, `projects`, `notes`), each with a header row + a type-hint row that defines how the app renders it.
-- **Local store + sync** — every connect pulls the spreadsheet into a private IndexedDB mirror in your browser. Settings shows per-tab row counts and last-sync time; **Sync now** does a manual push-then-pull.
-- **Edit anything** — every section list view has click-to-edit cells, an **+ Add row** button, and a per-row delete. Inline editors per type: text, number, date, datetime, checkbox, dropdown (`select`), URL, color, multi-select chips (`multiselect`), star rating (`rating`), progress slider (`progress`), and ref/ref-multi pickers populated from the referenced tab — plus a textarea for long-form. Edits write to the local store first (instantly visible), get marked dirty, then a coalescing background queue pushes them back to your spreadsheet. Pulling preserves any pending local edits so you never lose work-in-progress.
-- **Telegram bot** — paste a bot token (BotFather, ~3 min) and a chat ID into Settings. Minerva pings your chat once per task per day for anything due/overdue, while a tab is open. Manual *Test connection* / *Detect chat ID* / *Send test message* buttons are right next to the inputs. Setup walkthrough: [`docs/setup-telegram.md`](docs/setup-telegram.md).
-- **Quick share** — build a note, question, or poll; get a stable URL and a crisp QR code. No login required. The data lives in the URL itself, so nothing is uploaded.
-- **Public viewer** — anyone with the link sees the same card you do, scannable from a phone via QR.
-- **Theme picker** — five themes: `auto · light · dark · sepia · vt323-yellow` (homage to [thefarshad.com](https://thefarshad.com)).
-- **Font picker** — seven fonts: `system · Inter · Roboto · Ubuntu · Vazirmatn · Atkinson Hyperlegible · VT323`.
+### Data
+- **Connect Google** — sign in with your own OAuth client; Minerva auto-creates (or finds) a `Minerva` spreadsheet in your Drive and seeds it with the meta tabs (`_config`, `_prefs`, `_log`) and the section tabs (`goals`, `tasks`, `projects`, `notes`, `habits`, `habit_log`), each with a header row + a type-hint row that defines how the app renders it.
+- **Local IndexedDB mirror** — every connect pulls the spreadsheet into a private store in your browser. Settings shows per-tab row counts and last-sync time; **Sync now** does a manual push-then-pull.
+- **Click-to-edit anywhere** — every cell becomes an inline editor on click. Type-aware editors for text, number, date, datetime, check, dropdown (`select`), URL, color, multi-select chips (`multiselect`), star rating (`rating`), progress slider (`progress`), and ref/ref-multi pickers populated from the referenced tab. Long-form fields get a textarea; markdown columns render as actual markdown.
+- **Add / delete rows** — `+ Add row` button per section, `×` per row. Edits write to local first (instant UI), then a coalescing dirty-queue pushes them back to your spreadsheet. Pulling preserves any pending local edits.
 
-The dynamic schema engine reads `_config` and the type-hint rows to build nav, routes, and per-section editors — that's Phase 2 next.
+### Views
+- **Schema-driven nav** — sections come from the `_config` tab; adding a section is a row in the spreadsheet plus a tab, no code change. The home page shows aggregate stats (tasks done, due today, overdue, average goal progress, active projects, notes) above per-section cards.
+- **Per-section calendar** — sections with a date or datetime column get a List / Calendar toggle and a month grid view that highlights today and renders done items struck-through.
+- **Habit heatmap** — the habits section shows each habit as a card with current streak, a Done-today button, and a 12-week contribution-graph heatmap.
+- **Per-section live filter** — typed search box in the section header filters rows live in either list or calendar mode.
+- **Global search** — `⌘/Ctrl+K` opens a fuzzy search across every row in every section.
+- **Quick capture** — `/` opens a modal that captures a title + body to your inbox/notes section, mapped onto the most natural columns even on user-defined sections.
+
+### Sharing & integrations
+- **Public share + QR** — build a note / question / poll; get a stable URL and a crisp SVG QR code (downloadable as a 16× PNG). No login required; the data lives in the URL hash.
+- **Calendar feed (iCal)** — publishes your tasks as a public `.ics` file in your own Drive, subscribable from Apple Calendar, Google Calendar, Outlook — anywhere. Click *Update feed* in Settings to refresh.
+- **Telegram bot** — paste a bot token (BotFather, ~3 min) and a chat ID. Minerva pings your chat once per due/overdue task per day. Setup: [`docs/setup-telegram.md`](docs/setup-telegram.md).
+- **Browser desktop notifications** — alongside (or instead of) Telegram, the same reminder ticker fires native desktop notifications.
+
+### Look & feel
+- **5 themes** — `auto · light · dark · sepia · vt323-yellow` (homage to [thefarshad.com](https://thefarshad.com)).
+- **7 fonts** — `system · Inter · Roboto · Ubuntu · Vazirmatn · Atkinson Hyperlegible · VT323`. Picker buttons render `Aa` in their own face for quick scan.
+- **Resume state** — last view, scroll position, view modes (list/calendar) per section all persist in `localStorage` so reload picks up exactly where you left off.
+- **Push indicator** — subtle bottom-right pill while a sync is in flight; bottom-left red pill when offline.
+- **Keyboard shortcuts** — `g` / `q` / `s` for nav, `1`–`9` for sections, `/` for quick capture, `⌘/Ctrl+K` for search, `?` for the help cheatsheet.
+
+### Offline / install
+- **PWA** — installable from your browser's *Install* / *Add to Home Screen*, with a service worker that caches the static shell. Read your data offline; edits queue and flush automatically when you reconnect.
 
 ---
 
@@ -33,7 +50,7 @@ The dynamic schema engine reads `_config` and the type-hint rows to build nav, r
 4. Copy the link, or download the QR as a 16× PNG (poster-quality).
 5. Anyone with the link sees the rendered card.
 
-**Keyboard shortcuts:** `g` home · `q` quick share · `s` settings.
+**Keyboard shortcuts:** `g` home · `q` quick share · `s` settings · `1`–`9` open Nth section · `/` quick capture · `⌘/Ctrl+K` global search · `?` help cheatsheet · `Esc` close overlay / cancel edit · `Enter` save current edit.
 
 ---
 
@@ -58,9 +75,9 @@ Your Client ID is stored only in your browser via `localStorage`. It's not a sec
 
 ## Architecture in two paragraphs
 
-Minerva is a **schema-driven planner over Google Sheets**. The app is a static site. Per user, there is one Google spreadsheet with one tab per section (`tasks`, `goals`, `notes`, …). A reserved `_config` tab declares which sections exist, in what order, with which icons and default sort/filter — so adding a "Habits" or "Papers" section is a row in `_config` plus a tab, not a code change. The column schema for each section is **inferred from the tab's header row + a type-hint row**, supporting types like `text`, `longtext`, `markdown`, `date`, `select(a,b,c)`, `check`, `link`, `ref(tab)`, `drive`, `progress`, `rating`, and a `public` toggle.
+Minerva is a **schema-driven planner over Google Sheets**. The app is a static site. Per user, there is one Google spreadsheet with one tab per section (`tasks`, `goals`, `notes`, `habits`, …). A reserved `_config` tab declares which sections exist, in what order, with which icons and default sort/filter — so adding a "Papers" or "Reading list" section is a row in `_config` plus a tab, not a code change. The column schema for each section is **inferred from the tab's header row + a type-hint row**, supporting types like `text`, `longtext`, `markdown`, `date`, `select(a,b,c)`, `check`, `link`, `ref(tab)`, `progress(0..100)`, `rating(0..5)`, `color`, and `multiselect(...)`.
 
-Public sharing has three layers: (1) URL-hash payload — works today, free + offline; (2) per-row publish via published Sheet CSV; (3) per-dashboard publish. QR codes are generated client-side as crisp SVG and downloaded as 16× PNG.
+The browser keeps a **local IndexedDB mirror** of the spreadsheet for instant rendering and offline reads. Edits write to the local store first (UI updates with no round trip), get marked `_dirty=1`, and a single-flight, coalescing push queue flushes them back to Sheets via the regular `values.update` / `values.append` / `batchUpdate.deleteDimension` endpoints. Pulling preserves any pending local edits — sync mid-typing never destroys work in progress. The whole thing runs under the minimal `drive.file` scope (Sheets API works for app-created files), which is non-sensitive and skips the unverified-app warning.
 
 ---
 
@@ -97,18 +114,30 @@ Open <http://localhost:8000>. Editing `index.html` or anything in `assets/` and 
 
 ```
 index.html             single-page shell
+privacy.html           privacy policy (also linked from OAuth consent)
+terms.html             terms of service (also linked from OAuth consent)
+manifest.webmanifest   PWA manifest (installable, theme color, shortcuts)
+sw.js                  service worker (stale-while-revalidate cache of shell)
+
 assets/styles.css      themes + fonts + layout
 assets/qr.js           SVG QR generator (wraps qrcode-generator from CDN)
-assets/share.js        encode/decode payloads + PNG export
+assets/share.js        encode/decode public-share payloads + PNG export
 assets/auth.js         Google Identity Services token-flow client
 assets/sheets.js       thin Sheets API v4 + Drive API v3 wrapper
-assets/db.js           local IndexedDB store (your data, mirrored in-browser)
+assets/db.js           local IndexedDB store + ULID generator
 assets/bootstrap.js    find-or-create the user's Minerva spreadsheet
 assets/sync.js         pull/push between local store and Sheets, dirty-queue
 assets/render.js       schema parser + type-aware cell renderers
-assets/editors.js      type-aware inline editors (Phase 3 CRUD)
+assets/editors.js      type-aware inline editors (CRUD)
 assets/telegram.js     Telegram Bot API wrapper (sendMessage, getUpdates, ...)
-assets/app.js          hash router + views
+assets/ical.js         RFC-5545 .ics generator + Drive upsert + permission flip
+assets/app.js          hash router, all views (home, section, share, settings, ...)
+
+docs/setup-google-oauth.md   detailed OAuth client walkthrough + troubleshooting
+docs/setup-telegram.md       Telegram bot setup + always-on bridge sketch
+docs/assets/minerva-logo.png 512x512 PNG logo for the OAuth consent screen
+docs/assets/minerva-logo.svg source SVG of the logo
+
 CNAME                  custom domain for GitHub Pages
 .nojekyll              tells Pages not to run Jekyll
 ```
@@ -117,11 +146,13 @@ CNAME                  custom domain for GitHub Pages
 
 ## Privacy
 
-- **No telemetry.** No analytics, no error reporters.
+- **No telemetry.** No analytics, no error reporters, no cookies set by Minerva.
 - **No secrets in repo.** Ever. The OAuth client ID is BYO, kept in `localStorage` only.
-- **No proxy.** API calls go directly from your browser to Google.
+- **No proxy.** API calls go directly from your browser to Google / Telegram.
 - **OAuth scopes** are the minimal non-sensitive set: `drive.file` (only files this app created — *not* full-Drive read) + `userinfo.email` + `openid`. The Sheets API works for app-created files under `drive.file`, so the broader `spreadsheets` scope is unnecessary. As a bonus, all three scopes are non-sensitive, so the consent flow skips the "Google hasn't verified this app" yellow warning.
-- **Public sharing is opt-in row-by-row.** Therapy/journal-style presets ship without a `public` column, so they cannot be accidentally exposed.
+- **Public sharing is opt-in.** Quick-share embeds the data into the URL hash itself; nothing is uploaded. The iCal feed only contains task summaries; you control whether to share its URL.
+
+Full policy: [`privacy.html`](privacy.html).
 
 ---
 
