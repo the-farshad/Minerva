@@ -2,7 +2,7 @@
 
 A lightweight personal planner. Goals, tasks, projects, notes — backed by a Google Sheet **you** own. The app is a static site; there are no servers, no databases, no accounts. Public sharing with QR codes is built in.
 
-> **Status — Phase 0.** Static shell, theme + font picker, public share with QR codes are live. Google Sign-In, automatic spreadsheet bootstrap, and dynamic sections land in upcoming phases. The full plan: [`ROADMAP.md`](ROADMAP.md).
+> **Status — Phase 0.** Static shell, theme + font picker, public share with QR codes are live. Google Sign-In, automatic spreadsheet bootstrap, and dynamic sections land in upcoming phases.
 
 **Live:** <https://minerva.thefarshad.com>
 
@@ -16,7 +16,7 @@ A lightweight personal planner. Goals, tasks, projects, notes — backed by a Go
 - **Font picker** — seven fonts: `system · Inter · Roboto · Ubuntu · Vazirmatn · Atkinson Hyperlegible · VT323`.
 - **Local settings** — paste your own Google OAuth client ID; it never leaves your browser.
 
-Auth, spreadsheet bootstrap, and the dynamic schema engine ship next. See [`ROADMAP.md`](ROADMAP.md) for the full 21-phase plan.
+Auth, spreadsheet bootstrap, and the dynamic schema engine ship next.
 
 ---
 
@@ -54,9 +54,7 @@ Your client ID is stored only in your browser via `localStorage`. It's not a sec
 
 Minerva is a **schema-driven planner over Google Sheets**. The app is a static site. Per user, there is one Google spreadsheet with one tab per section (`tasks`, `goals`, `notes`, …). A reserved `_config` tab declares which sections exist, in what order, with which icons and default sort/filter — so adding a "Habits" or "Papers" section is a row in `_config` plus a tab, not a code change. The column schema for each section is **inferred from the tab's header row + a type-hint row**, supporting types like `text`, `longtext`, `markdown`, `date`, `select(a,b,c)`, `check`, `link`, `ref(tab)`, `drive`, `progress`, `rating`, and a `public` toggle.
 
-Public sharing has three layers: (1) URL-hash payload — works today, free + offline; (2) per-row publish via published Sheet CSV — Phase 7; (3) per-dashboard publish — Phase 7. QR codes are generated client-side as crisp SVG and downloaded as 16× PNG.
-
-For the long-form vision: [`ROADMAP.md`](ROADMAP.md).
+Public sharing has three layers: (1) URL-hash payload — works today, free + offline; (2) per-row publish via published Sheet CSV; (3) per-dashboard publish. QR codes are generated client-side as crisp SVG and downloaded as 16× PNG.
 
 ---
 
@@ -78,7 +76,6 @@ assets/styles.css      themes + fonts + layout
 assets/qr.js           SVG QR generator (wraps qrcode-generator from CDN)
 assets/share.js        encode/decode payloads + PNG export
 assets/app.js          hash router + views
-ROADMAP.md             the long roadmap
 CNAME                  custom domain for GitHub Pages
 .nojekyll              tells Pages not to run Jekyll
 ```

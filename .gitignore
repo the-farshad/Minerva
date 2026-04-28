@@ -1,6 +1,9 @@
 # Local session log — never commit (see LOG.md header)
 LOG.md
 
+# Long-form roadmap stays local
+ROADMAP.md
+
 # Editor / OS noise
 .DS_Store
 Thumbs.db

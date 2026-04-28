@@ -158,10 +158,7 @@
         el('a', { href: '#/share', class: 'btn' }, 'Try a public share now →'),
         el('a', { href: '#/settings', class: 'btn btn-ghost' }, 'Settings')
       ),
-      el('p', { class: 'small muted' }, 'Phase 0 — quick share, public viewer, theme + font picker. The 21-phase roadmap lives in ',
-        el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/ROADMAP.md', target: '_blank', rel: 'noopener' }, 'ROADMAP.md'),
-        '.'
-      )
+      el('p', { class: 'small muted' }, 'Phase 0 — quick share, public viewer, theme + font picker. Auth and dynamic sections land next.')
     );
   }
 
