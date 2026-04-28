@@ -2,21 +2,21 @@
 
 A lightweight personal planner. Goals, tasks, projects, notes — backed by a Google Sheet **you** own. The app is a static site; there are no servers, no databases, no accounts. Public sharing with QR codes is built in.
 
-> **Status — Phase 0.** Static shell, theme + font picker, public share with QR codes are live. Google Sign-In, automatic spreadsheet bootstrap, and dynamic sections land in upcoming phases.
+> **Status — Phase 1.** Google Sign-In + automatic spreadsheet bootstrap are live, on top of Phase 0's static shell, theme + font picker, and public share with QR codes. Dynamic sections (read straight from your `_config` tab) land next.
 
 **Live:** <https://minerva.thefarshad.com>
 
 ---
 
-## What works today (Phase 0)
+## What works today
 
+- **Connect Google** — sign in with the BYO OAuth client; Minerva auto-creates (or finds) a `Minerva` spreadsheet in your Drive and seeds it with the meta tabs (`_config`, `_prefs`, `_log`) and four section tabs (`goals`, `tasks`, `projects`, `notes`), each with a header row + a type-hint row that defines how Phase 2 will render it.
 - **Quick share** — build a note, question, or poll; get a stable URL and a crisp QR code. No login required. The data lives in the URL itself, so nothing is uploaded.
 - **Public viewer** — anyone with the link sees the same card you do, scannable from a phone via QR.
 - **Theme picker** — five themes: `auto · light · dark · sepia · vt323-yellow` (homage to [thefarshad.com](https://thefarshad.com)).
 - **Font picker** — seven fonts: `system · Inter · Roboto · Ubuntu · Vazirmatn · Atkinson Hyperlegible · VT323`.
-- **Local settings** — paste your own Google OAuth client ID; it never leaves your browser.
 
-Auth, spreadsheet bootstrap, and the dynamic schema engine ship next.
+The dynamic schema engine reads `_config` and the type-hint rows to build nav, routes, and per-section editors — that's Phase 2 next.
 
 ---
 
@@ -32,9 +32,9 @@ Auth, spreadsheet bootstrap, and the dynamic schema engine ship next.
 
 ---
 
-## Phase 1+ (later) — bring your own Google OAuth client
+## Phase 1 — bring your own Google OAuth client
 
-When auth lands you'll need an OAuth client ID — there are no shared secrets in this repo on purpose. It takes ~5 minutes:
+You need an OAuth client ID — there are no shared secrets in this repo on purpose. It takes ~5 minutes:
 
 1. Open [Google Cloud Console](https://console.cloud.google.com/) → create or pick a project.
 2. Go to **APIs & Services → Library** and enable both **Google Sheets API** and **Google Drive API**.
@@ -75,6 +75,9 @@ index.html             single-page shell
 assets/styles.css      themes + fonts + layout
 assets/qr.js           SVG QR generator (wraps qrcode-generator from CDN)
 assets/share.js        encode/decode payloads + PNG export
+assets/auth.js         Google Identity Services token-flow client
+assets/sheets.js       thin Sheets API v4 + Drive API v3 wrapper
+assets/bootstrap.js    find-or-create the user's Minerva spreadsheet
 assets/app.js          hash router + views
 CNAME                  custom domain for GitHub Pages
 .nojekyll              tells Pages not to run Jekyll
@@ -91,7 +94,7 @@ GitHub Pages → **Settings → Pages → Source = Deploy from branch → Branch
 - **No telemetry.** No analytics, no error reporters.
 - **No secrets in repo.** Ever. The OAuth client ID is BYO, kept in `localStorage` only.
 - **No proxy.** API calls go directly from your browser to Google.
-- **OAuth scopes** (Phase 1+) will be the minimal set: `spreadsheets` + `drive.file` (i.e. files this app created — *not* full-Drive read).
+- **OAuth scopes** are the minimal set: `spreadsheets` + `drive.file` (only files this app created — *not* full-Drive read) + `userinfo.email` + `openid`.
 - **Public sharing is opt-in row-by-row.** Therapy/journal-style presets ship without a `public` column, so they cannot be accidentally exposed.
 
 ---

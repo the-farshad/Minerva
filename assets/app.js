@@ -140,30 +140,42 @@
 
   function viewHome() {
     var cfg = readConfig();
-    var connected = !!(cfg.clientId && cfg.spreadsheetId);
+    var st = M.auth ? M.auth.getState() : { hasToken: false, email: null };
+    var connected = st.hasToken && cfg.spreadsheetId;
+
+    var primaryCta = connected
+      ? el('a', { class: 'btn', href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Open your spreadsheet ↗')
+      : (cfg.clientId
+          ? el('a', { class: 'btn', href: '#/settings' }, 'Connect your Google account →')
+          : el('a', { class: 'btn', href: '#/settings' }, 'Set up in Settings →'));
 
     return el('section', { class: 'view' },
-      el('h2', null, connected ? 'Welcome back' : 'Welcome to Minerva'),
+      el('h2', null, connected ? 'Welcome back' + (st.email ? ', ' + st.email : '') : 'Welcome to Minerva'),
       el('p', { class: 'lead' },
         'Minerva is a lightweight personal planner — goals, tasks, projects, notes — stored in a Google Sheet that ',
         el('em', null, 'you'),
-        ' own. The app is a static site; nothing is on our servers because there are no servers. Auth + spreadsheet bootstrap arrive in Phase 1; the public-share + QR flow below is fully working today.'
+        ' own. The app is a static site; nothing is on our servers because there are no servers.'
       ),
       el('div', { class: 'callouts' },
-        callout('Bring your own Sheet', 'Each user connects their own Google account. Minerva creates one spreadsheet per user, and the app reads its routes, sections, and column types from a `_config` tab inside it.'),
+        callout('Bring your own Sheet', 'Each user connects their own Google account. Minerva creates one spreadsheet per user and reads its routes, sections, and column types from a `_config` tab inside it.'),
         callout('Share publicly with QR', 'Any note, question, or poll can become a public card with a stable URL and a QR code — perfect for posters, surveys, and quick handoffs.'),
         callout('No build, no backend', 'Pure HTML/CSS/JS on GitHub Pages. Hackable. Forkable. Yours.')
       ),
       el('div', { class: 'cta-row' },
-        el('a', { href: '#/share', class: 'btn' }, 'Try a public share now →'),
-        el('a', { href: '#/settings', class: 'btn btn-ghost' }, 'Settings')
+        primaryCta,
+        el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Quick share & QR')
       ),
-      el('p', { class: 'small muted' }, 'Phase 0 — quick share, public viewer, theme + font picker. Auth and dynamic sections land next.')
+      el('p', { class: 'small muted' }, connected
+        ? 'Phase 1 connected. Dynamic sections (Phase 2) read straight from your `_config` tab — coming next.'
+        : 'Phase 1 — auth + spreadsheet bootstrap. Dynamic sections from the spreadsheet land next.'
+      )
     );
   }
 
   function viewSettings() {
     var cfg = readConfig();
+    var st = M.auth ? M.auth.getState() : { hasToken: false, email: null };
+
     var form = el('form', { class: 'form', onsubmit: function (e) {
       e.preventDefault();
       var f = new FormData(form);
@@ -171,13 +183,13 @@
         clientId:      String(f.get('clientId') || '').trim(),
         spreadsheetId: String(f.get('spreadsheetId') || '').trim()
       });
-      flash(form, 'Saved locally. Auth + spreadsheet bootstrap arrive in Phase 1.');
+      flash(form, 'Saved locally.');
     } },
       field('Google OAuth Client ID',
         el('input', { name: 'clientId', type: 'text',
           placeholder: '123456789-abc.apps.googleusercontent.com',
           value: cfg.clientId || '', autocomplete: 'off', spellcheck: 'false' }),
-        'Create one at Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web). Authorized JavaScript origin: this domain.'
+        'Create one at Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web). Authorized JavaScript origin: this domain (and http://localhost:8000 for local preview).'
       ),
       field('Spreadsheet ID (optional)',
         el('input', { name: 'spreadsheetId', type: 'text',
@@ -191,6 +203,7 @@
           ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () {
               if (confirm('Clear local Minerva config? Your Google account and Sheet are not affected.')) {
                 localStorage.removeItem(STORE);
+                if (M.auth) M.auth.signOut();
                 location.hash = '#/settings';
                 location.reload();
               }
@@ -200,12 +213,80 @@
       el('p', { class: 'small muted' }, 'Stored only in your browser via localStorage. Nothing is sent anywhere by saving.')
     );
 
+    var status = el('div', { class: 'auth-status' });
+    function paintStatus(stage) {
+      var c = readConfig();
+      var state = M.auth ? M.auth.getState() : { hasToken: false, email: null };
+      var ok = state.hasToken && c.spreadsheetId;
+      var stageLabels = {
+        auth: 'Opening Google sign-in…',
+        bootstrap: 'Setting up your Minerva spreadsheet…',
+        done: ''
+      };
+      status.replaceChildren(
+        el('h3', null, 'Connection'),
+        ok
+          ? el('p', null,
+              'Connected as ', el('em', null, state.email || 'your Google account'), '. ',
+              el('a', { href: M.sheets.spreadsheetUrl(c.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Open spreadsheet ↗')
+            )
+          : el('p', { class: 'muted' },
+              c.clientId
+                ? 'Not connected yet — click Connect to authorize Minerva and create your spreadsheet.'
+                : 'Save a Google OAuth Client ID above first. Then come back and click Connect.'
+            ),
+        stage && stageLabels[stage]
+          ? el('p', { class: 'small muted' }, stageLabels[stage])
+          : null,
+        el('div', { class: 'form-actions' },
+          ok
+            ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () {
+                if (confirm('Sign out? Your spreadsheet is not affected.')) {
+                  M.auth.signOut();
+                  paintStatus();
+                }
+              } }, 'Disconnect')
+            : el('button', { class: 'btn', type: 'button',
+                disabled: !c.clientId,
+                onclick: function () { void connect(); }
+              }, 'Connect Google'),
+          ok
+            ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void connect(); } }, 'Re-run bootstrap')
+            : null
+        )
+      );
+    }
+
+    async function connect() {
+      var c = readConfig();
+      if (!c.clientId) {
+        flash(status, 'Save a Client ID first.', 'error');
+        return;
+      }
+      try {
+        paintStatus('auth');
+        var token = await M.auth.requestToken(c.clientId, c.spreadsheetId ? '' : 'consent');
+        paintStatus('bootstrap');
+        var bs = await M.bootstrap(token);
+        writeConfig({ spreadsheetId: bs.spreadsheetId });
+        paintStatus('done');
+        flash(status, bs.fresh ? 'Spreadsheet created and seeded.' : 'Connected to your existing Minerva spreadsheet.');
+      } catch (err) {
+        paintStatus();
+        flash(status, 'Connect failed: ' + (err && err.message ? err.message : err), 'error');
+      }
+    }
+
+    paintStatus();
+
     return el('section', { class: 'view' },
       el('h2', null, 'Settings'),
       el('p', { class: 'lead' },
-        'Minerva keeps no secrets in its repo. You bring your own Google OAuth client; Minerva remembers it locally. The README walks through creating one in five minutes.'
+        'Minerva keeps no secrets in its repo. You bring your own Google OAuth client; Minerva remembers it locally. ',
+        el('a', { href: 'https://github.com/the-farshad/Minerva#phase-1--bring-your-own-google-oauth-client', target: '_blank', rel: 'noopener' }, 'Setup walkthrough →')
       ),
-      form
+      form,
+      status
     );
   }
 
