@@ -522,6 +522,59 @@ code {
   border-radius: 3px;
 }
 
+/* --- dashboard stats (home) -------------------------------- */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.6rem;
+  margin: 0.5rem 0 1.25rem;
+}
+.stat-card {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.95rem;
+  text-decoration: none;
+  color: var(--fg);
+  transition: border-color .12s, transform .05s, background .12s;
+}
+a.stat-card:hover { border-color: var(--accent); }
+a.stat-card:active { transform: translateY(1px); }
+.stat-label {
+  font-size: 0.74rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.stat-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-bar {
+  margin-top: 0.45rem;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.stat-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width .25s;
+}
+.stat-card.stat-accent .stat-value { color: var(--accent); }
+.stat-card.stat-danger {
+  border-color: var(--error);
+}
+.stat-card.stat-danger .stat-value { color: var(--error); }
+.stat-card.stat-danger .stat-bar-fill { background: var(--error); }
+
 /* --- section cards (home) ----------------------------------- */
 
 .section-cards {
