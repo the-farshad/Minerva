@@ -4,7 +4,9 @@ A lightweight personal planner. Goals, tasks, projects, notes — backed by a Go
 
 > **Status — Phase 1.** Google Sign-In + automatic spreadsheet bootstrap are live, on top of Phase 0's static shell, theme + font picker, and public share with QR codes. Dynamic sections (read straight from your `_config` tab) land next.
 
-**Live:** <https://minerva.thefarshad.com>
+**Live (hosted instance):** <https://minerva.thefarshad.com>
+
+**Self-host your own copy:** Minerva is MIT-licensed, has no backend, and runs on plain GitHub Pages — fork it, push it to your own repo, enable Pages, point a domain at it, and you've got an independent Minerva at *your* URL. Full walkthrough in [Run your own copy](#run-your-own-copy) below. Either way, your data always lives in your own Google account; the hosted instance and a self-hosted copy are functionally identical.
 
 ---
 
@@ -58,7 +60,26 @@ Public sharing has three layers: (1) URL-hash payload — works today, free + of
 
 ---
 
-## Develop / fork
+## Run your own copy
+
+Minerva is fully open source and works equally well on your own infrastructure. There are no servers to provision, no databases to migrate, no API keys to rotate — it's just static files + your own Google account.
+
+### Self-host on GitHub Pages (5 minutes)
+
+1. **Fork** this repo to your GitHub account.
+2. **Edit `CNAME`** to your domain (e.g. `planner.example.com`) — or delete the file to use the default `<you>.github.io/Minerva` URL.
+3. **Enable Pages**: your fork → Settings → Pages → Source: Deploy from branch → Branch: `main` / `(root)` → Save.
+4. **Point DNS** (only if using a custom domain): add a `CNAME` record from your subdomain to `<your-github-username>.github.io.`
+5. **Create a Google OAuth client** for your domain — see [Phase 1 — bring your own Google OAuth client](#phase-1--bring-your-own-google-oauth-client) below. Authorize *your* origin (e.g. `https://planner.example.com`).
+6. Visit your URL → Settings → paste your Client ID → Connect Google. Done.
+
+You now run an independent Minerva. Pull from upstream when new features land, or don't — it's your fork.
+
+### Self-host anywhere else
+
+Any static-file host works: Netlify, Cloudflare Pages, Vercel, S3 + CloudFront, your own nginx. The whole app is the contents of this repo; serve it as-is. The only runtime dependency is the user's browser reaching `accounts.google.com`, `sheets.googleapis.com`, `www.googleapis.com`, and the QR-code CDN (`cdn.jsdelivr.net`) — same as on the hosted instance.
+
+### Local development
 
 ```sh
 git clone git@github.com:the-farshad/Minerva.git
@@ -66,7 +87,7 @@ cd Minerva
 python3 -m http.server 8000
 ```
 
-Open <http://localhost:8000>. Editing `index.html` or anything in `assets/` and refreshing is the entire dev loop — no build step.
+Open <http://localhost:8000>. Editing `index.html` or anything in `assets/` and refreshing is the entire dev loop — no build step. Add `http://localhost:8000` as an authorized JavaScript origin on your OAuth client to test the Connect flow locally.
 
 ### Layout
 
@@ -82,10 +103,6 @@ assets/app.js          hash router + views
 CNAME                  custom domain for GitHub Pages
 .nojekyll              tells Pages not to run Jekyll
 ```
-
-### Deploy
-
-GitHub Pages → **Settings → Pages → Source = Deploy from branch → Branch = `main` / `(root)`**. The `CNAME` file pins the custom domain; the `.nojekyll` file disables Jekyll processing.
 
 ---
 
