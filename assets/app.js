@@ -920,8 +920,65 @@
 
     var notifyPanel = el('div', { class: 'tg-panel' });
     var tgPanel = el('div', { class: 'tg-panel' });
+    var icalPanel = el('div', { class: 'tg-panel' });
     paintNotify();
+    paintIcal();
     paintTg();
+
+    function paintIcal() {
+      var c = readConfig();
+      var ic = readUi().ical || {};
+      var connected = !!c.spreadsheetId;
+      var children = [
+        el('h3', null, 'Calendar feed (iCal)'),
+        el('p', { class: 'small muted' },
+          'Publish your tasks as a public .ics file in your own Drive, then subscribe to it from Apple Calendar, Google Calendar, Outlook — anywhere. The file content updates whenever you click Update feed; subscribers refresh on their own schedule.'
+        )
+      ];
+      if (!connected) {
+        children.push(el('p', { class: 'muted small' }, 'Connect first.'));
+      } else {
+        children.push(
+          el('div', { class: 'form-actions' },
+            el('button', { class: 'btn', type: 'button',
+              onclick: async function () {
+                try {
+                  flash(icalPanel, 'Publishing…');
+                  var token = await M.auth.getToken(c.clientId);
+                  var res = await M.ical.publish(token);
+                  writeUi({ ical: { fileId: res.fileId, url: res.url, webcal: res.webcal, count: res.count, when: Date.now() } });
+                  paintIcal();
+                  flash(icalPanel, 'Published ' + res.count + ' event' + (res.count === 1 ? '' : 's') + '.');
+                } catch (err) {
+                  flash(icalPanel, 'Publish failed: ' + (err && err.message ? err.message : err), 'error');
+                }
+              } }, ic.url ? 'Update feed' : 'Publish feed')
+          )
+        );
+        if (ic.url) {
+          var urlInput = el('input', { type: 'text', value: ic.url, readonly: true, class: 'url' });
+          children.push(
+            el('div', { class: 'form-actions' },
+              el('span', { class: 'small muted' }, ic.count + ' event' + (ic.count === 1 ? '' : 's') + ' · last published ', M.render.relativeTime(ic.when))
+            ),
+            el('div', { class: 'link-row' }, urlInput,
+              el('button', { class: 'btn btn-ghost', type: 'button',
+                onclick: function () {
+                  urlInput.select();
+                  if (navigator.clipboard) navigator.clipboard.writeText(ic.url);
+                  flash(icalPanel, 'URL copied');
+                } }, 'Copy'),
+              el('a', { class: 'btn btn-ghost', href: ic.webcal }, 'Subscribe (webcal://)')
+            ),
+            el('p', { class: 'small muted' },
+              'Tip: in Google Calendar, ', el('strong', null, 'Other calendars → + → From URL'),
+              '; in Apple Calendar, ', el('strong', null, 'File → New Calendar Subscription'), '. Most clients refresh every few hours.'
+            )
+          );
+        }
+      }
+      icalPanel.replaceChildren.apply(icalPanel, children);
+    }
 
     function paintNotify() {
       var supports = 'Notification' in window;
@@ -1098,6 +1155,7 @@
       status,
       localPanel,
       notifyPanel,
+      icalPanel,
       tgPanel
     );
   }
