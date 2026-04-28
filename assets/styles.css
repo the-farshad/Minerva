@@ -597,6 +597,81 @@ table.rows tbody tr:last-child td { border-bottom: 0; }
 table.rows tbody tr:hover { background: var(--surface-2); }
 table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display: block; }
 
+/* --- editing -------------------------------------------------- */
+
+.view-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+.view-section-head h2 { margin: 0.25rem 0 0; }
+
+table.rows td {
+  cursor: text;
+  position: relative;
+}
+table.rows td:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+table.rows td.editing {
+  padding: 0.2rem 0.35rem;
+  background: var(--surface-2);
+}
+table.rows tr.row-dirty td:first-child {
+  border-left: 2px solid var(--accent);
+}
+
+.editor {
+  font: inherit;
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 0.35rem 0.5rem;
+  outline: none;
+  min-width: 4ch;
+}
+.editor.editor-text { min-width: 8ch; }
+.editor.editor-check { width: auto; transform: scale(1.2); }
+.editor.editor-color { padding: 0.1rem; height: 2rem; }
+.editor.editor-select { padding: 0.32rem 0.4rem; }
+textarea.editor { resize: vertical; min-height: 4rem; }
+
+.col-actions { width: 2.5rem; padding: 0; text-align: center; }
+.icon-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color .12s, background .12s;
+}
+.icon-btn:hover { color: var(--error); background: var(--surface-2); }
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+kbd {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: .8em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg);
+}
+
 /* --- typed cell renderers ----------------------------------- */
 
 /* progress bar */

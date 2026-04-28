@@ -239,6 +239,65 @@
     );
   }
 
+  // ---- push queue (single-flight, coalescing) -------------------------
+
+  var pushInFlight = null;
+  var pushPending = false;
+  function schedulePush() {
+    if (pushInFlight) { pushPending = true; return pushInFlight; }
+    pushInFlight = (async function () {
+      do {
+        pushPending = false;
+        var c = readConfig();
+        if (!c.clientId || !c.spreadsheetId) break;
+        try {
+          var token = await M.auth.getToken(c.clientId);
+          await M.sync.pushAll(token, c.spreadsheetId);
+        } catch (e) {
+          console.warn('[Minerva push]', e);
+          break;
+        }
+      } while (pushPending);
+      pushInFlight = null;
+    })();
+    return pushInFlight;
+  }
+
+  async function commitCellEdit(tab, rowId, columnName, newValue) {
+    var row = await M.db.getRow(tab, rowId);
+    if (!row) return;
+    if (row[columnName] === newValue) return;
+    row[columnName] = newValue;
+    row._updated = new Date().toISOString();
+    row._dirty = 1;
+    await M.db.upsertRow(tab, row);
+    schedulePush();
+  }
+
+  async function addRow(tab, headers) {
+    var row = { id: M.db.ulid(), _localOnly: 1, _dirty: 1, _deleted: 0, _rowIndex: null };
+    headers.forEach(function (h) {
+      if (h === 'id') return;
+      if (h === '_updated') row[h] = new Date().toISOString();
+      else row[h] = '';
+    });
+    await M.db.upsertRow(tab, row);
+    schedulePush();
+    return row;
+  }
+
+  async function deleteRow(tab, rowId) {
+    var row = await M.db.getRow(tab, rowId);
+    if (!row) return;
+    row._deleted = 1;
+    row._dirty = 1;
+    row._updated = new Date().toISOString();
+    await M.db.upsertRow(tab, row);
+    schedulePush();
+  }
+
+  // ---- section view ---------------------------------------------------
+
   async function viewSection(slug) {
     var cfg = readConfig();
     var sec = (configCache || []).find(function (r) { return r.slug === slug; });
@@ -250,61 +309,140 @@
                        el('a', { href: '#/settings' }, 'Sync now'))
       );
     }
-    var meta = await M.db.getMeta(sec.tab);
-    var rows = await M.db.getAllRows(sec.tab);
-    var sorted = M.render.applySort(rows, sec.defaultSort);
-    var filtered = M.render.applyFilter(sorted, sec.defaultFilter);
-
     var sheetLink = cfg.spreadsheetId
       ? el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Edit in Sheets ↗')
       : null;
 
-    var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
-    if (rows.length !== filtered.length) meta1 += ' (of ' + rows.length + ')';
-    var metaParts = [meta1];
-    if (sec.defaultSort) metaParts.push('sorted by ' + sec.defaultSort);
-    if (sec.defaultFilter) metaParts.push('filtered: ' + sec.defaultFilter);
+    var view = el('section', { class: 'view view-section' });
+    var header = el('div', { class: 'view-section-head' });
+    var meta1Span = el('span');
+    var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add row');
 
-    return el('section', { class: 'view view-section' },
-      el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)),
-      el('p', { class: 'lead' },
-        metaParts.join(' · '),
-        sheetLink ? ' · ' : null, sheetLink
-      ),
-      renderSectionTable(meta, filtered),
-      el('p', { class: 'small muted' },
-        'Read-only in Phase 2. Inline editing arrives next, with writes flushing back to your spreadsheet.'
-      )
-    );
+    header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)));
+    header.appendChild(addBtn);
+    view.appendChild(header);
+    view.appendChild(el('p', { class: 'lead' }, meta1Span, sheetLink ? ' · ' : null, sheetLink));
+
+    var tableHost = el('div');
+    view.appendChild(tableHost);
+    view.appendChild(el('p', { class: 'small muted' },
+      'Click any cell to edit. ', el('kbd', null, 'Enter'), ' to save, ', el('kbd', null, 'Esc'), ' to cancel. Writes are queued and flushed to your spreadsheet automatically.'));
+
+    async function refresh() {
+      var meta = await M.db.getMeta(sec.tab);
+      var allRows = await M.db.getAllRows(sec.tab);
+      var visible = allRows.filter(function (r) { return !r._deleted; });
+      var sorted = M.render.applySort(visible, sec.defaultSort);
+      var filtered = M.render.applyFilter(sorted, sec.defaultFilter);
+
+      var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
+      if (visible.length !== filtered.length) meta1 += ' (of ' + visible.length + ')';
+      var parts = [meta1];
+      if (sec.defaultSort) parts.push('sorted by ' + sec.defaultSort);
+      if (sec.defaultFilter) parts.push('filtered: ' + sec.defaultFilter);
+      meta1Span.textContent = parts.join(' · ');
+
+      tableHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh));
+    }
+
+    addBtn.addEventListener('click', async function () {
+      var meta = await M.db.getMeta(sec.tab);
+      if (!meta || !meta.headers) {
+        flash(view, 'No schema cached — Sync first.', 'error');
+        return;
+      }
+      await addRow(sec.tab, meta.headers);
+      await refresh();
+    });
+
+    await refresh();
+    return view;
   }
 
-  function renderSectionTable(meta, rows) {
+  function renderSectionTable(meta, rows, tab, refresh) {
     if (!meta || !meta.headers || !meta.headers.length) {
       return el('p', { class: 'muted' }, 'No schema cached yet — open Settings and click Sync now.');
     }
     if (!rows.length) {
-      return el('p', { class: 'muted' }, 'No rows yet. Add some in your spreadsheet, then Sync now.');
+      return el('p', { class: 'muted' }, 'No rows yet. Click ', el('em', null, '+ Add row'), ' to start, or add some in your spreadsheet then Sync.');
     }
     var visibleCols = [];
     for (var i = 0; i < meta.headers.length; i++) {
       var h = meta.headers[i];
       if (M.render.isInternal(h)) continue;
-      if (h === 'id') continue;          // hidden ULID
+      if (h === 'id') continue;
       visibleCols.push({ name: h, type: meta.types[i] || 'text' });
     }
     var thead = el('thead', null,
-      el('tr', null, visibleCols.map(function (c) { return el('th', null, c.name); }))
+      el('tr', null,
+        visibleCols.map(function (c) { return el('th', null, c.name); }).concat([
+          el('th', { class: 'col-actions', 'aria-label': 'Actions' }, '')
+        ])
+      )
     );
     var tbody = el('tbody', null, rows.map(function (row) {
-      return el('tr', null, visibleCols.map(function (c) {
-        var td = el('td', null);
+      var tr = el('tr', { 'data-rowid': row.id });
+      if (row._dirty) tr.classList.add('row-dirty');
+      visibleCols.forEach(function (c) {
+        var td = el('td', { 'data-col': c.name, 'data-type': c.type, tabindex: '0' });
         td.appendChild(M.render.renderCell(row[c.name], c.type));
-        return td;
-      }));
+        td.addEventListener('click', function () { startEdit(td, row, c, tab, refresh); });
+        td.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            startEdit(td, row, c, tab, refresh);
+          }
+        });
+        tr.appendChild(td);
+      });
+      var actions = el('td', { class: 'col-actions' });
+      var delBtn = el('button', {
+        class: 'icon-btn',
+        type: 'button',
+        title: 'Delete row',
+        'aria-label': 'Delete row',
+        onclick: async function () {
+          if (!confirm('Delete this row? This will remove it from your spreadsheet on next sync.')) return;
+          await deleteRow(tab, row.id);
+          await refresh();
+        }
+      }, '×');
+      actions.appendChild(delBtn);
+      tr.appendChild(actions);
+      return tr;
     }));
     var wrap = el('div', { class: 'table-wrap' });
     wrap.appendChild(el('table', { class: 'rows' }, thead, tbody));
     return wrap;
+  }
+
+  function startEdit(td, row, col, tab, refresh) {
+    if (td.classList.contains('editing')) return;
+    var current = row[col.name];
+
+    function endEdit(content) {
+      td.classList.remove('editing');
+      td.replaceChildren(content);
+    }
+
+    var editor = M.editors.make(current, col.type,
+      async function onCommit(newValue) {
+        endEdit(M.render.renderCell(newValue, col.type));
+        if (newValue !== current) {
+          await commitCellEdit(tab, row.id, col.name, newValue);
+          await refresh();
+        }
+      },
+      function onCancel() {
+        endEdit(M.render.renderCell(current, col.type));
+      }
+    );
+    td.classList.add('editing');
+    td.replaceChildren(editor);
+    if (typeof editor.focus === 'function') editor.focus();
+    if (typeof editor.select === 'function' && editor.tagName !== 'TEXTAREA') {
+      try { editor.select(); } catch (e) { /* no-op for non-text inputs */ }
+    }
   }
 
   function viewSettings() {
@@ -460,17 +598,18 @@
       try {
         paintStatus('syncing');
         var token = await M.auth.getToken(c.clientId);
-        var results = await M.sync.pullAll(token, c.spreadsheetId);
+        var results = await M.sync.syncAll(token, c.spreadsheetId);
         await refreshConfig();
         paintStatus();
         await paintLocal();
         renderNav(navActive());
-        var errs = results.filter(function (r) { return r.error; });
+        var errs = (results.pull || []).filter(function (r) { return r.error; })
+          .concat((results.push || []).filter(function (r) { return r.error; }));
         if (errs.length) {
-          flash(localPanel, 'Synced with ' + errs.length + ' tab error(s) — see console.', 'error');
+          flash(localPanel, 'Synced with ' + errs.length + ' error(s) — see console.', 'error');
           errs.forEach(function (e) { console.warn('[Minerva sync]', e); });
         } else {
-          flash(localPanel, 'Synced ' + results.length + ' tab' + (results.length === 1 ? '' : 's') + '.');
+          flash(localPanel, 'Pushed pending edits, then pulled ' + (results.pull || []).length + ' tab(s).');
         }
       } catch (err) {
         paintStatus();

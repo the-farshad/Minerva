@@ -29,41 +29,50 @@
     var resp = await Minerva.sheets.getValues(token, ssId, tab + '!A:Z');
     var values = (resp && resp.values) || [];
 
+    // Preserve any locally-dirty rows so the user's pending edits survive a pull.
+    var localDirty = await Minerva.db.getDirtyRows(tab);
+    var dirtyById = {};
+    localDirty.forEach(function (r) { dirtyById[r.id] = r; });
+
     if (values.length === 0) {
       await Minerva.db.setMeta(tab, { headers: [], types: [], lastPulledAt: Date.now() });
       await Minerva.db.clearTab(tab);
-      return { tab: tab, count: 0 };
+      if (localDirty.length) await Minerva.db.upsertRows(tab, localDirty);
+      return { tab: tab, count: localDirty.length };
     }
 
     var headers = values[0];
     var types = values[1] || [];
+    var existingMeta = (await Minerva.db.getMeta(tab)) || {};
     await Minerva.db.setMeta(tab, {
       headers: headers,
       types: types,
-      lastPulledAt: Date.now()
+      lastPulledAt: Date.now(),
+      sheetId: existingMeta.sheetId  // preserved across pulls; set in pullAll
     });
 
     var idField = pickIdField(headers);
 
     var dataRows = values.slice(2);
-    var rows = [];
+    var serverRows = [];
     for (var i = 0; i < dataRows.length; i++) {
       var raw = dataRows[i] || [];
-      var obj = { _rowIndex: i + 3, _dirty: 0, _deleted: 0 };
+      var obj = { _rowIndex: i + 3, _dirty: 0, _deleted: 0, _localOnly: 0 };
       for (var j = 0; j < headers.length; j++) {
         obj[headers[j]] = (raw[j] != null) ? raw[j] : '';
       }
       var id = idField ? obj[idField] : (tab + ':' + (i + 3));
-      if (!id) continue;             // blank row, skip
+      if (!id) continue;
       obj.id = id;
-      rows.push(obj);
+      if (dirtyById[id]) continue;   // skip; local dirty wins
+      serverRows.push(obj);
     }
 
-    // Phase 2 strategy: replace. Phase 3 will merge to preserve _dirty rows.
     await Minerva.db.clearTab(tab);
-    await Minerva.db.upsertRows(tab, rows);
+    if (serverRows.length) await Minerva.db.upsertRows(tab, serverRows);
+    if (localDirty.length) await Minerva.db.upsertRows(tab, localDirty);
 
-    return { tab: tab, count: rows.length };
+    return { tab: tab, count: serverRows.length + localDirty.length };
   }
 
   // After we've pulled `_config`, we know the user's full set of section tabs.
@@ -79,13 +88,24 @@
     return all;
   }
 
+  // Cache the numeric sheetId of every tab in meta. deleteDimension needs it.
+  async function refreshSheetIds(token, ssId) {
+    var ss = await Minerva.sheets.getSpreadsheet(token, ssId);
+    var sheets = (ss && ss.sheets) || [];
+    for (var i = 0; i < sheets.length; i++) {
+      var p = sheets[i].properties || {};
+      await Minerva.db.setMeta(p.title, { sheetId: p.sheetId });
+    }
+  }
+
   // Pull `_config` first (so we know all section tabs), then pull everything.
   async function pullAll(token, ssId, opts) {
     opts = opts || {};
     var onProgress = opts.onProgress || function () {};
     var results = [];
 
-    // Phase A — pull _config so we know all the section tabs the user has.
+    try { await refreshSheetIds(token, ssId); } catch (e) { /* non-fatal */ }
+
     try {
       var meta = await pullTab(token, ssId, '_config');
       results.push(meta);
@@ -109,6 +129,103 @@
     }
 
     return results;
+  }
+
+  // ---- push -----------------------------------------------------------
+
+  function rowToValues(row, headers) {
+    return headers.map(function (h) {
+      var v = row[h];
+      if (v == null) return '';
+      // booleans come from check editors as 'TRUE'/'FALSE' strings already
+      return String(v);
+    });
+  }
+
+  async function pushTab(token, ssId, tab) {
+    var dirty = await Minerva.db.getDirtyRows(tab);
+    if (!dirty.length) return { tab: tab, pushed: 0 };
+
+    var meta = await Minerva.db.getMeta(tab);
+    var headers = (meta && meta.headers) || [];
+    var sheetId = meta && meta.sheetId;
+    var anyDelete = false;
+
+    for (var i = 0; i < dirty.length; i++) {
+      var row = dirty[i];
+
+      if (row._deleted) {
+        if (row._localOnly || !row._rowIndex) {
+          // never reached the sheet — just drop it locally.
+          await Minerva.db.deleteRow(tab, row.id);
+        } else if (sheetId != null) {
+          await Minerva.sheets.batchUpdate(token, ssId, [{
+            deleteDimension: {
+              range: {
+                sheetId: sheetId,
+                dimension: 'ROWS',
+                startIndex: row._rowIndex - 1,
+                endIndex: row._rowIndex
+              }
+            }
+          }]);
+          await Minerva.db.deleteRow(tab, row.id);
+          anyDelete = true;
+        }
+        continue;
+      }
+
+      if (row._localOnly) {
+        var values = rowToValues(row, headers);
+        var resp = await Minerva.sheets.appendValues(token, ssId, tab + '!A:Z', [values]);
+        var range = (resp.updates || {}).updatedRange || '';
+        var m = range.match(/![A-Z]+(\d+)/);
+        var rowIndex = m ? parseInt(m[1], 10) : null;
+        row._localOnly = 0;
+        row._dirty = 0;
+        if (rowIndex) row._rowIndex = rowIndex;
+        await Minerva.db.upsertRow(tab, row);
+        continue;
+      }
+
+      if (row._rowIndex) {
+        var values2 = rowToValues(row, headers);
+        await Minerva.sheets.updateValues(token, ssId, tab + '!A' + row._rowIndex, [values2]);
+        row._dirty = 0;
+        await Minerva.db.upsertRow(tab, row);
+      }
+    }
+
+    // After a delete, all rows below shift up by one in the sheet — re-pull so
+    // local _rowIndex values match again.
+    if (anyDelete) {
+      try { await pullTab(token, ssId, tab); } catch (e) { /* non-fatal */ }
+    }
+
+    return { tab: tab, pushed: dirty.length };
+  }
+
+  async function pushAll(token, ssId) {
+    var allMeta = await Minerva.db.getAllMeta();
+    var results = [];
+    for (var i = 0; i < allMeta.length; i++) {
+      var t = allMeta[i].tab;
+      // Don't push meta tabs from the app — let users edit those directly in Sheets.
+      if (t.charAt(0) === '_') continue;
+      try {
+        var r = await pushTab(token, ssId, t);
+        results.push(r);
+      } catch (e) {
+        results.push({ tab: t, error: (e && e.message) || String(e) });
+      }
+    }
+    return results;
+  }
+
+  async function syncAll(token, ssId) {
+    var pushResults = await pushAll(token, ssId);
+    var pullResults = await pullAll(token, ssId);
+    return { push: pushResults, pull: pullResults };
   }
 
   async function lastSync() {
@@ -138,6 +255,9 @@
   window.Minerva.sync = {
     pullTab: pullTab,
     pullAll: pullAll,
+    pushTab: pushTab,
+    pushAll: pushAll,
+    syncAll: syncAll,
     lastSync: lastSync,
     stats: stats
   };
