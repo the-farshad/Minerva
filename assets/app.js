@@ -120,6 +120,7 @@
     var cfg = readConfig();
     var hasSheet = !!cfg.spreadsheetId;
     if (hasSheet) {
+      items.push({ hash: '#/today', label: '☀ Today' });
       sectionRows().forEach(function (r) {
         items.push({
           hash: '#/s/' + encodeURIComponent(r.slug),
@@ -579,6 +580,162 @@
     });
 
     await refresh();
+    return view;
+  }
+
+  // ---- today view ---------------------------------------------------
+
+  async function markTaskDone(rowId) {
+    var row = await M.db.getRow('tasks', rowId);
+    if (!row) return;
+    row.status = 'done';
+    row._updated = new Date().toISOString();
+    row._dirty = 1;
+    await M.db.upsertRow('tasks', row);
+    schedulePush();
+  }
+
+  async function viewToday() {
+    var cfg = readConfig();
+    var st = M.auth ? M.auth.getState() : { hasToken: false };
+    if (!cfg.spreadsheetId || !st.hasToken) {
+      return el('section', { class: 'view' },
+        el('h2', null, 'Today'),
+        el('p', null, 'Connect first.'),
+        el('p', null, el('a', { href: '#/settings' }, 'Open Settings →'))
+      );
+    }
+
+    var today = todayStr();
+    var tasks = (await M.db.getAllRows('tasks').catch(function () { return []; }))
+      .filter(function (r) {
+        if (r._deleted) return false;
+        if (String(r.status || '').toLowerCase() === 'done') return false;
+        if (!r.due) return false;
+        return String(r.due).slice(0, 10) <= today;
+      })
+      .sort(function (a, b) {
+        return String(a.due).localeCompare(String(b.due));
+      });
+
+    var habits = (await M.db.getAllRows('habits').catch(function () { return []; }))
+      .filter(function (h) { return !h._deleted; });
+    var habitLogs = (await M.db.getAllRows('habit_log').catch(function () { return []; }))
+      .filter(function (l) { return !l._deleted; });
+    var doneToday = {};
+    habitLogs.forEach(function (l) {
+      if (String(l.date).slice(0, 10) === today) doneToday[l.habit_id] = true;
+    });
+    var habitsLeft = habits.filter(function (h) { return !doneToday[h.id]; });
+    var habitsDone = habits.filter(function (h) { return doneToday[h.id]; });
+
+    var notes = (await M.db.getAllRows('notes').catch(function () { return []; }))
+      .filter(function (n) {
+        if (n._deleted) return false;
+        if (!n.created) return false;
+        return Date.now() - new Date(n.created).getTime() < 7 * 86400000;
+      })
+      .sort(function (a, b) { return String(b.created).localeCompare(String(a.created)); })
+      .slice(0, 5);
+
+    var view = el('section', { class: 'view view-today' });
+    view.appendChild(el('h2', null, '☀ Today  ',
+      el('span', { class: 'small muted' }, new Date().toLocaleDateString(undefined, {
+        weekday: 'long', month: 'long', day: 'numeric'
+      }))
+    ));
+
+    // -- tasks block --
+    view.appendChild(el('h3', null, 'Tasks  ',
+      el('span', { class: 'small muted' }, '(' + tasks.length + ')')));
+    if (!tasks.length) {
+      view.appendChild(el('p', { class: 'muted' }, 'Nothing due today. ✓'));
+    } else {
+      var ul = el('ul', { class: 'today-list' });
+      tasks.forEach(function (t) {
+        var dueDate = String(t.due).slice(0, 10);
+        var overdue = dueDate < today;
+        var li = el('li', { class: 'today-item' + (overdue ? ' today-overdue' : '') });
+        var doneBtn = el('button', {
+          class: 'today-check',
+          type: 'button',
+          title: 'Mark done',
+          onclick: async function () {
+            doneBtn.disabled = true;
+            await markTaskDone(t.id);
+            li.style.opacity = '0.4';
+            li.style.textDecoration = 'line-through';
+            setTimeout(function () { li.remove(); }, 300);
+          }
+        }, '✓');
+        li.appendChild(doneBtn);
+        var titleSpan = el('a', {
+          class: 'today-title',
+          href: '#/s/tasks'
+        }, t.title || t.id);
+        li.appendChild(titleSpan);
+        var meta = [];
+        if (overdue) meta.push('overdue (' + dueDate + ')');
+        if (t.priority) meta.push(t.priority);
+        if (t.project) meta.push('· ' + t.project);
+        if (meta.length) {
+          li.appendChild(el('span', { class: 'today-meta' }, meta.join(' · ')));
+        }
+        ul.appendChild(li);
+      });
+      view.appendChild(ul);
+    }
+
+    // -- habits block --
+    view.appendChild(el('h3', null, 'Habits  ',
+      el('span', { class: 'small muted' }, '(' + habitsDone.length + ' / ' + habits.length + ' done)')));
+    if (!habits.length) {
+      view.appendChild(el('p', { class: 'muted' },
+        'No habits yet — ', el('a', { href: '#/s/habits' }, 'add one →')));
+    } else if (!habitsLeft.length) {
+      view.appendChild(el('p', { class: 'muted' }, 'All done for today. 🔥'));
+    } else {
+      var hwrap = el('div', { class: 'today-habits' });
+      habitsLeft.forEach(function (h) {
+        var card = el('div', { class: 'today-habit' });
+        card.appendChild(el('div', { class: 'today-habit-name' }, h.name || h.id));
+        var btn = el('button', {
+          class: 'btn btn-ghost', type: 'button',
+          onclick: async function () {
+            btn.disabled = true;
+            try { await logHabitToday(h.id); } catch (e) { /* surface */ }
+            card.style.opacity = '0.5';
+            setTimeout(function () { card.remove(); }, 300);
+          }
+        }, '✓ Done');
+        card.appendChild(btn);
+        hwrap.appendChild(card);
+      });
+      view.appendChild(hwrap);
+    }
+
+    // -- recent notes block --
+    if (notes.length) {
+      view.appendChild(el('h3', null, 'Recent notes'));
+      var nul = el('ul', { class: 'today-list today-notes' });
+      notes.forEach(function (n) {
+        var li = el('li', { class: 'today-item' });
+        li.appendChild(el('span', { class: 'today-note-date' }, String(n.created || '').slice(0, 10)));
+        li.appendChild(el('a', { class: 'today-title', href: '#/s/notes' },
+          n.title || (n.body ? String(n.body).slice(0, 60) : n.id)));
+        nul.appendChild(li);
+      });
+      view.appendChild(nul);
+    }
+
+    view.appendChild(el('p', { class: 'small muted' },
+      el('a', { href: '#/s/tasks' }, 'All tasks →'),
+      ' · ',
+      el('a', { href: '#/s/habits' }, 'All habits →'),
+      ' · ',
+      el('a', { href: '#/s/notes' }, 'All notes →')
+    ));
+
     return view;
   }
 
@@ -1543,6 +1700,8 @@
         view = viewShare(); active = '#/share';
       } else if (/^#\/p\/.+/.test(hash)) {
         view = viewPublic(hash.replace(/^#\/p\//, ''));
+      } else if (hash === '#/today') {
+        view = await viewToday(); active = '#/today';
       } else if ((sectionMatch = hash.match(/^#\/s\/(.+)$/))) {
         var slug = decodeURIComponent(sectionMatch[1]);
         view = await viewSection(slug);
@@ -1699,6 +1858,7 @@
   function navActive() {
     var h = location.hash || '#/';
     if (h === '#/' || h === '' || h === '#') return '#/';
+    if (h === '#/today') return '#/today';
     if (/^#\/s\//.test(h)) return h;
     if (/^#\/share/.test(h)) return '#/share';
     if (h === '#/settings') return '#/settings';
@@ -1954,6 +2114,7 @@
     });
     var rows = [
       ['g', 'Home'],
+      ['t', 'Today'],
       ['1 – 9', 'Open the Nth section'],
       ['/', 'Quick capture'],
       ['⌘/Ctrl + K', 'Search across everything'],
@@ -2005,6 +2166,7 @@
     if (e.key === '?' || (e.shiftKey && e.key === '/')) { showHelp(); return; }
     if (e.key === '/') { e.preventDefault(); showCapture(); return; }
     if (e.key === 'g') { location.hash = '#/'; return; }
+    if (e.key === 't') { location.hash = '#/today'; return; }
     if (e.key === 's') { location.hash = '#/settings'; return; }
     if (e.key === 'q') { location.hash = '#/share'; return; }
 
