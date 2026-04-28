@@ -46,7 +46,7 @@ In short:
 
 1. [Google Cloud Console](https://console.cloud.google.com/) → create a project (e.g. "Minerva").
 2. **APIs & Services → Library** — enable **Google Sheets API** and **Google Drive API**.
-3. **APIs & Services → OAuth consent screen** — User type: External; add the four scopes (`spreadsheets`, `drive.file`, `userinfo.email`, `openid`); add your email as a Test user.
+3. **APIs & Services → OAuth consent screen** — User type: External; add the three non-sensitive scopes (`drive.file`, `userinfo.email`, `openid`); add your email as a Test user.
 4. **APIs & Services → Credentials → Create OAuth client ID** — type: Web application; Authorized JavaScript origins: `https://minerva.thefarshad.com` (and `http://localhost:8000` for local dev).
 5. Copy the Client ID (looks like `123…-abc.apps.googleusercontent.com`).
 6. Open Minerva → **Settings** → paste → **Save** → **Connect Google**.
@@ -118,7 +118,7 @@ CNAME                  custom domain for GitHub Pages
 - **No telemetry.** No analytics, no error reporters.
 - **No secrets in repo.** Ever. The OAuth client ID is BYO, kept in `localStorage` only.
 - **No proxy.** API calls go directly from your browser to Google.
-- **OAuth scopes** are the minimal set: `spreadsheets` + `drive.file` (only files this app created — *not* full-Drive read) + `userinfo.email` + `openid`.
+- **OAuth scopes** are the minimal non-sensitive set: `drive.file` (only files this app created — *not* full-Drive read) + `userinfo.email` + `openid`. The Sheets API works for app-created files under `drive.file`, so the broader `spreadsheets` scope is unnecessary. As a bonus, all three scopes are non-sensitive, so the consent flow skips the "Google hasn't verified this app" yellow warning.
 - **Public sharing is opt-in row-by-row.** Therapy/journal-style presets ship without a `public` column, so they cannot be accidentally exposed.
 
 ---

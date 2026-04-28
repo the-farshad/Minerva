@@ -15,8 +15,14 @@
   'use strict';
 
   var KEY = 'minerva.auth.v1';
+  // Minimal scope set: drive.file lets the app see only files it created
+  // or that the user explicitly opened with it (which is exactly what
+  // Minerva needs — its own spreadsheet, nothing else). Sheets API
+  // operations on those files work under drive.file, so we don't need
+  // the broader, sensitive 'spreadsheets' scope. Keeping only
+  // non-sensitive scopes also skips the "Google hasn't verified this app"
+  // yellow warning at consent time.
   var SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive.file',
     'https://www.googleapis.com/auth/userinfo.email',
     'openid'
