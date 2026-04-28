@@ -1,0 +1,17 @@
+# Local session log — never commit (see LOG.md header)
+LOG.md
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Secrets — Minerva intentionally keeps no secrets in the repo,
+# but ignore these defensively in case anything is ever pasted locally.
+.env
+.env.*
+secrets.json
+*.local.json
