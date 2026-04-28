@@ -54,14 +54,13 @@ To remove Telegram entirely, click **Clear Telegram config** — wipes the token
 This mode adds:
 
 - Reminders that fire from your Google account on a cron, even if no Minerva tab is open.
-- *Inbound* messages from the bot — text you send the bot becomes rows in your `notes` (or any tab you choose).
+- *Inbound* messages from the bot — text you send the bot becomes rows in your `notes` tab automatically.
 
-It works by installing a Google Apps Script you own, in your own Google Drive. The script:
+It works by installing a Google Apps Script you own, in your own Google Drive. Setup is more involved (~10 minutes) but pure copy-paste.
 
-1. Has a public `doPost` web-app URL that Telegram forwards bot messages to.
-2. Reads your `tasks` tab on a time-trigger and sends reminders via `sendMessage`.
+**👉 Always-on bridge walkthrough:** [`docs/setup-telegram-always-on.md`](setup-telegram-always-on.md)
 
-Setup is more involved (~10 minutes) and lives in a follow-up doc. The client-side mode above is the recommended starting point — try it first.
+The browser-only mode above is the recommended starting point — try it first.
 
 ---
 

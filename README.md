@@ -27,7 +27,7 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 ### Sharing & integrations
 - **Public share + QR** — build a note / question / poll; get a stable URL and a crisp SVG QR code (downloadable as a 16× PNG). No login required; the data lives in the URL hash.
 - **Calendar feed (iCal)** — publishes your tasks as a public `.ics` file in your own Drive, subscribable from Apple Calendar, Google Calendar, Outlook — anywhere. Click *Update feed* in Settings to refresh.
-- **Telegram bot** — paste a bot token (BotFather, ~3 min) and a chat ID. Minerva pings your chat once per due/overdue task per day. Setup: [`docs/setup-telegram.md`](docs/setup-telegram.md).
+- **Telegram bot** — paste a bot token (BotFather, ~3 min) and a chat ID. Minerva pings your chat once per due/overdue task per day. Setup: [`docs/setup-telegram.md`](docs/setup-telegram.md). For an optional **always-on** bridge (reminders fire even with no Minerva tab open; inbound bot messages become note rows automatically), there's a [drop-in Apps Script template](docs/setup-telegram-always-on.md).
 - **Browser desktop notifications** — alongside (or instead of) Telegram, the same reminder ticker fires native desktop notifications.
 
 ### Look & feel
