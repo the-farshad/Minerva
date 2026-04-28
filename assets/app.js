@@ -214,15 +214,18 @@
     );
 
     var status = el('div', { class: 'auth-status' });
+    var localPanel = el('div', { class: 'local-store' });
+
+    var stageLabels = {
+      auth: 'Opening Google sign-in…',
+      bootstrap: 'Setting up your Minerva spreadsheet…',
+      syncing: 'Pulling your data into the local store…'
+    };
+
     function paintStatus(stage) {
       var c = readConfig();
       var state = M.auth ? M.auth.getState() : { hasToken: false, email: null };
       var ok = state.hasToken && c.spreadsheetId;
-      var stageLabels = {
-        auth: 'Opening Google sign-in…',
-        bootstrap: 'Setting up your Minerva spreadsheet…',
-        done: ''
-      };
       status.replaceChildren(
         el('h3', null, 'Connection'),
         ok
@@ -244,17 +247,98 @@
                 if (confirm('Sign out? Your spreadsheet is not affected.')) {
                   M.auth.signOut();
                   paintStatus();
+                  paintLocal();
                 }
               } }, 'Disconnect')
             : el('button', { class: 'btn', type: 'button',
                 disabled: !c.clientId,
                 onclick: function () { void connect(); }
               }, 'Connect Google'),
-          ok
-            ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void connect(); } }, 'Re-run bootstrap')
-            : null
+          ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void syncNow(); } }, 'Sync now') : null,
+          ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void connect(); } }, 'Re-run bootstrap') : null
         )
       );
+    }
+
+    function fmtRel(ts) {
+      if (!ts) return 'never';
+      var d = Date.now() - ts;
+      if (d < 5000) return 'just now';
+      if (d < 60000) return Math.round(d / 1000) + 's ago';
+      if (d < 3600000) return Math.round(d / 60000) + 'm ago';
+      if (d < 86400000) return Math.round(d / 3600000) + 'h ago';
+      return new Date(ts).toLocaleString();
+    }
+
+    async function paintLocal() {
+      try {
+        var stats = await M.sync.stats();
+      } catch (e) {
+        localPanel.replaceChildren(
+          el('h3', null, 'Local store'),
+          el('p', { class: 'muted' }, 'IndexedDB unavailable: ', String((e && e.message) || e))
+        );
+        return;
+      }
+      var last = await M.sync.lastSync();
+      var rows = stats.length
+        ? el('table', { class: 'kv' },
+            el('thead', null, el('tr', null,
+              el('th', null, 'Tab'),
+              el('th', null, 'Rows'),
+              el('th', null, 'Last sync')
+            )),
+            el('tbody', null, stats.map(function (s) {
+              return el('tr', null,
+                el('td', null, el('code', null, s.tab)),
+                el('td', null, String(s.count)),
+                el('td', { class: 'muted' }, fmtRel(s.lastPulledAt))
+              );
+            }))
+          )
+        : el('p', { class: 'muted' }, 'Empty — connect, then click Sync now.');
+
+      localPanel.replaceChildren(
+        el('h3', null, 'Local store'),
+        el('p', { class: 'small muted' },
+          'Your spreadsheet is mirrored to a private IndexedDB store in this browser. ',
+          last ? ('Last full sync ' + fmtRel(last) + '.') : 'Never synced yet.'
+        ),
+        rows,
+        el('div', { class: 'form-actions' },
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            onclick: function () {
+              if (confirm('Clear the local mirror? Your spreadsheet is not affected; the next sync will re-populate.')) {
+                M.db.clearAll().then(paintLocal);
+              }
+            } }, 'Clear local mirror')
+        )
+      );
+    }
+
+    async function syncNow() {
+      var c = readConfig();
+      if (!c.clientId || !c.spreadsheetId) {
+        flash(localPanel, 'Connect first.', 'error');
+        return;
+      }
+      try {
+        paintStatus('syncing');
+        var token = await M.auth.getToken(c.clientId);
+        var results = await M.sync.pullAll(token, c.spreadsheetId);
+        paintStatus();
+        await paintLocal();
+        var errs = results.filter(function (r) { return r.error; });
+        if (errs.length) {
+          flash(localPanel, 'Synced with ' + errs.length + ' tab error(s) — see console.', 'error');
+          errs.forEach(function (e) { console.warn('[Minerva sync]', e); });
+        } else {
+          flash(localPanel, 'Synced ' + results.length + ' tab' + (results.length === 1 ? '' : 's') + '.');
+        }
+      } catch (err) {
+        paintStatus();
+        flash(localPanel, 'Sync failed: ' + (err && err.message ? err.message : err), 'error');
+      }
     }
 
     async function connect() {
@@ -269,8 +353,11 @@
         paintStatus('bootstrap');
         var bs = await M.bootstrap(token);
         writeConfig({ spreadsheetId: bs.spreadsheetId });
-        paintStatus('done');
-        flash(status, bs.fresh ? 'Spreadsheet created and seeded.' : 'Connected to your existing Minerva spreadsheet.');
+        paintStatus('syncing');
+        await M.sync.pullAll(token, bs.spreadsheetId);
+        paintStatus();
+        await paintLocal();
+        flash(status, bs.fresh ? 'Spreadsheet created, seeded, and pulled.' : 'Connected and synced.');
       } catch (err) {
         paintStatus();
         flash(status, 'Connect failed: ' + (err && err.message ? err.message : err), 'error');
@@ -278,15 +365,17 @@
     }
 
     paintStatus();
+    paintLocal();
 
     return el('section', { class: 'view' },
       el('h2', null, 'Settings'),
       el('p', { class: 'lead' },
         'Minerva keeps no secrets in its repo. You bring your own Google OAuth client; Minerva remembers it locally. ',
-        el('a', { href: 'https://github.com/the-farshad/Minerva#phase-1--bring-your-own-google-oauth-client', target: '_blank', rel: 'noopener' }, 'Setup walkthrough →')
+        el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough →')
       ),
       form,
-      status
+      status,
+      localPanel
     );
   }
 
