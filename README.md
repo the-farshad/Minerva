@@ -6,7 +6,7 @@ A lightweight personal planner. Goals, tasks, projects, notes — backed by a Go
 
 **Live (hosted instance):** <https://minerva.thefarshad.com>
 
-**Self-host your own copy:** Minerva is MIT-licensed, has no backend, and runs on plain GitHub Pages — fork it, push it to your own repo, enable Pages, point a domain at it, and you've got an independent Minerva at *your* URL. Full walkthrough in [Run your own copy](#run-your-own-copy) below. Either way, your data always lives in your own Google account; the hosted instance and a self-hosted copy are functionally identical.
+**Self-host your own copy:** Minerva is published under the GNU GPL v3, has no backend, and runs on plain GitHub Pages — fork it, push it to your own repo, enable Pages, point a domain at it, and you've got an independent Minerva at *your* URL. Full walkthrough in [Run your own copy](#run-your-own-copy) below. Either way, your data always lives in your own Google account; the hosted instance and a self-hosted copy are functionally identical.
 
 ---
 
@@ -122,4 +122,4 @@ CNAME                  custom domain for GitHub Pages
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+GNU General Public License v3.0 — see [`LICENSE`](LICENSE). Copyleft: forks and derivative works (whether self-hosted or redistributed) must remain GPL-3 and source-available.
