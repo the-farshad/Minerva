@@ -25,6 +25,7 @@
         ['tasks',    'Tasks',    '✓',  'tasks',    2, 'TRUE', 'due',         'status:!=done'],
         ['projects', 'Projects', '📁', 'projects', 3, 'TRUE', 'name',        ''],
         ['notes',    'Notes',    '📝', 'notes',    4, 'TRUE', 'created:desc',''],
+        ['habits',   'Habits',   '⚡', 'habits',   5, 'TRUE', 'name',        '']
       ]
     },
     _prefs: {
@@ -62,11 +63,21 @@
       headers: ['id','title','body','tags','created','_updated'],
       types:   ['text','text','markdown','multiselect()','datetime','datetime'],
       rows: []
+    },
+    habits: {
+      headers: ['id','name','color','target','last_done','_updated'],
+      types:   ['text','text','color','number','date','datetime'],
+      rows: []
+    },
+    habit_log: {
+      headers: ['id','habit_id','date','count','_updated'],
+      types:   ['text','ref(habits)','date','number','datetime'],
+      rows: []
     }
   };
 
   // Ordered list — _config first so it's the leftmost tab in Sheets.
-  var TAB_ORDER = ['_config','_prefs','_log','goals','tasks','projects','notes'];
+  var TAB_ORDER = ['_config','_prefs','_log','goals','tasks','projects','notes','habits','habit_log'];
 
   async function findOrCreate(token) {
     var found = await Minerva.sheets.findByName(token, SHEETS_TITLE);

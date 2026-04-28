@@ -431,6 +431,9 @@
                        el('a', { href: '#/settings' }, 'Sync now'))
       );
     }
+
+    // The habits section gets a custom heatmap-first view.
+    if (slug === 'habits') return await viewHabits(sec, cfg);
     var sheetLink = cfg.spreadsheetId
       ? el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Edit in Sheets ↗')
       : null;
@@ -572,6 +575,192 @@
       await addRow(sec.tab, meta.headers);
       mode = 'list';
       writeViewMode(slug, 'list');
+      await refresh();
+    });
+
+    await refresh();
+    return view;
+  }
+
+  // ---- habits view --------------------------------------------------
+
+  function ymdOf(d) {
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+
+  function calcStreak(habitLogsByDate) {
+    var d = new Date();
+    var streak = 0;
+    while (true) {
+      var k = ymdOf(d);
+      if (!habitLogsByDate[k]) break;
+      streak++;
+      d.setDate(d.getDate() - 1);
+    }
+    return streak;
+  }
+
+  async function logHabitToday(habitId) {
+    var date = todayStr();
+    var existing = (await M.db.getAllRows('habit_log')).find(function (r) {
+      return r.habit_id === habitId && String(r.date).slice(0, 10) === date && !r._deleted;
+    });
+    if (existing) {
+      existing.count = (Number(existing.count) || 0) + 1;
+      existing._updated = new Date().toISOString();
+      existing._dirty = 1;
+      await M.db.upsertRow('habit_log', existing);
+    } else {
+      var lmeta = await M.db.getMeta('habit_log');
+      if (!lmeta || !lmeta.headers) throw new Error('habit_log not synced — Sync first.');
+      var row = await addRow('habit_log', lmeta.headers);
+      row.habit_id = habitId;
+      row.date = date;
+      row.count = 1;
+      row._dirty = 1;
+      await M.db.upsertRow('habit_log', row);
+    }
+    var habit = await M.db.getRow('habits', habitId);
+    if (habit) {
+      habit.last_done = date;
+      habit._updated = new Date().toISOString();
+      habit._dirty = 1;
+      await M.db.upsertRow('habits', habit);
+    }
+    schedulePush();
+  }
+
+  function renderHeatmap(logsByDate, weeks, color) {
+    weeks = weeks || 12;
+    color = color || 'var(--accent)';
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    // Find the Monday on/before (weeks * 7) days ago for a clean grid.
+    var start = new Date(today);
+    start.setDate(start.getDate() - (weeks * 7 - 1));
+    // Find the Sunday-before-or-equal start so columns are full.
+    var weekStart = new Date(start);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+
+    var maxCount = 0;
+    Object.keys(logsByDate).forEach(function (k) {
+      if (logsByDate[k] > maxCount) maxCount = logsByDate[k];
+    });
+    if (maxCount < 1) maxCount = 1;
+
+    var grid = el('div', { class: 'heatmap-grid' });
+    var totalCols = Math.ceil((today.getTime() - weekStart.getTime()) / (7 * 86400000)) + 1;
+    var d = new Date(weekStart);
+    for (var w = 0; w < totalCols; w++) {
+      var col = el('div', { class: 'heatmap-col' });
+      for (var dow = 0; dow < 7; dow++) {
+        var key = ymdOf(d);
+        var count = logsByDate[key] || 0;
+        var future = d > today;
+        var level = count === 0 ? 0 : Math.min(4, Math.ceil((count / maxCount) * 4));
+        var cell = el('div', {
+          class: 'heatmap-cell heatmap-c' + level + (future ? ' heatmap-future' : ''),
+          title: key + (count ? ' — done ' + count + (count === 1 ? ' time' : ' times') : ' — nothing logged')
+        });
+        if (count) cell.style.background = color;
+        if (count && level < 4) cell.style.opacity = String(0.3 + 0.175 * level);
+        col.appendChild(cell);
+        d.setDate(d.getDate() + 1);
+      }
+      grid.appendChild(col);
+    }
+    return grid;
+  }
+
+  async function viewHabits(sec, cfg) {
+    var view = el('section', { class: 'view view-habits' });
+    var header = el('div', { class: 'view-section-head' });
+    var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add habit');
+    header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || 'Habits')));
+    header.appendChild(el('div', { class: 'view-section-head-right' }, addBtn));
+    view.appendChild(header);
+    view.appendChild(el('p', { class: 'lead' },
+      'Streaks and a 12-week heatmap of your habit log. Click ',
+      el('em', null, 'Done today'),
+      ' to log a completion.'
+    ));
+
+    var grid = el('div', { class: 'habits-grid' });
+    view.appendChild(grid);
+    view.appendChild(el('p', { class: 'small muted' },
+      'Habit data lives in the ', el('code', null, 'habits'),
+      ' tab and one log row per completion in the ', el('code', null, 'habit_log'),
+      ' tab. Edit them directly in your spreadsheet for bulk changes.'
+    ));
+
+    async function refresh() {
+      var habits = (await M.db.getAllRows('habits')).filter(function (h) { return !h._deleted; });
+      var allLogs = (await M.db.getAllRows('habit_log')).filter(function (l) { return !l._deleted; });
+
+      grid.replaceChildren();
+
+      if (!habits.length) {
+        grid.appendChild(el('p', { class: 'muted' },
+          'No habits yet. Click + Add habit to start.'));
+        return;
+      }
+
+      habits.forEach(function (h) {
+        var hLogs = allLogs.filter(function (l) { return l.habit_id === h.id; });
+        var byDate = {};
+        hLogs.forEach(function (l) {
+          var k = String(l.date || '').slice(0, 10);
+          if (!k) return;
+          byDate[k] = (byDate[k] || 0) + (Number(l.count) || 1);
+        });
+        var streak = calcStreak(byDate);
+        var done = !!byDate[todayStr()];
+
+        var card = el('div', { class: 'habit-card' });
+        card.appendChild(el('div', { class: 'habit-card-head' },
+          el('h3', null, h.name || h.id),
+          el('span', { class: 'habit-streak' },
+            el('strong', null, String(streak)),
+            ' day' + (streak === 1 ? '' : 's')
+          )
+        ));
+        if (h.target) {
+          card.appendChild(el('p', { class: 'small muted' },
+            'Target: ', el('code', null, String(h.target)) + ' / day'));
+        }
+        card.appendChild(renderHeatmap(byDate, 12, h.color || 'var(--accent)'));
+        card.appendChild(el('div', { class: 'habit-actions' },
+          el('button', {
+            class: 'btn' + (done ? ' btn-ghost' : ''),
+            type: 'button',
+            onclick: async function () {
+              try {
+                await logHabitToday(h.id);
+                await refresh();
+              } catch (e) {
+                flash(view, 'Could not log: ' + e.message, 'error');
+              }
+            }
+          }, done ? 'Log another today' : '✓ Done today'),
+          el('a', { class: 'btn btn-ghost',
+            href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Edit in Sheets ↗')
+        ));
+        grid.appendChild(card);
+      });
+    }
+
+    addBtn.addEventListener('click', async function () {
+      var meta = await M.db.getMeta('habits');
+      if (!meta || !meta.headers) {
+        flash(view, 'No habits schema — Sync first.', 'error');
+        return;
+      }
+      var row = await addRow('habits', meta.headers);
+      row.name = 'New habit';
+      row._dirty = 1;
+      await M.db.upsertRow('habits', row);
+      schedulePush();
       await refresh();
     });
 

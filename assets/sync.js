@@ -14,7 +14,7 @@
 (function () {
   'use strict';
 
-  var SEED_TABS = ['_config', '_prefs', '_log', 'goals', 'tasks', 'projects', 'notes'];
+  var SEED_TABS = ['_config', '_prefs', '_log', 'goals', 'tasks', 'projects', 'notes', 'habits', 'habit_log'];
 
   // Identify which column should serve as a row's stable id, given the
   // tab's headers. Falls back to a synthesized id from row index.
