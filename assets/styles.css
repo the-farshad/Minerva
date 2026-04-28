@@ -875,12 +875,14 @@ kbd {
 /* --- settings panels --------------------------------------- */
 
 .auth-status,
-.local-store {
+.local-store,
+.tg-panel {
   margin-top: 1.4rem;
   max-width: var(--readw);
 }
 .auth-status h3,
-.local-store h3 {
+.local-store h3,
+.tg-panel h3 {
   margin: 0 0 0.5rem;
   font-size: 0.95rem;
 }
