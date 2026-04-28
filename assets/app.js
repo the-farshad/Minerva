@@ -421,6 +421,20 @@
     } catch (e) { /* ignore */ }
   }
 
+  function readSort(slug) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.sort') || '{}');
+      return raw[slug] || null;
+    } catch (e) { return null; }
+  }
+  function writeSort(slug, sort) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.sort') || '{}');
+      if (sort) raw[slug] = sort; else delete raw[slug];
+      localStorage.setItem('minerva.section.sort', JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+
   async function viewSection(slug) {
     var cfg = readConfig();
     var sec = (configCache || []).find(function (r) { return r.slug === slug; });
@@ -461,6 +475,7 @@
     view.appendChild(hint);
 
     var mode = readViewMode(slug);
+    var userSort = readSort(slug); // null or { col, dir: 'asc'|'desc' }
     var calCursor = new Date(); calCursor.setDate(1);
     var liveQuery = '';
     var debounceFilter = null;
@@ -471,6 +486,13 @@
         refresh();
       }, 60);
     });
+
+    function onSortChange(next) {
+      // next is { col, dir } or null to clear back to defaultSort.
+      userSort = next;
+      writeSort(slug, next);
+      refresh();
+    }
 
     function paintModeToggle(hasDate) {
       modeToggle.innerHTML = '';
@@ -520,7 +542,12 @@
       var meta = await M.db.getMeta(sec.tab);
       var allRows = await M.db.getAllRows(sec.tab);
       var visible = allRows.filter(function (r) { return !r._deleted; });
-      var sorted = M.render.applySort(visible, sec.defaultSort);
+
+      // Sort: user click overrides _config.defaultSort.
+      var sortSpec = userSort
+        ? userSort.col + (userSort.dir === 'desc' ? ':desc' : '')
+        : sec.defaultSort;
+      var sorted = M.render.applySort(visible, sortSpec);
       var filtered = M.render.applyFilter(sorted, sec.defaultFilter);
 
       // Per-section live filter (typed in the header search box).
@@ -547,7 +574,10 @@
       var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
       if (visible.length !== filtered.length) meta1 += ' (of ' + visible.length + ')';
       var parts = [meta1];
-      if (sec.defaultSort) parts.push('sorted by ' + sec.defaultSort);
+      var activeSort = userSort
+        ? userSort.col + (userSort.dir === 'desc' ? ' ↓' : ' ↑') + ' (click)'
+        : (sec.defaultSort ? 'sorted by ' + sec.defaultSort : '');
+      if (activeSort) parts.push(activeSort);
       if (sec.defaultFilter) parts.push('filtered: ' + sec.defaultFilter);
       if (liveQuery) parts.push('searching "' + liveQuery + '"');
       meta1Span.textContent = parts.join(' · ');
@@ -559,10 +589,11 @@
           '. Switch back to list to edit cells inline.'
         );
       } else {
-        bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh));
+        bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh, userSort, onSortChange));
         hint.replaceChildren(
-          'Click any cell to edit. ', el('kbd', null, 'Enter'), ' to save, ',
-          el('kbd', null, 'Esc'), ' to cancel. Writes are queued and flushed to your spreadsheet automatically.'
+          'Click any cell to edit. Click a column header to sort. ',
+          el('kbd', null, 'Enter'), ' to save, ',
+          el('kbd', null, 'Esc'), ' to cancel.'
         );
       }
     }
@@ -978,7 +1009,7 @@
     return el('div', { class: 'calendar' }, headRow, el('div', { class: 'cal-grid' }, cells));
   }
 
-  function renderSectionTable(meta, rows, tab, refresh) {
+  function renderSectionTable(meta, rows, tab, refresh, userSort, onSortChange) {
     if (!meta || !meta.headers || !meta.headers.length) {
       return el('p', { class: 'muted' }, 'No schema cached yet — open Settings and click Sync now.');
     }
@@ -994,7 +1025,30 @@
     }
     var thead = el('thead', null,
       el('tr', null,
-        visibleCols.map(function (c) { return el('th', null, c.name); }).concat([
+        visibleCols.map(function (c) {
+          var isActive = userSort && userSort.col === c.name;
+          var arrow = isActive ? (userSort.dir === 'desc' ? ' ↓' : ' ↑') : '';
+          var th = el('th', {
+            class: 'th-sortable' + (isActive ? ' sort-active' : ''),
+            tabindex: '0',
+            title: 'Click to sort'
+          });
+          th.appendChild(document.createTextNode(c.name));
+          if (arrow) th.appendChild(el('span', { class: 'sort-arrow' }, arrow));
+          var cycle = function () {
+            if (!onSortChange) return;
+            var next;
+            if (!isActive) next = { col: c.name, dir: 'asc' };
+            else if (userSort.dir === 'asc') next = { col: c.name, dir: 'desc' };
+            else next = null;
+            onSortChange(next);
+          };
+          th.addEventListener('click', cycle);
+          th.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cycle(); }
+          });
+          return th;
+        }).concat([
           el('th', { class: 'col-actions', 'aria-label': 'Actions' }, '')
         ])
       )
