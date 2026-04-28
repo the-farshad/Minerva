@@ -658,6 +658,20 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+.section-filter {
+  font: inherit;
+  font-size: 0.85rem;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.35rem 0.6rem;
+  outline: none;
+  min-width: 180px;
+  transition: border-color .12s, background .12s;
+}
+.section-filter:focus { border-color: var(--accent); background: var(--bg); }
+.section-filter::-webkit-search-cancel-button { cursor: pointer; }
 .seg-mode { font-size: 0.82rem; }
 .cal-nav {
   display: inline-flex;

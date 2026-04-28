@@ -441,9 +441,12 @@
     var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add row');
     var modeToggle = el('div', { class: 'seg seg-mode' });
     var calNav = el('div', { class: 'cal-nav' });
+    var filterInput = el('input', {
+      type: 'search', placeholder: 'Filter rows…', class: 'section-filter'
+    });
 
     header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)));
-    var headerRight = el('div', { class: 'view-section-head-right' }, modeToggle, calNav, addBtn);
+    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, addBtn);
     header.appendChild(headerRight);
     view.appendChild(header);
     view.appendChild(el('p', { class: 'lead' }, meta1Span, sheetLink ? ' · ' : null, sheetLink));
@@ -455,6 +458,15 @@
 
     var mode = readViewMode(slug);
     var calCursor = new Date(); calCursor.setDate(1);
+    var liveQuery = '';
+    var debounceFilter = null;
+    filterInput.addEventListener('input', function () {
+      if (debounceFilter) clearTimeout(debounceFilter);
+      debounceFilter = setTimeout(function () {
+        liveQuery = filterInput.value.trim().toLowerCase();
+        refresh();
+      }, 60);
+    });
 
     function paintModeToggle(hasDate) {
       modeToggle.innerHTML = '';
@@ -507,6 +519,20 @@
       var sorted = M.render.applySort(visible, sec.defaultSort);
       var filtered = M.render.applyFilter(sorted, sec.defaultFilter);
 
+      // Per-section live filter (typed in the header search box).
+      if (liveQuery) {
+        var qterms = liveQuery.split(/\s+/).filter(Boolean);
+        var visibleHeaders = (meta && meta.headers || []).filter(function (h) {
+          return !M.render.isInternal(h) && h !== 'id';
+        });
+        filtered = filtered.filter(function (r) {
+          var hay = visibleHeaders
+            .map(function (h) { return r[h] != null ? String(r[h]) : ''; })
+            .join('  ').toLowerCase();
+          return qterms.every(function (t) { return hay.indexOf(t) >= 0; });
+        });
+      }
+
       var dateCol = findDateCol(meta);
       var canCal = !!dateCol;
       if (!canCal) mode = 'list';
@@ -519,6 +545,7 @@
       var parts = [meta1];
       if (sec.defaultSort) parts.push('sorted by ' + sec.defaultSort);
       if (sec.defaultFilter) parts.push('filtered: ' + sec.defaultFilter);
+      if (liveQuery) parts.push('searching "' + liveQuery + '"');
       meta1Span.textContent = parts.join(' · ');
 
       if (mode === 'cal' && dateCol) {
@@ -891,8 +918,58 @@
     paintStatus();
     paintLocal();
 
+    var notifyPanel = el('div', { class: 'tg-panel' });
     var tgPanel = el('div', { class: 'tg-panel' });
+    paintNotify();
     paintTg();
+
+    function paintNotify() {
+      var supports = 'Notification' in window;
+      var perm = supports ? Notification.permission : 'unsupported';
+      var ui = readUi();
+      var disabled = ui && ui.notifyDisabled;
+
+      var children = [
+        el('h3', null, 'Browser notifications'),
+        el('p', { class: 'small muted' },
+          'Desktop notifications fire (alongside any Telegram pings) when a task is due today, while a Minerva tab is open. ',
+          'Permission status: ', el('em', null, perm), '.')
+      ];
+
+      if (!supports) {
+        children.push(el('p', { class: 'small muted' }, 'Your browser does not expose the Notification API.'));
+      } else if (perm === 'granted') {
+        children.push(
+          el('div', { class: 'form-actions' },
+            el('label', { class: 'small' },
+              el('input', { type: 'checkbox', checked: !disabled,
+                onchange: function (e) {
+                  writeUi({ notifyDisabled: !e.target.checked });
+                  scheduleReminders();
+                  paintNotify();
+                } }),
+              ' Enable desktop reminders for due tasks'),
+            el('button', { class: 'btn btn-ghost', type: 'button',
+              onclick: function () {
+                desktopNotify('Minerva', 'Test notification — looks good ✓');
+              } }, 'Send test notification')
+          )
+        );
+      } else if (perm === 'denied') {
+        children.push(el('p', { class: 'small muted' },
+          'Permission was denied. Re-enable in your browser site settings (lock icon → Notifications) and reload.'));
+      } else {
+        children.push(el('div', { class: 'form-actions' },
+          el('button', { class: 'btn', type: 'button',
+            onclick: async function () {
+              var ok = await requestBrowserNotificationPermission();
+              if (ok) scheduleReminders();
+              paintNotify();
+            } }, 'Allow notifications')));
+      }
+
+      notifyPanel.replaceChildren.apply(notifyPanel, children);
+    }
 
     function paintTg() {
       var tg = readTg();
@@ -1020,6 +1097,7 @@
       form,
       status,
       localPanel,
+      notifyPanel,
       tgPanel
     );
   }
@@ -1265,11 +1343,38 @@
     writeTg({ sent: sent });
   }
 
+  // Browser desktop notifications
+  function browserNotificationsAllowed() {
+    return ('Notification' in window) && Notification.permission === 'granted';
+  }
+  async function requestBrowserNotificationPermission() {
+    if (!('Notification' in window)) return false;
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission === 'denied') return false;
+    try {
+      var p = await Notification.requestPermission();
+      return p === 'granted';
+    } catch (e) { return false; }
+  }
+  function desktopNotify(title, body, opts) {
+    if (!browserNotificationsAllowed()) return;
+    try {
+      var n = new Notification(title, Object.assign({
+        body: body,
+        icon: 'docs/assets/minerva-logo.png',
+        tag: (opts && opts.tag) || 'minerva',
+        renotify: false
+      }, opts || {}));
+      if (opts && opts.onClick) n.onclick = opts.onClick;
+    } catch (e) { /* ignore */ }
+  }
+
   async function tickReminders() {
     var tg = readTg();
-    if (!tg.token || !tg.chatId || tg.disabled) return;
+    var tgEnabled = !!(tg.token && tg.chatId && !tg.disabled);
+    var notify = browserNotificationsAllowed() && !readUi().notifyDisabled;
+    if (!tgEnabled && !notify) return;
 
-    // Find the tasks tab — _config tells us which.
     var tasksRow = (configCache || []).find(function (r) {
       return r.slug === 'tasks' || r.tab === 'tasks';
     });
@@ -1291,18 +1396,36 @@
     for (var i = 0; i < dueOrOverdue.length; i++) {
       var r = dueOrOverdue[i];
       if (alreadyPinged(r.id, date)) continue;
-      var line = '*' + (r.title || r.id) + '*';
+      var label = r.title || r.id;
       var dueStr = String(r.due).slice(0, 10);
       var prefix = dueStr < date ? '⏰ overdue (' + dueStr + ')' : '⏰ due today';
-      var msg = prefix + ': ' + line;
-      if (r.priority) msg += '\n_priority: ' + r.priority + '_';
-      try {
-        await M.telegram.sendMessage(tg.token, tg.chatId, msg);
-        markPinged(r.id, date);
-      } catch (e) {
-        console.warn('[Minerva tg]', e);
-        break;
+      var pingedSomewhere = false;
+
+      if (tgEnabled) {
+        var msg = prefix + ': *' + label + '*';
+        if (r.priority) msg += '\n_priority: ' + r.priority + '_';
+        try {
+          await M.telegram.sendMessage(tg.token, tg.chatId, msg);
+          pingedSomewhere = true;
+        } catch (e) {
+          console.warn('[Minerva tg]', e);
+        }
       }
+
+      if (notify) {
+        desktopNotify(prefix, label + (r.priority ? '  ·  ' + r.priority : ''), {
+          tag: 'minerva-task-' + r.id,
+          onClick: function (slug) {
+            return function () {
+              window.focus();
+              location.hash = '#/s/' + encodeURIComponent(slug);
+            };
+          }(tasksRow ? tasksRow.slug : 'tasks')
+        });
+        pingedSomewhere = true;
+      }
+
+      if (pingedSomewhere) markPinged(r.id, date);
     }
   }
 
@@ -1311,9 +1434,11 @@
   function scheduleReminders() {
     if (tgTimer) { clearInterval(tgTimer); tgTimer = null; }
     var tg = readTg();
-    if (!tg.token || !tg.chatId || tg.disabled) return;
+    var anyChannel = (!!(tg.token && tg.chatId && !tg.disabled))
+      || (browserNotificationsAllowed() && !readUi().notifyDisabled);
+    if (!anyChannel) return;
     tickReminders();
-    tgTimer = setInterval(tickReminders, 30 * 60 * 1000); // every 30 min
+    tgTimer = setInterval(tickReminders, 30 * 60 * 1000);
   }
 
   function navActive() {
