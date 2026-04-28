@@ -13,6 +13,7 @@ A lightweight personal planner. Goals, tasks, projects, notes — backed by a Go
 ## What works today
 
 - **Connect Google** — sign in with the BYO OAuth client; Minerva auto-creates (or finds) a `Minerva` spreadsheet in your Drive and seeds it with the meta tabs (`_config`, `_prefs`, `_log`) and four section tabs (`goals`, `tasks`, `projects`, `notes`), each with a header row + a type-hint row that defines how Phase 2 will render it.
+- **Local store + sync** — every connect pulls the spreadsheet into a private IndexedDB mirror in your browser. Settings shows the per-tab row counts and last-sync time; a **Sync now** button does a manual pull. Phase 3 will add push-back so local edits flush to Sheets in the background.
 - **Quick share** — build a note, question, or poll; get a stable URL and a crisp QR code. No login required. The data lives in the URL itself, so nothing is uploaded.
 - **Public viewer** — anyone with the link sees the same card you do, scannable from a phone via QR.
 - **Theme picker** — five themes: `auto · light · dark · sepia · vt323-yellow` (homage to [thefarshad.com](https://thefarshad.com)).
@@ -36,19 +37,20 @@ The dynamic schema engine reads `_config` and the type-hint rows to build nav, r
 
 ## Phase 1 — bring your own Google OAuth client
 
-You need an OAuth client ID — there are no shared secrets in this repo on purpose. It takes ~5 minutes:
+You need an OAuth Client ID — there are no shared secrets in this repo on purpose. It takes ~5 minutes.
 
-1. Open [Google Cloud Console](https://console.cloud.google.com/) → create or pick a project.
-2. Go to **APIs & Services → Library** and enable both **Google Sheets API** and **Google Drive API**.
-3. **APIs & Services → OAuth consent screen** — set User type to *External*, fill in the basic fields (app name, support email), and add yourself as a Test user.
-4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
-   - Application type: **Web application**.
-   - Authorized JavaScript origins: `https://minerva.thefarshad.com` (and `http://localhost:8000` if you preview locally).
-   - Skip the redirect URIs — Minerva uses the implicit token flow, not redirect.
-5. Copy the resulting client ID (looks like `123…-abc.apps.googleusercontent.com`).
-6. Open Minerva → **Settings** → paste it → Save.
+**👉 Detailed step-by-step walkthrough (with troubleshooting):** [`docs/setup-google-oauth.md`](docs/setup-google-oauth.md)
 
-Your client ID is stored only in your browser via `localStorage`. It's not a secret per se, but it's still yours — Minerva never asks for or transmits it anywhere except to Google's auth endpoints.
+In short:
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → create a project (e.g. "Minerva").
+2. **APIs & Services → Library** — enable **Google Sheets API** and **Google Drive API**.
+3. **APIs & Services → OAuth consent screen** — User type: External; add the four scopes (`spreadsheets`, `drive.file`, `userinfo.email`, `openid`); add your email as a Test user.
+4. **APIs & Services → Credentials → Create OAuth client ID** — type: Web application; Authorized JavaScript origins: `https://minerva.thefarshad.com` (and `http://localhost:8000` for local dev).
+5. Copy the Client ID (looks like `123…-abc.apps.googleusercontent.com`).
+6. Open Minerva → **Settings** → paste → **Save** → **Connect Google**.
+
+Your Client ID is stored only in your browser via `localStorage`. It's not a secret per se, but it's still yours — Minerva never asks for or transmits it anywhere except to Google's auth endpoints.
 
 ---
 
@@ -98,7 +100,9 @@ assets/qr.js           SVG QR generator (wraps qrcode-generator from CDN)
 assets/share.js        encode/decode payloads + PNG export
 assets/auth.js         Google Identity Services token-flow client
 assets/sheets.js       thin Sheets API v4 + Drive API v3 wrapper
+assets/db.js           local IndexedDB store (your data, mirrored in-browser)
 assets/bootstrap.js    find-or-create the user's Minerva spreadsheet
+assets/sync.js         pull spreadsheet → local store; phase 3 will add push
 assets/app.js          hash router + views
 CNAME                  custom domain for GitHub Pages
 .nojekyll              tells Pages not to run Jekyll
