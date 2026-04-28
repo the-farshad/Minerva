@@ -650,6 +650,74 @@ table.rows tbody tr:last-child td { border-bottom: 0; }
 table.rows tbody tr:hover { background: var(--surface-2); }
 table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display: block; }
 
+/* --- habits + heatmap -------------------------------------- */
+
+.habits-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.habit-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+}
+.habit-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.habit-card h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+.habit-streak {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.habit-streak strong {
+  color: var(--accent);
+  font-size: 1.1em;
+  font-variant-numeric: tabular-nums;
+}
+.habit-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.heatmap-grid {
+  display: flex;
+  gap: 3px;
+  margin: 0.6rem 0 0.4rem;
+  overflow-x: auto;
+  padding: 1px;
+}
+.heatmap-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.heatmap-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.heatmap-cell.heatmap-c1 { opacity: 0.45; }
+.heatmap-cell.heatmap-c2 { opacity: 0.65; }
+.heatmap-cell.heatmap-c3 { opacity: 0.85; }
+.heatmap-cell.heatmap-c4 { opacity: 1; }
+.heatmap-cell.heatmap-future { background: transparent; border-style: dashed; opacity: 0.4; }
+
+@media (max-width: 700px) {
+  .heatmap-cell { width: 10px; height: 10px; }
+}
+
 /* --- calendar view ----------------------------------------- */
 
 .view-section-head-right {
