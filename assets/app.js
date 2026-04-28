@@ -389,6 +389,37 @@
 
   // ---- section view ---------------------------------------------------
 
+  function findDateCol(meta) {
+    if (!meta || !meta.headers || !meta.types) return null;
+    for (var i = 0; i < meta.headers.length; i++) {
+      var h = meta.headers[i];
+      if (M.render.isInternal(h)) continue;
+      var t = M.render.parseType(meta.types[i]);
+      if (t.kind === 'date' || t.kind === 'datetime') return h;
+    }
+    return null;
+  }
+
+  function ymd(d) {
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+
+  function readViewMode(slug) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.view') || '{}');
+      return raw[slug] || 'list';
+    } catch (e) { return 'list'; }
+  }
+  function writeViewMode(slug, mode) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.view') || '{}');
+      raw[slug] = mode;
+      localStorage.setItem('minerva.section.view', JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+
   async function viewSection(slug) {
     var cfg = readConfig();
     var sec = (configCache || []).find(function (r) { return r.slug === slug; });
@@ -408,16 +439,66 @@
     var header = el('div', { class: 'view-section-head' });
     var meta1Span = el('span');
     var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add row');
+    var modeToggle = el('div', { class: 'seg seg-mode' });
+    var calNav = el('div', { class: 'cal-nav' });
 
     header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)));
-    header.appendChild(addBtn);
+    var headerRight = el('div', { class: 'view-section-head-right' }, modeToggle, calNav, addBtn);
+    header.appendChild(headerRight);
     view.appendChild(header);
     view.appendChild(el('p', { class: 'lead' }, meta1Span, sheetLink ? ' · ' : null, sheetLink));
 
-    var tableHost = el('div');
-    view.appendChild(tableHost);
-    view.appendChild(el('p', { class: 'small muted' },
-      'Click any cell to edit. ', el('kbd', null, 'Enter'), ' to save, ', el('kbd', null, 'Esc'), ' to cancel. Writes are queued and flushed to your spreadsheet automatically.'));
+    var bodyHost = el('div');
+    view.appendChild(bodyHost);
+    var hint = el('p', { class: 'small muted' });
+    view.appendChild(hint);
+
+    var mode = readViewMode(slug);
+    var calCursor = new Date(); calCursor.setDate(1);
+
+    function paintModeToggle(hasDate) {
+      modeToggle.innerHTML = '';
+      if (!hasDate) return;
+      var listBtn = el('button', { type: 'button', 'data-value': 'list',
+        class: mode === 'list' ? 'active' : '' }, 'List');
+      var calBtn = el('button', { type: 'button', 'data-value': 'cal',
+        class: mode === 'cal' ? 'active' : '' }, 'Calendar');
+      listBtn.addEventListener('click', function () { switchMode('list'); });
+      calBtn.addEventListener('click', function () { switchMode('cal'); });
+      modeToggle.appendChild(listBtn);
+      modeToggle.appendChild(calBtn);
+    }
+
+    function paintCalNav(visible) {
+      calNav.innerHTML = '';
+      if (!visible) return;
+      var label = calCursor.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+      var prev = el('button', { class: 'icon-btn', type: 'button', title: 'Previous month' }, '‹');
+      var next = el('button', { class: 'icon-btn', type: 'button', title: 'Next month' }, '›');
+      var today = el('button', { class: 'btn btn-ghost', type: 'button', title: 'Jump to current month' }, 'Today');
+      prev.addEventListener('click', function () {
+        calCursor.setMonth(calCursor.getMonth() - 1);
+        refresh();
+      });
+      next.addEventListener('click', function () {
+        calCursor.setMonth(calCursor.getMonth() + 1);
+        refresh();
+      });
+      today.addEventListener('click', function () {
+        calCursor = new Date(); calCursor.setDate(1);
+        refresh();
+      });
+      calNav.appendChild(prev);
+      calNav.appendChild(el('span', { class: 'cal-month' }, label));
+      calNav.appendChild(next);
+      calNav.appendChild(today);
+    }
+
+    function switchMode(m) {
+      mode = m;
+      writeViewMode(slug, m);
+      refresh();
+    }
 
     async function refresh() {
       var meta = await M.db.getMeta(sec.tab);
@@ -426,6 +507,13 @@
       var sorted = M.render.applySort(visible, sec.defaultSort);
       var filtered = M.render.applyFilter(sorted, sec.defaultFilter);
 
+      var dateCol = findDateCol(meta);
+      var canCal = !!dateCol;
+      if (!canCal) mode = 'list';
+
+      paintModeToggle(canCal);
+      paintCalNav(mode === 'cal');
+
       var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
       if (visible.length !== filtered.length) meta1 += ' (of ' + visible.length + ')';
       var parts = [meta1];
@@ -433,7 +521,19 @@
       if (sec.defaultFilter) parts.push('filtered: ' + sec.defaultFilter);
       meta1Span.textContent = parts.join(' · ');
 
-      tableHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh));
+      if (mode === 'cal' && dateCol) {
+        bodyHost.replaceChildren(renderCalendar(filtered, dateCol, calCursor, sec.tab));
+        hint.replaceChildren(
+          'Calendar groups rows by ', el('code', null, dateCol),
+          '. Switch back to list to edit cells inline.'
+        );
+      } else {
+        bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh));
+        hint.replaceChildren(
+          'Click any cell to edit. ', el('kbd', null, 'Enter'), ' to save, ',
+          el('kbd', null, 'Esc'), ' to cancel. Writes are queued and flushed to your spreadsheet automatically.'
+        );
+      }
     }
 
     addBtn.addEventListener('click', async function () {
@@ -443,11 +543,66 @@
         return;
       }
       await addRow(sec.tab, meta.headers);
+      mode = 'list';
+      writeViewMode(slug, 'list');
       await refresh();
     });
 
     await refresh();
     return view;
+  }
+
+  function renderCalendar(rows, dateCol, monthDate, tab) {
+    var year = monthDate.getFullYear();
+    var month = monthDate.getMonth();
+    var firstDay = new Date(year, month, 1);
+    var lastDay = new Date(year, month + 1, 0).getDate();
+    var startOffset = firstDay.getDay(); // 0 = Sunday
+    var today = todayStr();
+
+    var byDate = {};
+    rows.forEach(function (r) {
+      var key = String(r[dateCol] || '').slice(0, 10);
+      if (!key) return;
+      (byDate[key] = byDate[key] || []).push(r);
+    });
+
+    var weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    var headRow = el('div', { class: 'cal-head' },
+      weekdays.map(function (w) { return el('div', { class: 'cal-day-h' }, w); })
+    );
+
+    var cells = [];
+    for (var p = 0; p < startOffset; p++) {
+      cells.push(el('div', { class: 'cal-cell cal-pad' }));
+    }
+    for (var d = 1; d <= lastDay; d++) {
+      var dateStr = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      var items = byDate[dateStr] || [];
+      var cls = 'cal-cell';
+      if (dateStr === today) cls += ' cal-today';
+      if (items.length) cls += ' cal-has';
+
+      var cell = el('div', { class: cls });
+      cell.appendChild(el('div', { class: 'cal-day' }, String(d)));
+      if (items.length) {
+        var list = el('ul', { class: 'cal-items' });
+        items.slice(0, 3).forEach(function (r) {
+          var label = r.title || r.name || r.id;
+          var li = el('li', { class: 'cal-item', title: label }, label);
+          if (String(r.status || '').toLowerCase() === 'done') li.classList.add('done');
+          list.appendChild(li);
+        });
+        if (items.length > 3) {
+          list.appendChild(el('li', { class: 'cal-item cal-more' }, '+ ' + (items.length - 3) + ' more'));
+        }
+        cell.appendChild(list);
+      }
+      cells.push(cell);
+    }
+    while (cells.length % 7 !== 0) cells.push(el('div', { class: 'cal-cell cal-pad' }));
+
+    return el('div', { class: 'calendar' }, headRow, el('div', { class: 'cal-grid' }, cells));
   }
 
   function renderSectionTable(meta, rows, tab, refresh) {
