@@ -1325,6 +1325,246 @@
     return '';
   }
 
+  // ---- quick capture overlay (`/`) ----
+
+  function pickInboxSection() {
+    var sects = sectionRows();
+    return sects.find(function (s) { return s.slug === 'inbox'; })
+      || sects.find(function (s) { return s.slug === 'notes'; })
+      || sects[0] || null;
+  }
+
+  async function showCapture() {
+    if (document.querySelector('.capture-overlay')) return;
+    var cfg = readConfig();
+    var st = M.auth ? M.auth.getState() : { hasToken: false };
+    if (!cfg.spreadsheetId || !st.hasToken) {
+      flash(document.body, 'Connect first to capture.', 'error');
+      return;
+    }
+    var sects = sectionRows();
+    if (!sects.length) return;
+    var initial = pickInboxSection();
+
+    var overlay = el('div', { class: 'modal-overlay capture-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+
+    var sectSelect = document.createElement('select');
+    sects.forEach(function (s) {
+      var o = document.createElement('option');
+      o.value = s.slug;
+      o.textContent = (s.icon ? s.icon + ' ' : '') + (s.title || s.slug);
+      sectSelect.appendChild(o);
+    });
+    if (initial) sectSelect.value = initial.slug;
+
+    var titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.placeholder = 'Title';
+    titleInput.className = 'editor';
+
+    var bodyTa = document.createElement('textarea');
+    bodyTa.rows = 4;
+    bodyTa.placeholder = 'Body (optional). Cmd/Ctrl + Enter to save.';
+    bodyTa.className = 'editor';
+
+    var form = el('form', { class: 'modal-panel capture-panel',
+      onclick: function (e) { e.stopPropagation(); },
+      onsubmit: function (e) { e.preventDefault(); save(); }
+    },
+      el('h3', null, 'Quick capture'),
+      field('Section', sectSelect),
+      field('Title', titleInput),
+      field('Body', bodyTa),
+      el('div', { class: 'form-actions' },
+        el('button', { class: 'btn', type: 'submit' }, 'Save'),
+        el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: function () { overlay.remove(); } }, 'Cancel')
+      ),
+      el('p', { class: 'small muted' },
+        el('kbd', null, 'Enter'), ' on title to save · ',
+        el('kbd', null, '⌘/Ctrl+Enter'), ' in body · ',
+        el('kbd', null, 'Esc'), ' to close')
+    );
+
+    async function save() {
+      var slug = sectSelect.value;
+      var sec = sects.find(function (s) { return s.slug === slug; });
+      if (!sec) return;
+      var meta = await M.db.getMeta(sec.tab);
+      if (!meta || !meta.headers) {
+        flash(form, 'No schema cached for ' + slug + '. Sync first.', 'error');
+        return;
+      }
+      var row = await addRow(sec.tab, meta.headers);
+      // Try to map title/body onto the most natural columns.
+      var hs = meta.headers;
+      var titleVal = titleInput.value.trim();
+      var bodyVal = bodyTa.value.trim();
+      if (titleVal) {
+        if (hs.indexOf('title') >= 0) row.title = titleVal;
+        else if (hs.indexOf('name') >= 0) row.name = titleVal;
+        else if (hs.indexOf('question') >= 0) row.question = titleVal;
+        else if (hs.indexOf('decision') >= 0) row.decision = titleVal;
+      }
+      if (bodyVal) {
+        if (hs.indexOf('body') >= 0) row.body = bodyVal;
+        else if (hs.indexOf('notes') >= 0) row.notes = bodyVal;
+        else if (hs.indexOf('description') >= 0) row.description = bodyVal;
+        else if (hs.indexOf('answer') >= 0) row.answer = bodyVal;
+      }
+      if (hs.indexOf('created') >= 0 && !row.created) {
+        row.created = new Date().toISOString();
+      }
+      row._dirty = 1;
+      await M.db.upsertRow(sec.tab, row);
+      schedulePush();
+      overlay.remove();
+      flash(document.body, 'Captured to ' + (sec.title || sec.slug) + '.');
+    }
+
+    titleInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); save(); }
+    });
+    bodyTa.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        save();
+      }
+    });
+    form.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
+    });
+
+    overlay.appendChild(form);
+    document.body.appendChild(overlay);
+    setTimeout(function () { titleInput.focus(); }, 30);
+  }
+
+  // ---- global search overlay (`Cmd/Ctrl+K`) ----
+
+  async function showSearch() {
+    if (document.querySelector('.search-overlay')) return;
+    var sects = sectionRows();
+    if (!sects.length) {
+      flash(document.body, 'Connect and sync first.', 'error');
+      return;
+    }
+
+    var overlay = el('div', { class: 'modal-overlay search-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Search across all sections…';
+    input.className = 'search-input';
+
+    var hint = el('p', { class: 'small muted' }, 'Type to search · ',
+      el('kbd', null, '↑/↓'), ' to navigate · ',
+      el('kbd', null, 'Enter'), ' to open · ',
+      el('kbd', null, 'Esc'), ' to close');
+
+    var resultsEl = el('div', { class: 'search-results' });
+
+    var panel = el('div', { class: 'modal-panel search-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      input,
+      hint,
+      resultsEl
+    );
+
+    // Pre-load all visible rows once for snappy filtering.
+    var corpus = [];
+    await Promise.all(sects.map(async function (s) {
+      try {
+        var meta = await M.db.getMeta(s.tab);
+        var rows = await M.db.getAllRows(s.tab);
+        rows.forEach(function (r) {
+          if (r._deleted) return;
+          var fields = [];
+          (meta && meta.headers || []).forEach(function (h) {
+            if (M.render.isInternal(h)) return;
+            if (h === 'id') return;
+            if (r[h]) fields.push(String(r[h]));
+          });
+          corpus.push({ section: s, row: r, hay: fields.join('  ').toLowerCase() });
+        });
+      } catch (e) { /* ignore one tab */ }
+    }));
+
+    var selectedIdx = 0;
+    var hits = [];
+
+    function paint() {
+      var q = input.value.trim().toLowerCase();
+      if (!q) {
+        resultsEl.replaceChildren(el('p', { class: 'muted small' },
+          corpus.length + ' rows indexed across ' + sects.length + ' sections.'));
+        hits = [];
+        selectedIdx = 0;
+        return;
+      }
+      var terms = q.split(/\s+/).filter(Boolean);
+      hits = corpus.filter(function (entry) {
+        return terms.every(function (t) { return entry.hay.indexOf(t) >= 0; });
+      });
+      if (!hits.length) {
+        resultsEl.replaceChildren(el('p', { class: 'muted small' }, 'No matches.'));
+        return;
+      }
+      hits = hits.slice(0, 30);
+      if (selectedIdx >= hits.length) selectedIdx = 0;
+      resultsEl.replaceChildren.apply(resultsEl, hits.map(function (h, i) {
+        var label = h.row.title || h.row.name || h.row.question || h.row.decision || h.row.id;
+        var sub = h.row.body || h.row.notes || h.row.description || h.row.answer || '';
+        var item = el('a', {
+          class: 'search-hit' + (i === selectedIdx ? ' selected' : ''),
+          href: '#/s/' + encodeURIComponent(h.section.slug),
+          onclick: function () { overlay.remove(); }
+        },
+          el('div', { class: 'search-hit-section' },
+            (h.section.icon ? h.section.icon + ' ' : '') + (h.section.title || h.section.slug)),
+          el('div', { class: 'search-hit-title' }, String(label)),
+          sub ? el('div', { class: 'search-hit-sub' },
+            String(sub).slice(0, 140)) : null
+        );
+        return item;
+      }));
+    }
+
+    var debounceT = null;
+    input.addEventListener('input', function () {
+      if (debounceT) clearTimeout(debounceT);
+      debounceT = setTimeout(paint, 60);
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
+      else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (hits.length) selectedIdx = (selectedIdx + 1) % hits.length;
+        paint();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (hits.length) selectedIdx = (selectedIdx - 1 + hits.length) % hits.length;
+        paint();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (hits[selectedIdx]) {
+          location.hash = '#/s/' + encodeURIComponent(hits[selectedIdx].section.slug);
+          overlay.remove();
+        }
+      }
+    });
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    paint();
+    setTimeout(function () { input.focus(); }, 30);
+  }
+
   // ---- keyboard shortcuts + help overlay ----
 
   function showHelp() {
@@ -1334,12 +1574,14 @@
     });
     var rows = [
       ['g', 'Home'],
+      ['1 – 9', 'Open the Nth section'],
+      ['/', 'Quick capture'],
+      ['⌘/Ctrl + K', 'Search across everything'],
       ['q', 'Quick share'],
       ['s', 'Settings'],
-      ['1 – 9', 'Open the Nth section'],
       ['?', 'This panel'],
-      ['Esc', 'Close panel / cancel cell edit'],
-      ['Enter', 'Save current cell edit']
+      ['Esc', 'Close overlay / cancel edit'],
+      ['Enter', 'Save current edit']
     ];
     var panel = el('div', { class: 'help-panel',
       onclick: function (e) { e.stopPropagation(); }
@@ -1371,10 +1613,17 @@
       closeHelp();
       return;
     }
+    // Cmd/Ctrl+K opens search even when focus is in an input.
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      showSearch();
+      return;
+    }
     if (e.target.matches('input, textarea, select, [contenteditable]')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 
     if (e.key === '?' || (e.shiftKey && e.key === '/')) { showHelp(); return; }
+    if (e.key === '/') { e.preventDefault(); showCapture(); return; }
     if (e.key === 'g') { location.hash = '#/'; return; }
     if (e.key === 's') { location.hash = '#/settings'; return; }
     if (e.key === 'q') { location.hash = '#/share'; return; }
