@@ -19,6 +19,22 @@
     return o;
   }
 
+  function loadingNote() {
+    var s = document.createElement('span');
+    s.className = 'muted small';
+    s.textContent = 'loading…';
+    return s;
+  }
+
+  function textFallback(value, onCommit) {
+    var ti = document.createElement('input');
+    ti.type = 'text';
+    ti.className = 'editor editor-text';
+    ti.value = value || '';
+    bindCommit(ti, onCommit);
+    return ti;
+  }
+
   function bindCommit(input, onCommit, onCancel) {
     var cancelled = false;
     input.addEventListener('keydown', function (e) {
@@ -136,8 +152,177 @@
         return ci;
       }
 
-      // Fallback for anything not yet implemented (text, ref, multiselect,
-      // rating, progress, drive, image, …) — plain text input.
+      case 'rating': {
+        var rwrap = document.createElement('span');
+        rwrap.className = 'editor editor-rating';
+        rwrap.tabIndex = -1;
+        var max = t.max || 5;
+        var current = Math.max(t.min || 0, Math.min(max, Number(v) || 0));
+        function paintStars(n) {
+          rwrap.innerHTML = '';
+          for (var i = 1; i <= max; i++) {
+            (function (val) {
+              var star = document.createElement('button');
+              star.type = 'button';
+              star.className = 'star-btn' + (val <= n ? ' on' : '');
+              star.textContent = val <= n ? '★' : '☆';
+              star.title = val + ' / ' + max;
+              star.addEventListener('click', function (e) {
+                e.preventDefault();
+                onCommit(String(val));
+              });
+              rwrap.appendChild(star);
+            })(i);
+          }
+        }
+        paintStars(current);
+        rwrap.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && onCancel) onCancel();
+        });
+        return rwrap;
+      }
+
+      case 'progress': {
+        var pwrap = document.createElement('span');
+        pwrap.className = 'editor editor-progress';
+        var slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = t.min == null ? 0 : t.min;
+        slider.max = t.max == null ? 100 : t.max;
+        slider.step = 1;
+        slider.value = String(Number(v) || 0);
+        var label = document.createElement('span');
+        label.className = 'progress-label';
+        label.textContent = slider.value;
+        slider.addEventListener('input', function () { label.textContent = slider.value; });
+        slider.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && onCancel) { onCancel(); return; }
+          if (e.key === 'Enter') { e.preventDefault(); onCommit(slider.value); }
+        });
+        slider.addEventListener('change', function () { onCommit(slider.value); });
+        slider.addEventListener('blur', function () {
+          // ignore blurs that move focus inside the wrapper itself
+          setTimeout(function () {
+            if (!pwrap.contains(document.activeElement)) onCommit(slider.value);
+          }, 0);
+        });
+        pwrap.appendChild(slider);
+        pwrap.appendChild(label);
+        return pwrap;
+      }
+
+      case 'multiselect': {
+        var mw = document.createElement('span');
+        mw.className = 'editor editor-multi';
+        mw.tabIndex = -1;
+        var picked = {};
+        String(v || '').split(',').forEach(function (x) {
+          var tx = x.trim(); if (tx) picked[tx] = true;
+        });
+        (t.options || []).forEach(function (opt) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'chip-btn' + (picked[opt] ? ' on' : '');
+          btn.textContent = opt;
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (picked[opt]) { delete picked[opt]; btn.classList.remove('on'); }
+            else { picked[opt] = true; btn.classList.add('on'); }
+          });
+          mw.appendChild(btn);
+        });
+        var done = document.createElement('button');
+        done.type = 'button';
+        done.className = 'btn done-btn';
+        done.textContent = 'Done';
+        done.addEventListener('click', function (e) {
+          e.preventDefault();
+          var keys = Object.keys(picked);
+          onCommit(keys.join(', '));
+        });
+        mw.appendChild(done);
+        mw.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && onCancel) onCancel();
+          else if (e.key === 'Enter') {
+            e.preventDefault();
+            done.click();
+          }
+        });
+        return mw;
+      }
+
+      case 'ref': {
+        if (t.multi) {
+          // Multi-ref: same chip-toggle UI as multiselect, options loaded from the ref tab.
+          var rmw = document.createElement('span');
+          rmw.className = 'editor editor-multi editor-ref-multi';
+          rmw.tabIndex = -1;
+          rmw.appendChild(loadingNote());
+          var rmPicked = {};
+          String(v || '').split(',').forEach(function (x) {
+            var tx = x.trim(); if (tx) rmPicked[tx] = true;
+          });
+          var rmDone = document.createElement('button');
+          rmDone.type = 'button';
+          rmDone.className = 'btn done-btn';
+          rmDone.textContent = 'Done';
+          rmDone.addEventListener('click', function (e) {
+            e.preventDefault();
+            onCommit(Object.keys(rmPicked).join(', '));
+          });
+          Minerva.db.getAllRows(t.refTab).then(function (rows) {
+            rmw.innerHTML = '';
+            rows.forEach(function (r) {
+              var label = r.title || r.name || r.id;
+              var btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'chip-btn' + (rmPicked[r.id] ? ' on' : '');
+              btn.textContent = label;
+              btn.title = r.id;
+              btn.addEventListener('click', function (e) {
+                e.preventDefault();
+                if (rmPicked[r.id]) { delete rmPicked[r.id]; btn.classList.remove('on'); }
+                else { rmPicked[r.id] = true; btn.classList.add('on'); }
+              });
+              rmw.appendChild(btn);
+            });
+            rmw.appendChild(rmDone);
+          }).catch(function () {
+            rmw.innerHTML = '';
+            rmw.appendChild(textFallback(v, onCommit));
+          });
+          rmw.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && onCancel) onCancel();
+            else if (e.key === 'Enter') { e.preventDefault(); rmDone.click(); }
+          });
+          return rmw;
+        }
+        // Single ref: dropdown of (id, label) pairs from the ref tab.
+        var rsel = document.createElement('select');
+        rsel.className = 'editor editor-ref';
+        rsel.appendChild(makeOption('', '— loading…'));
+        Minerva.db.getAllRows(t.refTab).then(function (rows) {
+          rsel.innerHTML = '';
+          rsel.appendChild(makeOption('', '—'));
+          rows.forEach(function (r) {
+            var label = r.title || r.name || r.id;
+            rsel.appendChild(makeOption(r.id, label));
+          });
+          rsel.value = v;
+        }).catch(function () {
+          rsel.innerHTML = '';
+          rsel.appendChild(makeOption(v, v));
+          rsel.value = v;
+        });
+        rsel.addEventListener('change', function () { onCommit(rsel.value); });
+        rsel.addEventListener('blur', function () { onCommit(rsel.value); });
+        rsel.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && onCancel) onCancel();
+        });
+        return rsel;
+      }
+
+      // Fallback for anything else (text, drive, image, json, code, …).
       default: {
         var ti = document.createElement('input');
         ti.type = 'text';
