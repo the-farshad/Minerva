@@ -173,12 +173,95 @@
 
   // ---- views ----
 
+  // ---- dashboard stats ------------------------------------------------
+
+  function aliveOf(rows) { return (rows || []).filter(function (r) { return !r._deleted; }); }
+  function statusOf(r) { return String(r.status || '').toLowerCase(); }
+  function dateOf(v) { return v ? String(v).slice(0, 10) : ''; }
+
+  async function buildStats() {
+    var today = todayStr();
+    var stats = [];
+
+    // Tasks
+    try {
+      var tasks = aliveOf(await M.db.getAllRows('tasks'));
+      if (tasks.length) {
+        var done = tasks.filter(function (r) { return statusOf(r) === 'done'; }).length;
+        var dueToday = tasks.filter(function (r) {
+          return r.due && dateOf(r.due) === today && statusOf(r) !== 'done';
+        }).length;
+        var overdue = tasks.filter(function (r) {
+          return r.due && dateOf(r.due) < today && statusOf(r) !== 'done';
+        }).length;
+        var pct = tasks.length ? Math.round(100 * done / tasks.length) : 0;
+
+        stats.push({ label: 'Tasks done',  value: done + ' / ' + tasks.length, pct: pct, href: '#/s/tasks' });
+        stats.push({ label: 'Due today',   value: String(dueToday), accent: dueToday > 0, href: '#/s/tasks' });
+        stats.push({ label: 'Overdue',     value: String(overdue),  danger: overdue > 0,  href: '#/s/tasks' });
+      }
+    } catch (e) { /* ignore */ }
+
+    // Goals
+    try {
+      var goals = aliveOf(await M.db.getAllRows('goals'));
+      if (goals.length) {
+        var totalProgress = goals.reduce(function (s, r) { return s + (Number(r.progress) || 0); }, 0);
+        var avg = goals.length ? Math.round(totalProgress / goals.length) : 0;
+        stats.push({ label: 'Avg goal progress', value: avg + '%', pct: avg, href: '#/s/goals' });
+      }
+    } catch (e) { /* ignore */ }
+
+    // Projects
+    try {
+      var projects = aliveOf(await M.db.getAllRows('projects'));
+      var activeProjects = projects.filter(function (r) { return statusOf(r) === 'active'; }).length;
+      if (projects.length) {
+        stats.push({ label: 'Active projects', value: String(activeProjects) + ' / ' + projects.length, href: '#/s/projects' });
+      }
+    } catch (e) { /* ignore */ }
+
+    // Notes
+    try {
+      var notes = aliveOf(await M.db.getAllRows('notes'));
+      if (notes.length) {
+        stats.push({ label: 'Notes', value: String(notes.length), href: '#/s/notes' });
+      }
+    } catch (e) { /* ignore */ }
+
+    return stats;
+  }
+
+  function renderStatCard(s) {
+    var children = [
+      el('div', { class: 'stat-label' }, s.label),
+      el('div', { class: 'stat-value' }, s.value)
+    ];
+    if (typeof s.pct === 'number') {
+      var bar = el('div', { class: 'stat-bar' });
+      var fill = el('div', { class: 'stat-bar-fill' });
+      fill.style.width = Math.max(0, Math.min(100, s.pct)) + '%';
+      bar.appendChild(fill);
+      children.push(bar);
+    }
+    var cls = 'stat-card';
+    if (s.danger) cls += ' stat-danger';
+    else if (s.accent) cls += ' stat-accent';
+    if (s.href) {
+      var a = el('a', { class: cls, href: s.href });
+      children.forEach(function (c) { a.appendChild(c); });
+      return a;
+    }
+    return el('div', { class: cls }, children);
+  }
+
   async function viewHome() {
     var cfg = readConfig();
     var st = M.auth ? M.auth.getState() : { hasToken: false, email: null };
     var connected = st.hasToken && cfg.spreadsheetId;
 
     if (connected) {
+      var stats = await buildStats();
       var sections = sectionRows();
       var cards = await Promise.all(sections.map(async function (r) {
         var count = 0, lastSync = null;
@@ -205,6 +288,9 @@
           el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'your spreadsheet'),
           '. Adding a new section is a row in ', el('code', null, '_config'), ' plus a tab — no code change.'
         ),
+        stats.length
+          ? el('div', { class: 'stats-grid' }, stats.map(renderStatCard))
+          : null,
         sections.length
           ? el('div', { class: 'section-cards' }, cards)
           : el('p', { class: 'muted' }, 'No sections yet. Open Settings and click Sync now.'),
