@@ -2,7 +2,7 @@
 
 A lightweight personal planner. Goals, tasks, projects, notes — backed by a Google Sheet **you** own. The app is a static site; there are no servers, no databases, no accounts. Public sharing with QR codes is built in.
 
-> **Status — Phase 1.** Google Sign-In + automatic spreadsheet bootstrap are live, on top of Phase 0's static shell, theme + font picker, and public share with QR codes. Dynamic sections (read straight from your `_config` tab) land next.
+> **Status — Phase 3.** End-to-end CRUD: dynamic section list views with click-to-edit cells, type-aware editors, add/delete row, and a serialized push back to Sheets via a dirty-row queue. On top of Phases 0–2: static shell, themes, fonts, public share with QR, Google Sign-In, automatic spreadsheet bootstrap, schema-driven nav, IndexedDB local mirror.
 
 **Live (hosted instance):** <https://minerva.thefarshad.com>
 
@@ -12,8 +12,9 @@ A lightweight personal planner. Goals, tasks, projects, notes — backed by a Go
 
 ## What works today
 
-- **Connect Google** — sign in with the BYO OAuth client; Minerva auto-creates (or finds) a `Minerva` spreadsheet in your Drive and seeds it with the meta tabs (`_config`, `_prefs`, `_log`) and four section tabs (`goals`, `tasks`, `projects`, `notes`), each with a header row + a type-hint row that defines how Phase 2 will render it.
-- **Local store + sync** — every connect pulls the spreadsheet into a private IndexedDB mirror in your browser. Settings shows the per-tab row counts and last-sync time; a **Sync now** button does a manual pull. Phase 3 will add push-back so local edits flush to Sheets in the background.
+- **Connect Google** — sign in with the BYO OAuth client; Minerva auto-creates (or finds) a `Minerva` spreadsheet in your Drive and seeds it with the meta tabs (`_config`, `_prefs`, `_log`) and four section tabs (`goals`, `tasks`, `projects`, `notes`), each with a header row + a type-hint row that defines how the app renders it.
+- **Local store + sync** — every connect pulls the spreadsheet into a private IndexedDB mirror in your browser. Settings shows per-tab row counts and last-sync time; **Sync now** does a manual push-then-pull.
+- **Edit anything** — every section list view has click-to-edit cells, an **+ Add row** button, and a per-row delete. Inline editors per type: text, number, date, datetime, checkbox, dropdown (`select`), URL, color, plus a textarea for long-form. Edits write to the local store first (instantly visible), get marked dirty, then a coalescing background queue pushes them back to your spreadsheet. Pulling preserves any pending local edits so you never lose work-in-progress.
 - **Quick share** — build a note, question, or poll; get a stable URL and a crisp QR code. No login required. The data lives in the URL itself, so nothing is uploaded.
 - **Public viewer** — anyone with the link sees the same card you do, scannable from a phone via QR.
 - **Theme picker** — five themes: `auto · light · dark · sepia · vt323-yellow` (homage to [thefarshad.com](https://thefarshad.com)).
@@ -102,7 +103,9 @@ assets/auth.js         Google Identity Services token-flow client
 assets/sheets.js       thin Sheets API v4 + Drive API v3 wrapper
 assets/db.js           local IndexedDB store (your data, mirrored in-browser)
 assets/bootstrap.js    find-or-create the user's Minerva spreadsheet
-assets/sync.js         pull spreadsheet → local store; phase 3 will add push
+assets/sync.js         pull/push between local store and Sheets, dirty-queue
+assets/render.js       schema parser + type-aware cell renderers
+assets/editors.js      type-aware inline editors (Phase 3 CRUD)
 assets/app.js          hash router + views
 CNAME                  custom domain for GitHub Pages
 .nojekyll              tells Pages not to run Jekyll

@@ -154,6 +154,22 @@
     if (_db) { _db.close(); _db = null; }
   }
 
+  // Crockford base32 ULID — 10 chars timestamp (sortable) + 16 chars random.
+  var ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  function ulid() {
+    var ts = Date.now();
+    var t = '';
+    for (var i = 0; i < 10; i++) {
+      t = ULID_ALPHABET[ts % 32] + t;
+      ts = Math.floor(ts / 32);
+    }
+    var bytes = new Uint8Array(16);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    var r = '';
+    for (var j = 0; j < 16; j++) r += ULID_ALPHABET[bytes[j] % 32];
+    return t + r;
+  }
+
   window.Minerva = window.Minerva || {};
   window.Minerva.db = {
     open: open,
@@ -170,6 +186,7 @@
     listTabs: listTabs,
     getAllMeta: getAllMeta,
     clearAll: clearAll,
-    close: close
+    close: close,
+    ulid: ulid
   };
 })();
