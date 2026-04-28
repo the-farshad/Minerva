@@ -246,19 +246,24 @@
   function schedulePush() {
     if (pushInFlight) { pushPending = true; return pushInFlight; }
     pushInFlight = (async function () {
-      do {
-        pushPending = false;
-        var c = readConfig();
-        if (!c.clientId || !c.spreadsheetId) break;
-        try {
-          var token = await M.auth.getToken(c.clientId);
-          await M.sync.pushAll(token, c.spreadsheetId);
-        } catch (e) {
-          console.warn('[Minerva push]', e);
-          break;
-        }
-      } while (pushPending);
-      pushInFlight = null;
+      paintPushIndicator();
+      try {
+        do {
+          pushPending = false;
+          var c = readConfig();
+          if (!c.clientId || !c.spreadsheetId) break;
+          try {
+            var token = await M.auth.getToken(c.clientId);
+            await M.sync.pushAll(token, c.spreadsheetId);
+          } catch (e) {
+            console.warn('[Minerva push]', e);
+            break;
+          }
+        } while (pushPending);
+      } finally {
+        pushInFlight = null;
+        paintPushIndicator();
+      }
     })();
     return pushInFlight;
   }
@@ -1079,22 +1084,131 @@
     return '';
   }
 
-  // ---- keyboard shortcuts ----
+  // ---- keyboard shortcuts + help overlay ----
+
+  function showHelp() {
+    if (document.querySelector('.help-overlay')) return;
+    var overlay = el('div', { class: 'help-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+    var rows = [
+      ['g', 'Home'],
+      ['q', 'Quick share'],
+      ['s', 'Settings'],
+      ['1 – 9', 'Open the Nth section'],
+      ['?', 'This panel'],
+      ['Esc', 'Close panel / cancel cell edit'],
+      ['Enter', 'Save current cell edit']
+    ];
+    var panel = el('div', { class: 'help-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      el('h3', null, 'Keyboard shortcuts'),
+      el('table', { class: 'kv' },
+        el('tbody', null, rows.map(function (r) {
+          return el('tr', null,
+            el('td', null, el('kbd', null, r[0])),
+            el('td', null, r[1])
+          );
+        }))
+      ),
+      el('p', { class: 'small muted' }, 'Click anywhere outside or press ', el('kbd', null, 'Esc'), ' to close.')
+    );
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+  }
+
+  function closeHelp() {
+    var ov = document.querySelector('.help-overlay');
+    if (ov) ov.remove();
+  }
 
   document.addEventListener('keydown', function (e) {
+    // Esc closes help even if focus is in an input.
+    if (e.key === 'Escape' && document.querySelector('.help-overlay')) {
+      e.preventDefault();
+      closeHelp();
+      return;
+    }
     if (e.target.matches('input, textarea, select, [contenteditable]')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'g') location.hash = '#/';
-    else if (e.key === 's') location.hash = '#/settings';
-    else if (e.key === 'q') location.hash = '#/share';
+
+    if (e.key === '?' || (e.shiftKey && e.key === '/')) { showHelp(); return; }
+    if (e.key === 'g') { location.hash = '#/'; return; }
+    if (e.key === 's') { location.hash = '#/settings'; return; }
+    if (e.key === 'q') { location.hash = '#/share'; return; }
+
+    // 1–9 → Nth section.
+    if (/^[1-9]$/.test(e.key)) {
+      var idx = parseInt(e.key, 10) - 1;
+      var sects = sectionRows();
+      if (sects[idx]) {
+        location.hash = '#/s/' + encodeURIComponent(sects[idx].slug);
+      }
+    }
   });
 
   // ---- boot ----
 
+  // ---- resume state ----
+
+  var UI_KEY = 'minerva.ui.v1';
+  function readUi() {
+    try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  function writeUi(patch) {
+    try { localStorage.setItem(UI_KEY, JSON.stringify(Object.assign({}, readUi(), patch))); }
+    catch (e) { /* ignore */ }
+  }
+  var saveUiSoon = (function () {
+    var t = null;
+    return function () {
+      if (t) clearTimeout(t);
+      t = setTimeout(function () {
+        writeUi({ hash: location.hash, scrollY: window.scrollY, when: Date.now() });
+      }, 200);
+    };
+  })();
+  window.addEventListener('scroll', saveUiSoon, { passive: true });
+  window.addEventListener('hashchange', saveUiSoon);
+
+  // ---- push-status indicator (bottom-right pill while pushes run) ----
+
+  var pushIndicator = null;
+  function ensurePushIndicator() {
+    if (pushIndicator) return;
+    pushIndicator = document.createElement('div');
+    pushIndicator.className = 'push-indicator';
+    pushIndicator.hidden = true;
+    pushIndicator.textContent = 'Saving…';
+    document.body.appendChild(pushIndicator);
+  }
+  function paintPushIndicator() {
+    ensurePushIndicator();
+    pushIndicator.hidden = !pushInFlight;
+  }
+
   async function boot() {
     bindPicker();
+    ensurePushIndicator();
     await refreshConfig();
+
+    // Restore last view if the user landed on a bare URL.
+    if (!location.hash || location.hash === '' || location.hash === '#') {
+      var s = readUi();
+      if (s && s.hash && s.hash !== '#/' && s.hash !== '#') {
+        // only restore if the saved hash is recent (< 7 days)
+        if (!s.when || Date.now() - s.when < 7 * 86400000) {
+          location.hash = s.hash;
+        }
+      }
+    }
     await route();
+    var s2 = readUi();
+    if (s2 && s2.hash === location.hash && s2.scrollY) {
+      setTimeout(function () { window.scrollTo(0, s2.scrollY); }, 60);
+    }
     scheduleReminders();
   }
 
