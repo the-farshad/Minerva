@@ -692,10 +692,10 @@
           '. Switch back to list to edit cells inline.'
         );
       } else if (mode === 'tree' && parentCol) {
-        bodyHost.replaceChildren(renderTree(meta, filtered, sec.tab, parentCol));
+        bodyHost.replaceChildren(renderTree(meta, filtered, sec.tab, parentCol, refresh));
         hint.replaceChildren(
           'Tree groups rows by their ', el('code', null, parentCol),
-          ' field. Click ▸/▾ to expand or collapse a branch. Switch to List to edit cells inline.'
+          ' field. ', el('strong', null, '+'), ' on a row adds a subtask. Click ▸/▾ to expand. Switch to List to edit cells inline.'
         );
       } else {
         bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh, userSort, onSortChange));
@@ -1069,7 +1069,7 @@
     return view;
   }
 
-  function renderTree(meta, rows, tab, parentCol) {
+  function renderTree(meta, rows, tab, parentCol, refresh) {
     var byId = {};
     rows.forEach(function (r) {
       byId[r.id] = { row: r, children: [] };
@@ -1122,6 +1122,26 @@
       if (has) {
         header.appendChild(el('span', { class: 'tree-count small muted' }, node.children.length + ' child' + (node.children.length === 1 ? '' : 'ren')));
       }
+
+      var addChildBtn = el('button', {
+        class: 'tree-add-child',
+        type: 'button',
+        title: 'Add subtask under this row',
+        'aria-label': 'Add subtask',
+        onclick: async function (e) {
+          e.preventDefault();
+          var newRow = await addRow(tab, meta.headers);
+          newRow[parentCol] = r.id;
+          if (meta.headers.indexOf('title') >= 0) newRow.title = 'New';
+          else if (meta.headers.indexOf('name') >= 0) newRow.name = 'New';
+          if (meta.headers.indexOf('status') >= 0) newRow.status = 'todo';
+          newRow._dirty = 1;
+          await M.db.upsertRow(tab, newRow);
+          schedulePush();
+          if (refresh) await refresh();
+        }
+      }, '+');
+      header.appendChild(addChildBtn);
 
       wrap.appendChild(header);
 
