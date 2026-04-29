@@ -4,6 +4,11 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.13 — Undo (Cmd/Ctrl+Z)
+
+- Mutating operations (cell edits, adds, deletes, status toggles) push to a `localStorage` undo stack capped at 50 entries. **`⌘/Ctrl + Z`** pops the last and applies its inverse: edits restore the previous value, adds become deletes, deletes restore from a snapshot of the row taken at delete time. Re-renders the current view and queues the inverse for push back to Sheets.
+- Cmd/Ctrl+Z is intercepted only outside text editors so the browser's native text undo still works while typing in a cell.
+
 ## v0.12 — Onboarding, Settings TOC, j/k navigation
 
 - **First-run onboarding card** on the home view: a 4-step checklist (open the app · create OAuth client · paste it in Settings · Connect Google) with progress bar, completed checkmarks, and a CTA button that jumps to the next undone step. Replaces the generic callouts when the user isn't connected yet; the callouts still render below in a compact form.
