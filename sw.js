@@ -10,7 +10,7 @@
 
 'use strict';
 
-var CACHE_VERSION = 'minerva-v10';
+var CACHE_VERSION = 'minerva-v11';
 var SHELL = [
   './',
   './index.html',
@@ -32,6 +32,7 @@ var SHELL = [
   './assets/ical.js',
   './assets/presets.js',
   './assets/ai.js',
+  './assets/import.js',
   './assets/pomodoro.js',
   './assets/app.js',
   './docs/assets/minerva-logo.png',
