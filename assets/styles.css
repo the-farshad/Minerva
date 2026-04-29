@@ -6,9 +6,13 @@
 
 /* --- theme variables ----------------------------------------- */
 
+/* Defaults are light. Auto follows the OS via the dark @media below.
+   Explicit theme overrides come AFTER the @media block so they win
+   regardless of system preference — this is what makes
+   data-theme="light" actually pin the light palette on a dark OS. */
+
 :root,
-[data-theme="auto"],
-[data-theme="light"] {
+[data-theme="auto"] {
   --bg: #fbfbfa;
   --surface: #f2f2ef;
   --surface-2: #e9e9e6;
@@ -42,6 +46,24 @@
     --ok: #7ddc9a;
     --shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
   }
+}
+
+/* Explicit themes — these MUST come after the @media block so a user
+   pinning a theme overrides the system preference. */
+
+[data-theme="light"] {
+  --bg: #fbfbfa;
+  --surface: #f2f2ef;
+  --surface-2: #e9e9e6;
+  --fg: #1a1a1a;
+  --muted: #6b6f76;
+  --accent: #2e5aac;
+  --accent-2: #1d3f7e;
+  --on-accent: #ffffff;
+  --border: #e4e4e1;
+  --error: #b42318;
+  --ok: #1f7a3e;
+  --shadow: 0 2px 14px rgba(0, 0, 0, 0.08);
 }
 
 [data-theme="dark"] {
