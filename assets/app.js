@@ -2213,20 +2213,60 @@
       );
     }
 
-    return el('section', { class: 'view' },
+    // Wrap each panel in a section with an id so the TOC can link to it.
+    function panel(id, content) {
+      var s = el('section', { class: 'settings-section', id: id });
+      if (Array.isArray(content)) content.forEach(function (c) { if (c) s.appendChild(c); });
+      else if (content) s.appendChild(content);
+      return s;
+    }
+
+    var connectionPanel = el('div');
+    connectionPanel.appendChild(form);
+    connectionPanel.appendChild(status);
+
+    var sections = [
+      { id: 'settings-connection', label: 'Connection',  content: connectionPanel },
+      { id: 'settings-store',      label: 'Local store', content: localPanel },
+      { id: 'settings-sections',   label: 'Add a section', content: presetsPanel },
+      { id: 'settings-notify',     label: 'Notifications', content: notifyPanel },
+      { id: 'settings-ical',       label: 'Calendar feed', content: icalPanel },
+      { id: 'settings-telegram',   label: 'Telegram bot',  content: tgPanel },
+      { id: 'settings-ai',         label: 'AI assistant',  content: aiPanel }
+    ];
+
+    var toc = el('aside', { class: 'settings-toc', 'aria-label': 'Settings sections' });
+    var tocList = el('ul');
+    sections.forEach(function (s) {
+      var a = el('a', {
+        href: '#' + s.id,
+        onclick: function (e) {
+          e.preventDefault();
+          var t = document.getElementById(s.id);
+          if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          history.replaceState(null, '', '#/settings');
+        }
+      }, s.label);
+      tocList.appendChild(el('li', null, a));
+    });
+    toc.appendChild(el('h3', null, 'Sections'));
+    toc.appendChild(tocList);
+
+    var body = el('div', { class: 'settings-body' });
+    sections.forEach(function (s) {
+      body.appendChild(panel(s.id, s.content));
+    });
+
+    return el('section', { class: 'view view-settings' },
       el('h2', null, 'Settings'),
       el('p', { class: 'lead' },
         'Minerva keeps no secrets in its repo. You bring your own Google OAuth client; Minerva remembers it locally. ',
         el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough →')
       ),
-      form,
-      status,
-      localPanel,
-      presetsPanel,
-      notifyPanel,
-      icalPanel,
-      tgPanel,
-      aiPanel
+      el('div', { class: 'settings-layout' },
+        toc,
+        body
+      )
     );
   }
 
