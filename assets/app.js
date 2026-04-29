@@ -840,10 +840,81 @@
     view.appendChild(viewsBar);
     view.appendChild(el('p', { class: 'lead' }, meta1Span, sheetLink ? ' · ' : null, sheetLink));
 
+    var bulkBar = el('div', { class: 'bulk-bar', hidden: true });
+    view.appendChild(bulkBar);
     var bodyHost = el('div');
     view.appendChild(bodyHost);
     var hint = el('p', { class: 'small muted' });
     view.appendChild(hint);
+
+    // Selection state for bulk ops, scoped to this view instance.
+    var selectedIds = new Set();
+
+    function paintBulkBar() {
+      if (selectedIds.size === 0 || mode !== 'list') {
+        bulkBar.hidden = true;
+        bulkBar.replaceChildren();
+        return;
+      }
+      bulkBar.hidden = false;
+      bulkBar.replaceChildren(
+        el('span', { class: 'bulk-count' }, selectedIds.size + ' selected'),
+        el('button', { class: 'btn', type: 'button',
+          onclick: async function () {
+            var meta = await M.db.getMeta(sec.tab);
+            if (!meta || (meta.headers || []).indexOf('status') < 0) {
+              flash(view, 'No status column on this section.', 'error');
+              return;
+            }
+            var ids = Array.from(selectedIds);
+            for (var i = 0; i < ids.length; i++) {
+              var row = await M.db.getRow(sec.tab, ids[i]);
+              if (!row) continue;
+              var prev = row.status;
+              if (String(prev || '').toLowerCase() === 'done') continue;
+              pushUndo({ kind: 'edit', tab: sec.tab, rowId: row.id, field: 'status', prevValue: prev });
+              row.status = 'done';
+              row._updated = new Date().toISOString();
+              row._dirty = 1;
+              await M.db.upsertRow(sec.tab, row);
+              if (row.recurrence) { try { await spawnRecurrence(sec.tab, row); } catch (e) { /* ignore */ } }
+            }
+            schedulePush();
+            selectedIds.clear();
+            await refresh();
+            flash(view, 'Marked ' + ids.length + ' row' + (ids.length === 1 ? '' : 's') + ' as done.');
+          }
+        }, 'Mark done'),
+        el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: async function () {
+            var n = selectedIds.size;
+            if (!confirm('Delete ' + n + ' row' + (n === 1 ? '' : 's') + '? This is undoable until your next ' + UNDO_MAX + '-deep operation.')) return;
+            var ids = Array.from(selectedIds);
+            for (var i = 0; i < ids.length; i++) {
+              await deleteRow(sec.tab, ids[i]);
+            }
+            selectedIds.clear();
+            await refresh();
+            flash(view, 'Deleted ' + ids.length + ' row' + (ids.length === 1 ? '' : 's') + '.');
+          }
+        }, 'Delete'),
+        el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: function () {
+            selectedIds.clear();
+            paintBulkBar();
+            // re-render to clear checkbox state
+            var rows = bodyHost.querySelectorAll('tbody tr.is-bulk-selected');
+            rows.forEach(function (r) {
+              r.classList.remove('is-bulk-selected');
+              var cb = r.querySelector('.bulk-cb');
+              if (cb) cb.checked = false;
+            });
+            var head = bodyHost.querySelector('thead .bulk-cb-all');
+            if (head) head.checked = false;
+          }
+        }, 'Clear')
+      );
+    }
 
     var mode = readViewMode(slug);
     var userSort = readSort(slug); // null or { col, dir: 'asc'|'desc' }
@@ -1056,15 +1127,16 @@
           ' shows incoming refs from other sections. Click ▸/▾ to expand.'
         );
       } else {
-        bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh, userSort, onSortChange, backlinks));
+        bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh, userSort, onSortChange, backlinks, selectedIds, paintBulkBar));
         hint.replaceChildren(
-          'Click any cell to edit. Click a column header to sort. ',
+          'Click any cell to edit. Click a column header to sort. Tick the checkboxes to select rows for bulk actions. ',
           el('kbd', null, 'Enter'), ' to save, ',
           el('kbd', null, 'Esc'), ' to cancel.'
         );
       }
 
       paintBacklinksFooter(backlinks);
+      paintBulkBar();
     }
 
     var backlinksFooter = el('div', { class: 'backlinks-footer' });
@@ -1731,7 +1803,7 @@
     return el('div', { class: 'calendar' }, headRow, el('div', { class: 'cal-grid' }, cells));
   }
 
-  function renderSectionTable(meta, rows, tab, refresh, userSort, onSortChange, backlinks) {
+  function renderSectionTable(meta, rows, tab, refresh, userSort, onSortChange, backlinks, selectedIds, onBulkChange) {
     if (!meta || !meta.headers || !meta.headers.length) {
       return el('p', { class: 'muted' }, 'No schema cached yet — open Settings and click Sync now.');
     }
@@ -1745,9 +1817,34 @@
       if (h === 'id') continue;
       visibleCols.push({ name: h, type: meta.types[i] || 'text' });
     }
+
+    var allSelected = !!selectedIds && rows.length > 0 && rows.every(function (r) { return selectedIds.has(r.id); });
+    var bulkAllCb = document.createElement('input');
+    bulkAllCb.type = 'checkbox';
+    bulkAllCb.className = 'bulk-cb-all';
+    bulkAllCb.title = 'Select all rows';
+    bulkAllCb.checked = allSelected;
+    bulkAllCb.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!selectedIds) return;
+      if (bulkAllCb.checked) rows.forEach(function (r) { selectedIds.add(r.id); });
+      else rows.forEach(function (r) { selectedIds.delete(r.id); });
+      // toggle each row checkbox
+      bodyHost = bodyHost; // captured
+      var trs = (e.target.closest('table') || document).querySelectorAll('tbody tr');
+      trs.forEach(function (tr) {
+        var rid = tr.dataset.rowid;
+        var cb = tr.querySelector('.bulk-cb');
+        var on = bulkAllCb.checked;
+        if (cb) cb.checked = on;
+        tr.classList.toggle('is-bulk-selected', on);
+      });
+      if (onBulkChange) onBulkChange();
+    });
+
     var thead = el('thead', null,
       el('tr', null,
-        visibleCols.map(function (c) {
+        [el('th', { class: 'col-bulk' }, bulkAllCb)].concat(visibleCols.map(function (c) {
           var isActive = userSort && userSort.col === c.name;
           var arrow = isActive ? (userSort.dir === 'desc' ? ' ↓' : ' ↑') : '';
           var th = el('th', {
@@ -1770,7 +1867,7 @@
             if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cycle(); }
           });
           return th;
-        }).concat([
+        })).concat([
           el('th', { class: 'col-actions', 'aria-label': 'Actions' }, '')
         ])
       )
@@ -1778,6 +1875,29 @@
     var tbody = el('tbody', null, rows.map(function (row) {
       var tr = el('tr', { 'data-rowid': row.id });
       if (row._dirty) tr.classList.add('row-dirty');
+      var isSelected = !!selectedIds && selectedIds.has(row.id);
+      if (isSelected) tr.classList.add('is-bulk-selected');
+
+      // checkbox column
+      var rowCb = document.createElement('input');
+      rowCb.type = 'checkbox';
+      rowCb.className = 'bulk-cb';
+      rowCb.checked = isSelected;
+      rowCb.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!selectedIds) return;
+        if (rowCb.checked) selectedIds.add(row.id);
+        else selectedIds.delete(row.id);
+        tr.classList.toggle('is-bulk-selected', rowCb.checked);
+        // Sync the header "all" checkbox
+        var th = (tr.closest('table') || document).querySelector('thead .bulk-cb-all');
+        if (th) th.checked = rows.every(function (r) { return selectedIds.has(r.id); });
+        if (onBulkChange) onBulkChange();
+      });
+      var bulkTd = el('td', { class: 'col-bulk' });
+      bulkTd.appendChild(rowCb);
+      tr.appendChild(bulkTd);
+
       visibleCols.forEach(function (c, ci) {
         var td = el('td', { 'data-col': c.name, 'data-type': c.type, tabindex: '0' });
         td.appendChild(M.render.renderCell(row[c.name], c.type));
