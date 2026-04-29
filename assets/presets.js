@@ -162,6 +162,17 @@
         types:   ['text','select(paper,article,book,video,podcast)','text','text','number','link','link','markdown','multiselect()','check','rating(0..5)','markdown','datetime']
       },
       defaultSort: '_updated:desc'
+    },
+    {
+      slug: 'proposals',
+      title: 'Proposals',
+      icon: '📑',
+      description: 'Research and grant proposals — funder, deadline, status, and the structured sections reviewers expect. See docs/proposal-guide.md for funder-by-funder rules.',
+      schema: {
+        headers: ['id','title','funder','program','deadline','status','abstract','aims','methods','broader_impacts','timeline','budget','notes','_updated'],
+        types:   ['text','text','select(NSF,NIH,ERC,DOE,DARPA,internal,foundation,other)','text','date','select(planning,drafting,review,submitted,accepted,rejected,revising,awarded)','markdown','markdown','markdown','markdown','markdown','markdown','markdown','datetime']
+      },
+      defaultSort: 'deadline'
     }
   ];
 

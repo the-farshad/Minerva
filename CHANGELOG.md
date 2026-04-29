@@ -4,6 +4,14 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.16 — Light-theme fix · research workflow
+
+- **Light theme bug fixed**: pinning *Light* on a dark-mode OS now actually goes light. The dark `@media` block was overriding `:root` after the light rule defined the same variables; `[data-theme="light"]` now lives below the `@media` so explicit choices always win.
+- **Smart URL import** at `+ from URL` per section: paste an arXiv id/URL or YouTube URL — Minerva auto-fetches title, authors, abstract/thumbnail, year, and the canonical pdf URL (arXiv) via CORS-allowed APIs. Generic URLs are added as URL-only.
+- **Library** preset (papers · articles · videos · podcasts · books) and **Proposals** preset (with funder, deadline, status, the structured sections reviewers expect).
+- **Proposal helper**: AI prompts for *NSF / NIH / ERC structure*, *critique my abstract*, and *broader impacts brainstorm*. Companion doc at [`docs/proposal-guide.md`](docs/proposal-guide.md) — funder-by-funder rules, page limits, common pitfalls, pre-submission checklist.
+- **Capture-from-URL bookmarklet**, **OpenSearch** browser-bar registration, **RSS feed** of completed-this-week tasks, **per-section accent color** via `_config.color`, **KaTeX** rendering for `latex` columns, **voice capture** in the quick-capture modal, **custom theme** via raw CSS variables in Settings, **Pomodoro timer** floating widget that logs to a `pomodoros` tab.
+
 ## v0.15 — Row detail + CSV import
 
 - **Row detail modal** — double-click a row (or press `d` while it's selected) to open a full-field view: every visible column shown, full markdown rendered, every field click-to-editable through the same path as inline cell edits. Undo still works after closing the modal. Footer has Close / Delete / Open in Sheets actions.
