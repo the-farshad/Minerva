@@ -4,6 +4,14 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.17 — Research polish
+
+- **DOI lookup** in the URL importer: paste a bare DOI (10.xxxx/yyy) or doi.org URL — Minerva pulls title, authors, year, venue, abstract, and PDF link from CrossRef.
+- **Library** preset gains a `venue` column so journal names from CrossRef populate cleanly.
+- **PDF + YouTube preview** modal: link cells whose URL points at a `.pdf` or YouTube get a small 👁 button; click opens an embedded viewer (Google docs.google.com/viewer for PDFs, youtube.com/embed for videos) without leaving the app. Esc / click-outside / × close.
+- **BibTeX export** from the row detail modal: any row with author + title fields gets a *Copy BibTeX* button that emits a sensible @article/@book/@misc entry (cite-key = first-author-lastname + year, eprint+archivePrefix for arxiv, DOI for DOI URLs). Bulk-select + *Copy BibTeX* in the bulk action bar concatenates all eligible selected rows.
+- **Section-header consolidation**: the per-section *+ from URL* and *CSV* buttons fold into a single *Import ▾* dropdown — minimal-but-flexible.
+
 ## v0.16 — Light-theme fix · research workflow
 
 - **Light theme bug fixed**: pinning *Light* on a dark-mode OS now actually goes light. The dark `@media` block was overriding `:root` after the light rule defined the same variables; `[data-theme="light"]` now lives below the `@media` so explicit choices always win.
