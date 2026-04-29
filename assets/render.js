@@ -198,18 +198,46 @@
     return s;
   }
 
+  function isPdfUrl(s) {
+    return /\.pdf(\?|#|$)/i.test(String(s || '')) || /arxiv\.org\/pdf\//i.test(String(s || ''));
+  }
+
+  function isYouTubeUrl(s) {
+    return /youtube\.com\/watch|youtu\.be\//i.test(String(s || ''));
+  }
+
   function renderLink(value) {
     if (!value) return document.createTextNode('');
+    var raw = String(value);
+    var wrap = document.createElement('span');
+    wrap.className = 'cell-link-wrap';
+
     var a = document.createElement('a');
-    a.href = String(value);
+    a.href = raw;
     a.target = '_blank';
     a.rel = 'noopener';
     a.className = 'cell-link';
     var host = '';
-    try { host = new URL(String(value)).hostname.replace(/^www\./, ''); } catch (e) { host = String(value); }
+    try { host = new URL(raw).hostname.replace(/^www\./, ''); } catch (e) { host = raw; }
     a.textContent = '↗ ' + host;
-    a.title = String(value);
-    return a;
+    a.title = raw;
+    wrap.appendChild(a);
+
+    var canPreview = isPdfUrl(raw) || isYouTubeUrl(raw);
+    if (canPreview && window.Minerva && window.Minerva.preview) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cell-preview';
+      btn.title = 'Preview ' + (isPdfUrl(raw) ? 'PDF' : 'video');
+      btn.textContent = '👁';
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        window.Minerva.preview.show(raw);
+      });
+      wrap.appendChild(btn);
+    }
+    return wrap;
   }
 
   function renderRef(value, t) {
