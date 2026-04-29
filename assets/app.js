@@ -124,11 +124,12 @@
     var cfg = readConfig();
     var hasSheet = !!cfg.spreadsheetId;
     if (hasSheet) {
-      items.push({ hash: '#/today', label: '☀ Today' });
+      items.push({ hash: '#/today', label: '☀ Today', badge: 'today' });
       sectionRows().forEach(function (r) {
         items.push({
           hash: '#/s/' + encodeURIComponent(r.slug),
-          label: ((r.icon ? r.icon + ' ' : '') + (r.title || r.slug))
+          label: ((r.icon ? r.icon + ' ' : '') + (r.title || r.slug)),
+          badge: r.tab === 'tasks' ? 'tasks' : null
         });
       });
     }
@@ -137,11 +138,60 @@
 
     navEl.innerHTML = '';
     items.forEach(function (it) {
-      navEl.appendChild(el('a', {
+      var a = el('a', {
         href: it.hash,
-        class: 'nav-link' + (it.hash === active ? ' active' : '')
-      }, it.label));
+        class: 'nav-link' + (it.hash === active ? ' active' : ''),
+        'data-badge': it.badge || ''
+      }, it.label);
+      navEl.appendChild(a);
     });
+    if (hasSheet) paintNavBadges();
+  }
+
+  async function paintNavBadges() {
+    try {
+      var today = todayStr();
+      // Pending tasks (status != done, due present and today/before today, or no due).
+      var pendingTasks = 0;
+      var dueOrOverdueToday = 0;
+      var tasks = await M.db.getAllRows('tasks').catch(function () { return []; });
+      tasks.forEach(function (r) {
+        if (r._deleted) return;
+        if (String(r.status || '').toLowerCase() === 'done') return;
+        pendingTasks++;
+        if (r.due && String(r.due).slice(0, 10) <= today) dueOrOverdueToday++;
+      });
+
+      // Habits not done today.
+      var habitsLeft = 0;
+      try {
+        var habits = (await M.db.getAllRows('habits')).filter(function (h) { return !h._deleted; });
+        var logs = (await M.db.getAllRows('habit_log')).filter(function (l) { return !l._deleted; });
+        var doneSet = {};
+        logs.forEach(function (l) {
+          if (String(l.date).slice(0, 10) === today) doneSet[l.habit_id] = true;
+        });
+        habitsLeft = habits.filter(function (h) { return !doneSet[h.id]; }).length;
+      } catch (e) { /* ignore */ }
+
+      var todayCount = dueOrOverdueToday + habitsLeft;
+
+      navEl.querySelectorAll('a[data-badge]').forEach(function (a) {
+        var kind = a.getAttribute('data-badge');
+        // remove any existing badge node
+        var existing = a.querySelector('.nav-badge');
+        if (existing) existing.remove();
+        var n = 0;
+        if (kind === 'today') n = todayCount;
+        else if (kind === 'tasks') n = pendingTasks;
+        if (n > 0) {
+          var badge = document.createElement('span');
+          badge.className = 'nav-badge';
+          badge.textContent = n > 99 ? '99+' : String(n);
+          a.appendChild(badge);
+        }
+      });
+    } catch (e) { /* non-fatal */ }
   }
 
   // ---- shared bits ----
@@ -443,6 +493,8 @@
           pushIndicatorState = 'hidden';
         }
         paintPushIndicator();
+        // Refresh nav badges after a push so counts reflect newest state.
+        try { paintNavBadges(); } catch (e) { /* ignore */ }
       }
     })();
     return pushInFlight;
@@ -1206,6 +1258,39 @@
         weekday: 'long', month: 'long', day: 'numeric'
       }))
     ));
+
+    // Quick-add: typing here + Enter creates a task due today.
+    var quickAdd = document.createElement('input');
+    quickAdd.type = 'text';
+    quickAdd.className = 'today-quick-add';
+    quickAdd.placeholder = 'Add a task for today… (Enter)';
+    quickAdd.autocomplete = 'off';
+    quickAdd.addEventListener('keydown', async function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      var title = quickAdd.value.trim();
+      if (!title) return;
+      try {
+        var meta = await M.db.getMeta('tasks');
+        if (!meta || !meta.headers) {
+          flash(view, 'No tasks tab synced yet.', 'error');
+          return;
+        }
+        var row = await addRow('tasks', meta.headers);
+        row.title = title;
+        if (meta.headers.indexOf('due') >= 0) row.due = todayStr();
+        if (meta.headers.indexOf('status') >= 0) row.status = 'todo';
+        row._dirty = 1;
+        await M.db.upsertRow('tasks', row);
+        schedulePush();
+        quickAdd.value = '';
+        flash(view, 'Added: ' + title);
+        if (location.hash === '#/today') await route();
+      } catch (err) {
+        flash(view, 'Add failed: ' + (err && err.message ? err.message : err), 'error');
+      }
+    });
+    view.appendChild(quickAdd);
 
     // -- tasks block --
     view.appendChild(el('h3', null, 'Tasks  ',

@@ -758,6 +758,43 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 /* --- today view ------------------------------------------- */
 
 .view-today h2 .small { margin-left: 0.5rem; font-weight: 500; }
+
+.today-quick-add {
+  width: 100%;
+  max-width: var(--readw);
+  font: inherit;
+  font-size: 0.95rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem;
+  outline: none;
+  margin: 0.85rem 0 0.4rem;
+  transition: border-color .12s, background .12s;
+}
+.today-quick-add:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.today-quick-add::placeholder { color: var(--muted); }
+
+/* nav count badges */
+.nav-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-variant-numeric: tabular-nums;
+  vertical-align: 1px;
+}
+.nav-link.active .nav-badge {
+  background: var(--accent-2);
+}
 .view-today h3 {
   margin-top: 1.4rem;
   font-size: 0.92rem;
