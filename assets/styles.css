@@ -1800,6 +1800,31 @@ table.kv tbody tr:hover { background: var(--surface); }
 /* capture */
 .capture-panel .form { gap: 0.6rem; }
 .capture-panel .editor { width: 100%; }
+.capture-body-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+.capture-body-row textarea { flex: 1; }
+.voice-btn {
+  flex: 0 0 auto;
+  padding: 0;
+  width: 2.4rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  border-radius: 7px;
+  align-self: stretch;
+}
+.voice-btn.voice-active {
+  background: var(--error);
+  color: #fff;
+  border-color: var(--error);
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(180, 35, 24, 0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(180, 35, 24, 0); }
+}
 
 /* CSV import */
 .csv-panel { max-width: 720px; }
