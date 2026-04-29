@@ -1590,10 +1590,48 @@
       '). When done, fill in your name and copy the response token to send back to the organizer.'
     ));
 
-    var grid = buildSlotGrid(poll);
+    // Optional: pre-load a previous response so the participant can edit.
+    // Hash format used to load: ?r=<responseToken>
+    var preload = null;
+    try {
+      var qs = location.hash.split('?')[1] || '';
+      var rMatch = qs.match(/(?:^|&)r=([^&]+)/);
+      if (rMatch) preload = M.meet.decodeResponse(rMatch[1]);
+    } catch (e) { /* ignore malformed */ }
+
+    var initial = null;
+    if (preload && Array.isArray(preload.yes)) {
+      initial = preload.yes;
+    }
+
+    var grid = buildSlotGrid(poll, { initial: initial });
     view.appendChild(grid.el);
 
     var nameInput = el('input', { type: 'text', class: 'editor', placeholder: 'Your name' });
+    if (preload && preload.name) nameInput.value = preload.name;
+
+    if (preload) {
+      view.insertBefore(
+        el('p', { class: 'small muted' },
+          'Loaded ', el('strong', null, preload.name || 'previous response'),
+          ' for editing. Adjust the grid and regenerate to replace.'),
+        grid.el
+      );
+    }
+
+    // Add a 'Load my last response' button below the action row to let users
+    // who lost their initial URL paste a previous response token to edit.
+    var loadInput = el('input', { type: 'text', class: 'editor', placeholder: 'Paste a previous response URL or token to edit it' });
+    loadInput.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      var raw = loadInput.value.trim();
+      if (!raw) return;
+      var t = raw.replace(/^.*\//, '').split('?')[0];
+      // Drop trailing semicolons or other separators just in case
+      t = t.split(';')[0];
+      location.hash = '#/meet/' + token + '?r=' + encodeURIComponent(t);
+    });
     var output = el('div', { class: 'meet-output' });
 
     var submitBtn = el('button', { class: 'btn', type: 'button',
@@ -1682,6 +1720,13 @@
       el('div', { class: 'form-actions' }, submitBtn)
     ));
     view.appendChild(output);
+
+    view.appendChild(el('details', { class: 'meet-edit-prev' },
+      el('summary', { class: 'small muted' }, 'Load a previous response to edit it'),
+      el('p', { class: 'small muted' },
+        'If you saved your previous response URL or token, paste it here and press Enter — Minerva will pre-select your earlier picks so you can adjust without losing them.'),
+      loadInput
+    ));
     return view;
   }
 
@@ -3838,7 +3883,7 @@
         view = viewMeetNew(); active = '#/schedule';
       } else if ((sectionMatch = hash.match(/^#\/meet\/([^/]+)\/([^?]+)$/))) {
         view = viewMeetAggregate(sectionMatch[1], sectionMatch[2]); active = '';
-      } else if ((sectionMatch = hash.match(/^#\/meet\/(.+)$/))) {
+      } else if ((sectionMatch = hash.match(/^#\/meet\/([^/?]+)(?:\?.*)?$/))) {
         view = viewMeetParticipant(sectionMatch[1]); active = '';
       } else if ((sectionMatch = hash.match(/^#\/capture\/(.+)$/))) {
         // Bookmarklet entry point — decode payload and open quick-capture.
