@@ -333,7 +333,9 @@
   function schedulePush() {
     if (pushInFlight) { pushPending = true; return pushInFlight; }
     pushInFlight = (async function () {
+      pushIndicatorState = 'saving';
       paintPushIndicator();
+      var lastError = null;
       try {
         do {
           pushPending = false;
@@ -341,14 +343,24 @@
           if (!c.clientId || !c.spreadsheetId) break;
           try {
             var token = await M.auth.getToken(c.clientId);
-            await M.sync.pushAll(token, c.spreadsheetId);
+            var results = await M.sync.pushAll(token, c.spreadsheetId);
+            // Surface tab-level errors that pushAll swallowed into the result.
+            var errs = (results || []).filter(function (r) { return r && r.error; });
+            if (errs.length) lastError = errs[0].error || 'Unknown sync error';
           } catch (e) {
             console.warn('[Minerva push]', e);
+            lastError = (e && e.message) || String(e);
             break;
           }
         } while (pushPending);
       } finally {
         pushInFlight = null;
+        if (lastError) {
+          pushLastError = lastError;
+          pushIndicatorState = 'error';
+        } else {
+          pushIndicatorState = 'hidden';
+        }
         paintPushIndicator();
       }
     })();
@@ -2931,20 +2943,57 @@
   window.addEventListener('scroll', saveUiSoon, { passive: true });
   window.addEventListener('hashchange', saveUiSoon);
 
-  // ---- push-status indicator (bottom-right pill while pushes run) ----
+  // ---- push-status indicator (bottom-right pill) ----
 
   var pushIndicator = null;
+  var pushIndicatorState = 'hidden'; // 'hidden' | 'saving' | 'error'
+  var pushLastError = null;
+
   function ensurePushIndicator() {
     if (pushIndicator) return;
     pushIndicator = document.createElement('div');
     pushIndicator.className = 'push-indicator';
     pushIndicator.hidden = true;
-    pushIndicator.textContent = 'Saving…';
     document.body.appendChild(pushIndicator);
   }
   function paintPushIndicator() {
     ensurePushIndicator();
-    pushIndicator.hidden = !pushInFlight;
+    if (pushIndicatorState === 'hidden') {
+      pushIndicator.hidden = true;
+      pushIndicator.className = 'push-indicator';
+      pushIndicator.replaceChildren();
+      return;
+    }
+    pushIndicator.hidden = false;
+    if (pushIndicatorState === 'saving') {
+      pushIndicator.className = 'push-indicator';
+      pushIndicator.replaceChildren(document.createTextNode('Saving…'));
+    } else if (pushIndicatorState === 'error') {
+      pushIndicator.className = 'push-indicator push-error';
+      pushIndicator.replaceChildren(
+        el('span', null, 'Sync failed'),
+        el('button', {
+          type: 'button',
+          class: 'push-retry',
+          title: pushLastError ? String(pushLastError) : '',
+          onclick: function () {
+            pushIndicatorState = 'hidden';
+            paintPushIndicator();
+            schedulePush();
+          }
+        }, 'Retry'),
+        el('button', {
+          type: 'button',
+          class: 'push-dismiss',
+          title: 'Dismiss',
+          'aria-label': 'Dismiss',
+          onclick: function () {
+            pushIndicatorState = 'hidden';
+            paintPushIndicator();
+          }
+        }, '×')
+      );
+    }
   }
 
   // ---- service worker registration + offline indicator ---------------
