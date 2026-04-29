@@ -69,6 +69,43 @@
     };
   }
 
+  async function doiLookup(input) {
+    var s = String(input || '').trim();
+    // Accept bare DOI (10.xxxx/yyy), https://doi.org/10..., dx.doi.org/10..., etc.
+    var m = s.match(/(10\.\d{4,9}\/[^\s]+)/);
+    if (!m) return null;
+    var doi = m[1].replace(/[)\.,;]+$/, '');  // strip trailing punctuation
+    var resp = await fetch('https://api.crossref.org/works/' + encodeURIComponent(doi));
+    if (!resp.ok) throw new Error('CrossRef ' + resp.status);
+    var data = await resp.json();
+    var msg = data.message || {};
+    var titleArr = msg.title || [];
+    var title = clean(titleArr[0] || '');
+    var year = '';
+    if (msg.issued && msg.issued['date-parts'] && msg.issued['date-parts'][0]) {
+      year = String(msg.issued['date-parts'][0][0] || '');
+    }
+    var authors = (msg.author || []).map(function (a) {
+      return ((a.given || '') + ' ' + (a.family || '')).trim();
+    }).filter(Boolean).join(', ');
+    var abstract = clean((msg.abstract || '').replace(/<[^>]+>/g, ''));
+    var pdf = '';
+    (msg.link || []).forEach(function (l) {
+      if (!pdf && l['content-type'] === 'application/pdf') pdf = l.URL;
+    });
+    var container = clean((msg['container-title'] || [])[0] || '');
+    return {
+      kind: 'paper',
+      title: title,
+      authors: authors,
+      year: year,
+      url: 'https://doi.org/' + doi,
+      pdf: pdf,
+      abstract: abstract,
+      venue: container
+    };
+  }
+
   // Best-effort generic — most sites don't allow CORS for HTML, so this
   // can't read the page title. We just record the URL and let the user
   // fill the title in. If the target *does* allow CORS we'll grab the
@@ -100,6 +137,14 @@
       } catch (e) { /* fall through */ }
     }
 
+    // DOI — bare or wrapped in doi.org.
+    if (/(?:doi\.org\/|^)10\.\d{4,9}\//i.test(input)) {
+      try {
+        var dx = await doiLookup(input);
+        if (dx) return dx;
+      } catch (e) { /* fall through */ }
+    }
+
     // YouTube next.
     if (/youtube\.com|youtu\.be/i.test(input)) {
       try {
@@ -121,6 +166,7 @@
     lookup: lookup,
     arxiv: arxivLookup,
     youtube: youtubeLookup,
+    doi: doiLookup,
     generic: genericLookup
   };
 })();

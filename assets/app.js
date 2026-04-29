@@ -3183,7 +3183,7 @@
     var input = document.createElement('input');
     input.type = 'text';
     input.className = 'editor';
-    input.placeholder = 'arXiv ID (2401.12345) or URL · YouTube URL · any other URL';
+    input.placeholder = 'arXiv ID · DOI (10.xxxx/...) · YouTube URL · any other URL';
     input.autocomplete = 'off';
     input.spellcheck = false;
 
@@ -3289,7 +3289,8 @@
       el('h3', null, 'Add from URL — ', el('code', null, tab)),
       el('p', { class: 'small muted' },
         'Auto-fetches metadata from ',
-        el('strong', null, 'arXiv'), ' (paste 2401.12345 or any arxiv URL) and ',
+        el('strong', null, 'arXiv'), ' (paste 2401.12345 or any arxiv URL), ',
+        el('strong', null, 'DOI'), ' (10.xxxx/yyy or doi.org URL — uses CrossRef), and ',
         el('strong', null, 'YouTube'), ' (any watch / youtu.be URL). Other URLs are added with title-only when CORS allows, or just the URL otherwise.'
       ),
       input,
