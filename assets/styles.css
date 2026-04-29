@@ -274,6 +274,90 @@ footer a {
 }
 footer a:hover { color: var(--fg); }
 
+/* --- onboarding ---------------------------------------------- */
+
+.onboarding {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  margin: 0.75rem 0 1.25rem;
+  max-width: var(--readw);
+}
+.onboarding-progress {
+  position: relative;
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+.onboarding-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width .25s;
+}
+.onboarding-progress-label {
+  position: absolute;
+  right: 0;
+  top: -1.4rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.onboarding-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.onboarding-step {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  padding: 0.4rem 0;
+  opacity: 0.7;
+}
+.onboarding-step.is-current { opacity: 1; }
+.onboarding-step.is-done { opacity: 1; }
+.onboarding-step.is-done .onboarding-num {
+  background: var(--ok);
+  color: #fff;
+  border-color: var(--ok);
+}
+.onboarding-step.is-current .onboarding-num {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.onboarding-num {
+  width: 1.7rem;
+  height: 1.7rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: var(--bg);
+  color: var(--muted);
+}
+.onboarding-body { flex: 1; min-width: 0; }
+.onboarding-body h3 { margin: 0 0 0.15rem; font-size: 0.95rem; font-weight: 600; }
+.onboarding-body p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
+.onboarding-cta { margin-top: 0.85rem; }
+.onboarding-cta:empty { display: none; }
+
+.callouts.callouts-compact { gap: 0.6rem; }
+.callouts.callouts-compact .callout { padding: 0.7rem 0.85rem; }
+.callouts.callouts-compact .callout h3 { font-size: 0.85rem; }
+.callouts.callouts-compact .callout p { font-size: 0.82rem; }
+
 /* --- callouts (home) ----------------------------------------- */
 
 .callouts {
