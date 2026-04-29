@@ -1666,9 +1666,9 @@ table.kv tbody tr:hover { background: var(--surface); }
   box-shadow: var(--shadow);
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.5rem;
 }
-.push-indicator::before {
+.push-indicator:not(.push-error)::before {
   content: "";
   display: inline-block;
   width: 8px;
@@ -1677,6 +1677,32 @@ table.kv tbody tr:hover { background: var(--surface); }
   background: var(--accent);
   animation: pulse 1s ease-in-out infinite;
 }
+.push-indicator.push-error {
+  background: var(--error);
+  color: #fff;
+  border-color: var(--error);
+}
+.push-indicator.push-error::before {
+  content: "⚠";
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.push-retry,
+.push-dismiss {
+  appearance: none;
+  border: 1px solid rgba(255,255,255,0.45);
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 0.78rem;
+  border-radius: 5px;
+  padding: 0.1rem 0.55rem;
+  cursor: pointer;
+  transition: background .12s;
+}
+.push-dismiss { padding: 0.1rem 0.4rem; line-height: 1; font-size: 0.95rem; }
+.push-retry:hover,
+.push-dismiss:hover { background: rgba(255,255,255,0.15); }
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.7); }
