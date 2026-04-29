@@ -834,14 +834,39 @@
     var header = el('div', { class: 'view-section-head' });
     var meta1Span = el('span');
     var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add row');
-    var urlBtn = el('button', { class: 'btn btn-ghost', type: 'button',
-      title: 'Add from URL (arXiv / YouTube / web page)',
-      onclick: function () { showUrlImport(sec.tab); }
-    }, '+ from URL');
+    // Single 'Import ▾' control that opens a small menu with both
+    // import flows — keeps the section header tidy without removing
+    // either path.
+    var importWrap = el('div', { class: 'import-wrap' });
+    var importMenu = null;
     var importBtn = el('button', { class: 'btn btn-ghost', type: 'button',
-      title: 'Import rows from CSV or TSV',
-      onclick: function () { showCsvImport(sec.tab); }
-    }, 'CSV');
+      title: 'Add rows: from URL (arXiv/YouTube), or paste CSV/TSV',
+      onclick: function (e) {
+        e.stopPropagation();
+        if (importMenu) { importMenu.remove(); importMenu = null; return; }
+        importMenu = el('div', { class: 'import-menu' });
+        var pick = function (label, hint, run) {
+          var item = el('button', { type: 'button', class: 'import-menu-item',
+            onclick: function (ev) { ev.stopPropagation(); importMenu.remove(); importMenu = null; run(); }
+          },
+            el('div', { class: 'import-menu-label' }, label),
+            el('div', { class: 'import-menu-hint' }, hint)
+          );
+          importMenu.appendChild(item);
+        };
+        pick('From URL', 'arXiv id, YouTube URL, web page', function () { showUrlImport(sec.tab); });
+        pick('Paste CSV / TSV', 'Bulk-import rows from a clipboard paste', function () { showCsvImport(sec.tab); });
+        importWrap.appendChild(importMenu);
+        var close = function (ev) {
+          if (importMenu && !importMenu.contains(ev.target) && ev.target !== importBtn) {
+            importMenu.remove(); importMenu = null;
+            document.removeEventListener('click', close);
+          }
+        };
+        setTimeout(function () { document.addEventListener('click', close); }, 0);
+      }
+    }, 'Import ▾');
+    importWrap.appendChild(importBtn);
     var modeToggle = el('div', { class: 'seg seg-mode' });
     var calNav = el('div', { class: 'cal-nav' });
     var filterInput = el('input', {
@@ -850,7 +875,7 @@
     var viewsBar = el('div', { class: 'saved-views' });
 
     header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)));
-    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, urlBtn, importBtn, addBtn);
+    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, importWrap, addBtn);
     header.appendChild(headerRight);
     view.appendChild(header);
     view.appendChild(viewsBar);
