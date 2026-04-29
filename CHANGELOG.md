@@ -4,6 +4,12 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.8 — Recurring tasks, click-to-sort, preset gallery
+
+- **Recurring tasks**: a task with a populated `recurrence` column auto-spawns the next instance when its status is set to `done`. Recurrence vocab: `daily`, `weekly`, `biweekly`, `monthly`, `quarterly`, `yearly`, `every N days/weeks/months/years`, `every monday/tuesday/...`. The new row carries forward all user-facing fields, with status reset to `todo` and `due` advanced. Adding a `recurrence:text` column to your `tasks` tab in Sheets is enough to opt in.
+- **Click-to-sort** on column headers in section list views — cycles asc → desc → off (back to `defaultSort`). Persists per section in `localStorage`.
+- **Section preset gallery** — Settings → *Add a section* offers 12 one-click presets (Reading list, Journal, Decisions, Books, Films, Workouts, Papers, Contacts, Travel, Recipes, Inbox, Job applications). Each creates the tab in your spreadsheet, seeds the schema, and writes a row to `_config`. Already-installed presets render greyed out.
+
 ## v0.7 — Always-on Telegram bridge & Today view
 
 - **Today view** at `#/today` — a single page showing tasks due/overdue (with one-click ✓), habits not done today, and recent notes. Press `t` from anywhere.
