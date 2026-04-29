@@ -1926,6 +1926,23 @@ table.kv tbody tr:hover { background: var(--surface); }
   max-width: none;
 }
 
+.tg-panel pre {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.tg-panel details summary {
+  cursor: pointer;
+  margin-top: 0.6rem;
+}
+
 /* AI assistant overlay */
 .ai-panel { max-width: 640px; }
 .ai-head {
