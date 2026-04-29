@@ -1348,6 +1348,358 @@
     return view;
   }
 
+  // ---- when-to-meet group availability poll -------------------------
+
+  function viewMeetNew() {
+    var view = el('section', { class: 'view view-meet' });
+    var titleH2 = el('h2');
+    titleH2.appendChild(M.render.icon('users'));
+    titleH2.appendChild(document.createTextNode(' When to meet'));
+    view.appendChild(titleH2);
+    view.appendChild(el('p', { class: 'lead' },
+      'Make a group-availability poll. Pick a date range and a daily time window; everyone you share the link with marks the slots they\'re free, copies a response token, and sends it back. Paste responses together to see overlapping availability — no backend, no accounts, no data leaves your browser unless you share it.'
+    ));
+
+    var today = new Date();
+    var weekFromNow = new Date(today.getTime() + 7 * 86400000);
+    function isoDate(d) { return d.toISOString().slice(0, 10); }
+
+    var titleInput = el('input', { type: 'text', class: 'editor', placeholder: 'e.g. Project kick-off' });
+    var startInput = el('input', { type: 'date', class: 'editor', value: isoDate(today) });
+    var endInput = el('input', { type: 'date', class: 'editor', value: isoDate(weekFromNow) });
+    var fromInput = el('input', { type: 'number', class: 'editor', min: '0', max: '23', value: '9' });
+    var toInput = el('input', { type: 'number', class: 'editor', min: '1', max: '24', value: '18' });
+    var slotInput = el('input', { type: 'number', class: 'editor', min: '15', max: '120', step: '15', value: '30' });
+    var noteInput = el('input', { type: 'text', class: 'editor', placeholder: 'Optional note shown to participants' });
+
+    var output = el('div', { class: 'meet-output' });
+
+    function buildLink() {
+      try {
+        var poll = M.meet.build({
+          title: titleInput.value.trim(),
+          start: startInput.value, end: endInput.value,
+          fromHour: parseInt(fromInput.value, 10) || 9,
+          toHour: parseInt(toInput.value, 10) || 18,
+          slotMin: parseInt(slotInput.value, 10) || 30,
+          note: noteInput.value.trim()
+        });
+        if (!poll.days.length || !poll.slots.length) {
+          output.replaceChildren(el('p', { class: 'muted' }, 'Pick a valid range + window.'));
+          return;
+        }
+        var token = M.meet.encodePoll(poll);
+        var url = location.origin + location.pathname + '#/meet/' + token;
+        var urlInput = el('input', { type: 'text', readonly: true, class: 'url', value: url });
+        var qr = M.qr(url, { ec: 'M', margin: 2 });
+        qr.classList.add('qr');
+        output.replaceChildren(
+          el('p', { class: 'small muted' },
+            poll.days.length + ' day' + (poll.days.length === 1 ? '' : 's') + ' · ',
+            poll.slots.length + ' slot' + (poll.slots.length === 1 ? '' : 's') + '/day · ',
+            'shareable URL below'
+          ),
+          el('div', { class: 'link-row' },
+            urlInput,
+            el('button', { class: 'btn', type: 'button',
+              onclick: function () {
+                urlInput.select();
+                if (navigator.clipboard) navigator.clipboard.writeText(url);
+                flash(output, 'Link copied');
+              } }, 'Copy link'),
+            el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, 'Preview ↗')
+          ),
+          el('div', { class: 'qr-wrap' },
+            qr,
+            el('div', { class: 'qr-actions' },
+              el('button', { class: 'btn btn-ghost', type: 'button',
+                onclick: function () { M.downloadPng(qr, 'minerva-meeting.png'); }
+              }, 'Download QR'))
+          )
+        );
+      } catch (err) {
+        output.replaceChildren(el('p', { class: 'error' }, 'Build failed: ' + (err.message || err)));
+      }
+    }
+
+    var debounce = null;
+    [titleInput, startInput, endInput, fromInput, toInput, slotInput, noteInput].forEach(function (i) {
+      i.addEventListener('input', function () {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(buildLink, 200);
+      });
+    });
+
+    var form = el('div', { class: 'avail-form' },
+      field('Title', titleInput),
+      field('Note', noteInput),
+      field('From', startInput),
+      field('To', endInput),
+      field('Daily start (hour)', fromInput),
+      field('Daily end (hour)', toInput),
+      field('Slot length (min)', slotInput)
+    );
+    view.appendChild(form);
+    view.appendChild(output);
+    buildLink();
+    return view;
+  }
+
+  function buildSlotGrid(poll, opts) {
+    opts = opts || {};
+    var rows = poll.slots.length;
+    var cols = poll.days.length;
+    // 0 = unselected, 1 = selected. Optionally, opts.heat is a 2D array of
+    // counts to render as background intensity.
+    var grid = [];
+    for (var i = 0; i < rows; i++) { grid[i] = []; for (var j = 0; j < cols; j++) grid[i][j] = 0; }
+    if (opts.initial) {
+      opts.initial.forEach(function (idx) {
+        var r = idx % rows;
+        var c = Math.floor(idx / rows);
+        if (r < rows && c < cols) grid[r][c] = 1;
+      });
+    }
+
+    var wrap = el('div', { class: 'meet-grid-wrap' });
+    var maxHeat = 1;
+    if (opts.heat) {
+      opts.heat.forEach(function (row) { row.forEach(function (n) { if (n > maxHeat) maxHeat = n; }); });
+    }
+
+    var head = el('div', { class: 'meet-grid-head' });
+    head.appendChild(el('div', { class: 'meet-grid-corner' }));
+    poll.days.forEach(function (d) {
+      var lbl = M.meet.dayLabel(d);
+      var col = el('div', { class: 'meet-grid-col-head' },
+        el('div', { class: 'meet-grid-weekday' }, lbl.weekday),
+        el('div', { class: 'meet-grid-monthday' }, lbl.monthDay)
+      );
+      head.appendChild(col);
+    });
+    wrap.appendChild(head);
+
+    var body = el('div', { class: 'meet-grid-body' });
+    for (var r = 0; r < rows; r++) {
+      var row = el('div', { class: 'meet-grid-row' });
+      row.appendChild(el('div', { class: 'meet-grid-time' }, poll.slots[r]));
+      for (var c = 0; c < cols; c++) {
+        (function (rr, cc) {
+          var cell = document.createElement('div');
+          cell.className = 'meet-grid-cell';
+          cell.dataset.r = rr; cell.dataset.c = cc;
+          if (opts.heat) {
+            var n = opts.heat[rr][cc];
+            if (n > 0) {
+              cell.classList.add('meet-heat');
+              cell.style.setProperty('--heat', String(n / maxHeat));
+              cell.title = n + ' available';
+            }
+          }
+          if (grid[rr][cc]) cell.classList.add('selected');
+          row.appendChild(cell);
+        })(r, c);
+      }
+      body.appendChild(row);
+    }
+    wrap.appendChild(body);
+
+    // Drag-select. mousedown decides whether we're adding or removing
+    // selections (based on current state of starting cell), then mouseover
+    // applies the same op to every cell traversed.
+    if (!opts.readonly) {
+      var dragging = false;
+      var addMode = true;
+      function paintCell(cell, on) {
+        var rr = +cell.dataset.r;
+        var cc = +cell.dataset.c;
+        grid[rr][cc] = on ? 1 : 0;
+        cell.classList.toggle('selected', !!on);
+      }
+      body.addEventListener('mousedown', function (e) {
+        var cell = e.target.closest('.meet-grid-cell');
+        if (!cell) return;
+        e.preventDefault();
+        dragging = true;
+        addMode = !cell.classList.contains('selected');
+        paintCell(cell, addMode);
+      });
+      body.addEventListener('mouseover', function (e) {
+        if (!dragging) return;
+        var cell = e.target.closest('.meet-grid-cell');
+        if (!cell) return;
+        paintCell(cell, addMode);
+      });
+      var stopDrag = function () { dragging = false; };
+      window.addEventListener('mouseup', stopDrag);
+      // Touch: simpler — tap toggles a single cell.
+      body.addEventListener('click', function (e) {
+        if (dragging) return;
+        var cell = e.target.closest('.meet-grid-cell');
+        if (!cell) return;
+        paintCell(cell, !cell.classList.contains('selected'));
+      });
+    }
+
+    return {
+      el: wrap,
+      readGrid: function () { return grid; },
+      readYes: function () {
+        var out = [];
+        for (var rr = 0; rr < rows; rr++) {
+          for (var cc = 0; cc < cols; cc++) {
+            if (grid[rr][cc]) out.push(cc * rows + rr);
+          }
+        }
+        return out;
+      }
+    };
+  }
+
+  function viewMeetParticipant(token) {
+    var poll;
+    try { poll = M.meet.decodePoll(token); }
+    catch (e) {
+      return el('section', { class: 'view' },
+        el('h2', null, 'Invalid meeting link'),
+        el('p', null, 'This poll URL is malformed or truncated.'),
+        el('p', null, el('a', { href: '#/meet/new' }, 'Create a new poll →'))
+      );
+    }
+    var view = el('section', { class: 'view view-meet' });
+    view.appendChild(el('h2', null, poll.t || 'Group availability'));
+    if (poll.n) view.appendChild(el('p', { class: 'lead' }, poll.n));
+    view.appendChild(el('p', { class: 'small muted' },
+      'Click cells (or drag) to mark when you\'re free. Times are in your local time zone (',
+      el('em', null, Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'),
+      '). When done, fill in your name and copy the response token to send back to the organizer.'
+    ));
+
+    var grid = buildSlotGrid(poll);
+    view.appendChild(grid.el);
+
+    var nameInput = el('input', { type: 'text', class: 'editor', placeholder: 'Your name' });
+    var output = el('div', { class: 'meet-output' });
+
+    var submitBtn = el('button', { class: 'btn', type: 'button',
+      onclick: function () {
+        var name = nameInput.value.trim();
+        if (!name) {
+          flash(view, 'Type your name first.', 'error');
+          nameInput.focus();
+          return;
+        }
+        var yes = grid.readYes();
+        if (!yes.length) {
+          flash(view, 'Mark at least one slot.', 'error');
+          return;
+        }
+        var resp = { v: 1, name: name, yes: yes };
+        var rtoken = M.meet.encodeResponse(resp);
+        var aggregateUrl = location.origin + location.pathname + '#/meet/' + token + '/' + rtoken;
+        var subject = encodeURIComponent('Re: ' + (poll.t || 'meeting availability'));
+        var bodyText = encodeURIComponent(
+          name + ' marked ' + yes.length + ' available slot' + (yes.length === 1 ? '' : 's') +
+          ' for "' + (poll.t || 'meeting') + '".\n\n' +
+          'Open this link to add my response to your aggregate view:\n' + aggregateUrl + '\n'
+        );
+        var mailto = poll.o ? 'mailto:' + encodeURIComponent(poll.o) + '?subject=' + subject + '&body=' + bodyText
+          : 'mailto:?subject=' + subject + '&body=' + bodyText;
+        var urlInput = el('input', { type: 'text', readonly: true, class: 'url', value: aggregateUrl });
+        output.replaceChildren(
+          el('p', { class: 'small' }, 'Send this URL back to the organizer:'),
+          el('div', { class: 'link-row' },
+            urlInput,
+            el('button', { class: 'btn', type: 'button',
+              onclick: function () {
+                urlInput.select();
+                if (navigator.clipboard) navigator.clipboard.writeText(aggregateUrl);
+                flash(output, 'URL copied');
+              } }, 'Copy'),
+            el('a', { class: 'btn', href: mailto }, 'Email it ↗')
+          )
+        );
+      }
+    }, 'Generate response');
+
+    view.appendChild(el('div', { class: 'meet-submit' },
+      field('Your name', nameInput),
+      el('div', { class: 'form-actions' }, submitBtn)
+    ));
+    view.appendChild(output);
+    return view;
+  }
+
+  function viewMeetAggregate(pollToken, responsesPart) {
+    var poll;
+    try { poll = M.meet.decodePoll(pollToken); }
+    catch (e) {
+      return el('section', { class: 'view' },
+        el('h2', null, 'Invalid meeting link'),
+        el('p', null, 'The poll part of this URL is malformed.')
+      );
+    }
+    var responseTokens = String(responsesPart || '').split(';').filter(Boolean);
+    var responses = [];
+    var failed = 0;
+    responseTokens.forEach(function (t) {
+      try { responses.push(M.meet.decodeResponse(t)); }
+      catch (e) { failed++; }
+    });
+
+    var rows = poll.slots.length;
+    var cols = poll.days.length;
+    var heat = [];
+    for (var r = 0; r < rows; r++) { heat[r] = []; for (var c = 0; c < cols; c++) heat[r][c] = 0; }
+    responses.forEach(function (resp) {
+      (resp.yes || []).forEach(function (idx) {
+        var rr = idx % rows;
+        var cc = Math.floor(idx / rows);
+        if (rr < rows && cc < cols) heat[rr][cc]++;
+      });
+    });
+
+    var view = el('section', { class: 'view view-meet' });
+    view.appendChild(el('h2', null, poll.t || 'Group availability — results'));
+    view.appendChild(el('p', { class: 'lead' },
+      responses.length + ' response' + (responses.length === 1 ? '' : 's'),
+      failed > 0 ? ' (· ' + failed + ' couldn\'t be parsed)' : '',
+      '. Cells darken with the number of people available.'
+    ));
+
+    if (responses.length) {
+      view.appendChild(el('p', { class: 'small muted' },
+        responses.map(function (r) { return r.name; }).join(' · ')));
+    }
+
+    var grid = buildSlotGrid(poll, { heat: heat, readonly: true });
+    view.appendChild(grid.el);
+
+    var addInput = el('input', { type: 'text', class: 'editor', placeholder: 'Paste a response URL or token to add' });
+    addInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var raw = addInput.value.trim();
+        if (!raw) return;
+        var t = raw.replace(/^.*\//, ''); // accept full URL or just token
+        var current = responseTokens.slice();
+        current.push(t);
+        location.hash = '#/meet/' + pollToken + '/' + current.join(';');
+      }
+    });
+
+    view.appendChild(el('div', { class: 'form-actions' },
+      el('label', { class: 'small' }, 'Add response: ', addInput),
+      el('a', { class: 'btn btn-ghost', href: '#/meet/' + pollToken, target: '_blank', rel: 'noopener' }, 'Open participant view ↗')
+    ));
+
+    view.appendChild(el('p', { class: 'small muted' },
+      'Bookmark or copy this URL to keep aggregating — every response token is in the URL hash itself, so this page is its own database.'
+    ));
+
+    return view;
+  }
+
   // ---- schedule view + availability sharing -------------------------
 
   function startOfDay(d) {
@@ -1381,6 +1733,7 @@
       el('button', { class: 'btn', type: 'button',
         onclick: function () { showAvailabilityShare(); }
       }, 'Share my availability'),
+      el('a', { class: 'btn btn-ghost', href: '#/meet/new' }, 'When to meet — group poll →'),
       el('a', { class: 'btn btn-ghost', href: '#/today' }, 'Today →')
     );
     view.appendChild(actionRow);
@@ -3370,6 +3723,12 @@
         view = await viewSchedule(); active = '#/schedule';
       } else if ((sectionMatch = hash.match(/^#\/avail\/(.+)$/))) {
         view = viewAvailability(sectionMatch[1]); active = '';
+      } else if (hash === '#/meet/new') {
+        view = viewMeetNew(); active = '#/schedule';
+      } else if ((sectionMatch = hash.match(/^#\/meet\/([^/]+)\/([^?]+)$/))) {
+        view = viewMeetAggregate(sectionMatch[1], sectionMatch[2]); active = '';
+      } else if ((sectionMatch = hash.match(/^#\/meet\/(.+)$/))) {
+        view = viewMeetParticipant(sectionMatch[1]); active = '';
       } else if ((sectionMatch = hash.match(/^#\/capture\/(.+)$/))) {
         // Bookmarklet entry point — decode payload and open quick-capture.
         var payload = {};

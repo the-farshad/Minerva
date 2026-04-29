@@ -840,6 +840,89 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 .sched-label { flex: 1; }
 .sched-tab { font-size: 0.72rem; }
 
+/* When-to-meet grid */
+.view-meet .lead { max-width: var(--readw); }
+.meet-grid-wrap {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin: 1rem 0;
+  user-select: none;
+  -webkit-user-select: none;
+  max-width: 100%;
+  overflow: auto;
+}
+.meet-grid-head {
+  display: flex;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.meet-grid-corner {
+  width: 4rem;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--border);
+}
+.meet-grid-col-head {
+  flex: 0 0 auto;
+  width: 4rem;
+  text-align: center;
+  padding: 0.4rem 0.2rem;
+  border-right: 1px solid var(--border);
+}
+.meet-grid-weekday { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.meet-grid-monthday { font-size: 0.85rem; font-weight: 500; }
+.meet-grid-body {
+  display: flex;
+  flex-direction: column;
+}
+.meet-grid-row { display: flex; }
+.meet-grid-time {
+  width: 4rem;
+  flex: 0 0 auto;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  line-height: 1.3;
+}
+.meet-grid-cell {
+  width: 4rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--bg);
+  transition: background .08s;
+}
+.meet-grid-cell:hover { background: var(--surface-2); }
+.meet-grid-cell.selected {
+  background: var(--accent);
+}
+.meet-grid-cell.meet-heat {
+  background: color-mix(in srgb, var(--accent) calc(var(--heat) * 100%), var(--bg));
+}
+.meet-grid-cell.meet-heat.selected {
+  background: var(--accent);
+}
+
+.meet-output { margin-top: 1rem; }
+.meet-submit {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  align-items: end;
+  margin-top: 1rem;
+  max-width: var(--readw);
+}
+
 .avail-panel { max-width: 640px; }
 .avail-form {
   display: grid;
