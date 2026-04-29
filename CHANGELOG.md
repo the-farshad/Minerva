@@ -4,6 +4,11 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.15 — Row detail + CSV import
+
+- **Row detail modal** — double-click a row (or press `d` while it's selected) to open a full-field view: every visible column shown, full markdown rendered, every field click-to-editable through the same path as inline cell edits. Undo still works after closing the modal. Footer has Close / Delete / Open in Sheets actions.
+- **CSV/TSV paste import** — `Import` button in every section header opens a modal with a paste textarea, auto-detects tab/comma/semicolon delimiter, and shows a live preview that strikes through unmatched columns. On confirm, each row goes through the same `addRow` path as inline, so the dirty queue lifts them to Sheets and undo can reverse one at a time.
+
 ## v0.14 — Quick-add, nav badges, bulk operations
 
 - **Quick-add task** in the Today view: a single text input at the top creates a task with `due=today` and `status=todo` on Enter.
