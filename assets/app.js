@@ -3614,6 +3614,73 @@
     bodyTa.placeholder = 'Body (optional). Cmd/Ctrl + Enter to save.';
     bodyTa.className = 'editor';
 
+    // Voice capture (Web Speech API) — transcribes into the body textarea.
+    var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    var voiceBtn = null;
+    var recognition = null;
+    var voiceBaseline = '';
+    if (Recognition) {
+      voiceBtn = document.createElement('button');
+      voiceBtn.type = 'button';
+      voiceBtn.className = 'btn btn-ghost voice-btn';
+      voiceBtn.title = 'Voice capture (start/stop)';
+      voiceBtn.textContent = '🎤';
+
+      function stopVoice() {
+        if (recognition) {
+          try { recognition.stop(); } catch (e) { /* ignore */ }
+          recognition = null;
+        }
+        if (voiceBtn) voiceBtn.classList.remove('voice-active');
+      }
+
+      voiceBtn.addEventListener('click', function () {
+        if (recognition) { stopVoice(); return; }
+        try {
+          recognition = new Recognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = navigator.language || 'en-US';
+          voiceBaseline = bodyTa.value ? bodyTa.value.replace(/\s+$/, '') + ' ' : '';
+          recognition.onresult = function (e) {
+            var finalText = '';
+            var interim = '';
+            for (var i = e.resultIndex; i < e.results.length; i++) {
+              var t = e.results[i][0].transcript;
+              if (e.results[i].isFinal) finalText += t;
+              else interim += t;
+            }
+            if (finalText) voiceBaseline += finalText;
+            bodyTa.value = voiceBaseline + interim;
+          };
+          recognition.onerror = function (ev) {
+            console.warn('[Minerva voice]', ev.error);
+            stopVoice();
+          };
+          recognition.onend = function () {
+            // Some browsers stop after ~60 seconds of silence; clear state
+            // so the next click starts a new session.
+            voiceBtn.classList.remove('voice-active');
+            recognition = null;
+          };
+          recognition.start();
+          voiceBtn.classList.add('voice-active');
+          bodyTa.focus();
+        } catch (err) {
+          flash(form, 'Voice capture failed: ' + (err && err.message ? err.message : err), 'error');
+          stopVoice();
+        }
+      });
+    }
+
+    // Body field with optional voice button to its right.
+    var bodyRow = document.createElement('div');
+    bodyRow.className = 'capture-body-row';
+    bodyRow.appendChild(bodyTa);
+    if (voiceBtn) bodyRow.appendChild(voiceBtn);
+    var bodyField = field('Body', bodyRow,
+      voiceBtn ? 'Click 🎤 for voice capture (Web Speech API).' : null);
+
     var form = el('form', { class: 'modal-panel capture-panel',
       onclick: function (e) { e.stopPropagation(); },
       onsubmit: function (e) { e.preventDefault(); save(); }
@@ -3621,7 +3688,7 @@
       el('h3', null, 'Quick capture'),
       field('Section', sectSelect),
       field('Title', titleInput),
-      field('Body', bodyTa),
+      bodyField,
       el('div', { class: 'form-actions' },
         el('button', { class: 'btn', type: 'submit' }, 'Save'),
         el('button', { class: 'btn btn-ghost', type: 'button',
@@ -3686,6 +3753,8 @@
     document.body.appendChild(overlay);
     setTimeout(function () { titleInput.focus(); }, 30);
   }
+
+  // (helper inside the closure above) — voice button needs to clear when modal closes too.
 
   // ---- global search overlay (`Cmd/Ctrl+K`) ----
 
