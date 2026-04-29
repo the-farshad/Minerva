@@ -1445,6 +1445,39 @@ table.kv tbody tr:hover { background: var(--surface); }
 .capture-panel .form { gap: 0.6rem; }
 .capture-panel .editor { width: 100%; }
 
+/* AI assistant overlay */
+.ai-panel { max-width: 640px; }
+.ai-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+.ai-head h3 { margin: 0; }
+.ai-prompts {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 0.7rem;
+}
+.ai-prompt-btn { padding: 0.25rem 0.7rem; font-size: 0.82rem; }
+.ai-output {
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.95rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  min-height: 4rem;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.ai-output .md-cell {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  max-width: none;
+}
+.ai-output .error { color: var(--error); margin: 0 0 0.4rem; }
+
 /* search */
 .search-input {
   font: inherit;
