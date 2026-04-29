@@ -140,6 +140,17 @@
         types:   ['text','text','text','date','select(applied,interviewing,offer,rejected,withdrawn)','link','ref(contacts,multi)','markdown','datetime']
       },
       defaultSort: 'applied:desc'
+    },
+    {
+      slug: 'pomodoros',
+      title: 'Pomodoros',
+      icon: '🍅',
+      description: 'Logged focus sessions from the floating Pomodoro timer (auto-populated when this tab exists).',
+      schema: {
+        headers: ['id','started','ended','duration','note','_updated'],
+        types:   ['text','datetime','datetime','duration','text','datetime']
+      },
+      defaultSort: 'started:desc'
     }
   ];
 
