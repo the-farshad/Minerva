@@ -898,6 +898,9 @@
         return;
       }
       bulkBar.hidden = false;
+      // Decide if BibTeX makes sense — only when at least one selected row
+      // has the necessary authors+title fields.
+      var bibtexEligible = false;
       bulkBar.replaceChildren(
         el('span', { class: 'bulk-count' }, selectedIds.size + ' selected'),
         el('button', { class: 'btn', type: 'button',
@@ -939,6 +942,28 @@
             flash(view, 'Deleted ' + ids.length + ' row' + (ids.length === 1 ? '' : 's') + '.');
           }
         }, 'Delete'),
+        el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: async function () {
+            var ids = Array.from(selectedIds);
+            var entries = [];
+            for (var i = 0; i < ids.length; i++) {
+              var row = await M.db.getRow(sec.tab, ids[i]);
+              if (row && rowHasBibtex(row)) entries.push(rowToBibtex(row));
+            }
+            if (!entries.length) {
+              flash(view, 'No selected rows have author + title fields.', 'error');
+              return;
+            }
+            var blob = entries.join('\n\n');
+            try {
+              await navigator.clipboard.writeText(blob);
+              flash(view, 'Copied BibTeX for ' + entries.length + ' row' + (entries.length === 1 ? '' : 's') + '.');
+            } catch (err) {
+              console.log(blob);
+              flash(view, 'Clipboard unavailable — see console.', 'error');
+            }
+          }
+        }, 'Copy BibTeX'),
         el('button', { class: 'btn btn-ghost', type: 'button',
           onclick: function () {
             selectedIds.clear();
