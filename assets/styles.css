@@ -1793,6 +1793,61 @@ table.kv tbody tr:hover { background: var(--surface); }
 .capture-panel .form { gap: 0.6rem; }
 .capture-panel .editor { width: 100%; }
 
+/* row detail */
+.row-detail-panel { max-width: 720px; }
+.row-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+.row-detail-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  word-break: break-word;
+  flex: 1;
+}
+.row-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(7rem, 12rem) 1fr;
+  gap: 0.45rem 1rem;
+  margin: 0.85rem 0 1rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.row-detail-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding-top: 0.4rem;
+}
+.row-detail-value {
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 0.35rem 0.55rem;
+  cursor: text;
+  min-height: 1.6rem;
+  transition: border-color .12s, background .12s;
+}
+.row-detail-value:hover { background: var(--surface); }
+.row-detail-value:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.row-detail-value.editing {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  cursor: default;
+}
+.row-detail-value .md-cell {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  max-width: none;
+}
+
 /* AI assistant overlay */
 .ai-panel { max-width: 640px; }
 .ai-head {
