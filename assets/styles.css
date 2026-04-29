@@ -941,6 +941,37 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   margin: 0.4rem 0 0.6rem;
 }
 .meet-share-row .btn { display: inline-flex; align-items: center; gap: 0.35em; }
+
+.meet-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.4rem 0 0.6rem;
+}
+.meet-name-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+.meet-name-rm {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  margin-left: 0.15rem;
+  display: inline-flex;
+  align-items: center;
+  font: inherit;
+  font-size: 0.85em;
+}
+.meet-name-rm:hover { color: var(--error); }
 .meet-submit {
   display: grid;
   grid-template-columns: 1fr auto;
