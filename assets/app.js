@@ -527,6 +527,21 @@
     } catch (e) { /* ignore */ }
   }
 
+  function readSavedViews(slug) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.views') || '{}');
+      return raw[slug] || [];
+    } catch (e) { return []; }
+  }
+  function writeSavedViews(slug, views) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.views') || '{}');
+      if (views && views.length) raw[slug] = views;
+      else delete raw[slug];
+      localStorage.setItem('minerva.section.views', JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+
   async function viewSection(slug) {
     var cfg = readConfig();
     var sec = (configCache || []).find(function (r) { return r.slug === slug; });
@@ -554,11 +569,13 @@
     var filterInput = el('input', {
       type: 'search', placeholder: 'Filter rows…', class: 'section-filter'
     });
+    var viewsBar = el('div', { class: 'saved-views' });
 
     header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)));
     var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, addBtn);
     header.appendChild(headerRight);
     view.appendChild(header);
+    view.appendChild(viewsBar);
     view.appendChild(el('p', { class: 'lead' }, meta1Span, sheetLink ? ' · ' : null, sheetLink));
 
     var bodyHost = el('div');
@@ -575,6 +592,7 @@
       if (debounceFilter) clearTimeout(debounceFilter);
       debounceFilter = setTimeout(function () {
         liveQuery = filterInput.value.trim().toLowerCase();
+        paintViewsBar();
         refresh();
       }, 60);
     });
@@ -583,8 +601,83 @@
       // next is { col, dir } or null to clear back to defaultSort.
       userSort = next;
       writeSort(slug, next);
+      paintViewsBar();
       refresh();
     }
+
+    function applySavedView(v) {
+      userSort = v.sort || null;
+      writeSort(slug, userSort);
+      liveQuery = (v.query || '').toLowerCase();
+      filterInput.value = v.query || '';
+      paintViewsBar();
+      refresh();
+    }
+
+    function captureCurrentView() {
+      var name = (prompt('Name this view:') || '').trim();
+      if (!name) return;
+      var saved = readSavedViews(slug);
+      // Replace if same name exists
+      saved = saved.filter(function (v) { return v.name !== name; });
+      saved.push({
+        name: name,
+        sort: userSort || null,
+        query: filterInput.value.trim() || ''
+      });
+      writeSavedViews(slug, saved);
+      paintViewsBar();
+      flash(view, 'Saved view "' + name + '".');
+    }
+
+    function deleteSavedView(name) {
+      var saved = readSavedViews(slug).filter(function (v) { return v.name !== name; });
+      writeSavedViews(slug, saved);
+      paintViewsBar();
+    }
+
+    function paintViewsBar() {
+      var saved = readSavedViews(slug);
+      var hasUnsaved = !!(userSort || liveQuery);
+      viewsBar.replaceChildren();
+      if (!saved.length && !hasUnsaved) return;
+
+      saved.forEach(function (v) {
+        var chip = el('span', { class: 'view-chip' });
+        var apply = el('button', {
+          type: 'button', class: 'view-chip-apply', title: 'Apply this view',
+          onclick: function () { applySavedView(v); }
+        }, v.name);
+        var rm = el('button', {
+          type: 'button', class: 'view-chip-rm', title: 'Delete this view',
+          'aria-label': 'Delete view ' + v.name,
+          onclick: function () {
+            if (confirm('Delete saved view "' + v.name + '"?')) deleteSavedView(v.name);
+          }
+        }, '×');
+        chip.appendChild(apply);
+        chip.appendChild(rm);
+        viewsBar.appendChild(chip);
+      });
+
+      if (hasUnsaved) {
+        viewsBar.appendChild(el('button', {
+          type: 'button', class: 'view-save', onclick: captureCurrentView
+        }, '+ Save current view'));
+        viewsBar.appendChild(el('button', {
+          type: 'button', class: 'view-clear',
+          onclick: function () {
+            userSort = null;
+            writeSort(slug, null);
+            liveQuery = '';
+            filterInput.value = '';
+            paintViewsBar();
+            refresh();
+          }
+        }, 'Clear'));
+      }
+    }
+    paintViewsBar();
 
     function paintModeToggle(hasDate, hasTree) {
       modeToggle.innerHTML = '';

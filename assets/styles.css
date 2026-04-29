@@ -931,6 +931,59 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 }
 .section-filter:focus { border-color: var(--accent); background: var(--bg); }
 .section-filter::-webkit-search-cancel-button { cursor: pointer; }
+
+/* saved views */
+.saved-views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0.5rem;
+}
+.saved-views:empty { display: none; }
+.view-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  overflow: hidden;
+  font-size: 0.8rem;
+  transition: border-color .12s;
+}
+.view-chip:hover { border-color: var(--accent); }
+.view-chip-apply,
+.view-chip-rm {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  color: var(--fg);
+  padding: 0.2rem 0.6rem;
+  line-height: 1.4;
+}
+.view-chip-rm {
+  padding: 0.2rem 0.45rem 0.2rem 0.2rem;
+  color: var(--muted);
+  border-left: 1px solid var(--border);
+  font-size: 0.95em;
+}
+.view-chip-rm:hover { color: var(--error); }
+.view-save,
+.view-clear {
+  appearance: none;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.view-save:hover,
+.view-clear:hover { color: var(--accent); border-color: var(--accent); }
 .seg-mode { font-size: 0.82rem; }
 .cal-nav {
   display: inline-flex;
