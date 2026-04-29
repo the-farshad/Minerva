@@ -2339,6 +2339,31 @@ table.kv tbody tr:hover { background: var(--surface); }
   max-width: none;
 }
 
+.diag-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.diag-item {
+  display: grid;
+  grid-template-columns: 1.5rem 8rem 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.diag-item .icon { font-size: 1rem; }
+.diag-ok    .icon-lucide { color: var(--ok); }
+.diag-warn  .icon-lucide { color: #c87800; }
+.diag-fail  .icon-lucide { color: var(--error); }
+.diag-label { font-weight: 500; }
+.diag-detail { word-break: break-word; }
+
 .tg-panel pre {
   background: var(--surface-2);
   border: 1px solid var(--border);
