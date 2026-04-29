@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Privacy Policy — Minerva</title>
-<meta name="description" content="Minerva privacy policy. There are no servers, no telemetry, no analytics. Your data lives in your Google account.">
+<meta name="description" content="Minerva privacy policy. Detailed disclosure of how Minerva accesses, uses, stores, and shares Google user data — with no servers, no telemetry, no analytics. Your data lives in your Google account.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
@@ -35,7 +35,7 @@
       <h1>Privacy Policy</h1>
     </div>
   </div>
-  <p class="subtitle">Minerva — last updated 2026-04-28.</p>
+  <p class="subtitle">Minerva — last updated 2026-04-29.</p>
 </header>
 
 <main>
@@ -65,13 +65,53 @@
     <h2>The public-share feature</h2>
     <p>When you build a card via <em>Quick share</em>, the title, body, and choices are encoded into the URL itself — they live in the URL hash, not on a server. Anyone with the URL sees the same card. The URL is generated locally; nothing is uploaded. Treat anything you put into a public share as public.</p>
 
-    <h2>OAuth scopes Minerva requests, and what each does</h2>
+    <h2>How Minerva interacts with Google user data</h2>
+
+    <p>This section is the explicit, scope-by-scope disclosure required under the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a> and the <a href="https://developers.google.com/terms" target="_blank" rel="noopener">Google APIs Terms of Service</a>. It documents every type of Google user data Minerva accesses, exactly how that data is used, where it is stored, and whether it is shared.</p>
+
+    <h3>Scopes Minerva requests</h3>
     <ul>
-      <li><code>drive.file</code> — read and write <em>only</em> your <em>Minerva</em> spreadsheet (the file Minerva created). The Sheets API works under this scope for app-created files. Minerva is unable to see anything else in your Drive.</li>
-      <li><code>userinfo.email</code> — display "Connected as &lt;your email&gt;" in the app.</li>
-      <li><code>openid</code> — standard OpenID Connect identity claim.</li>
+      <li><code>https://www.googleapis.com/auth/drive.file</code></li>
+      <li><code>https://www.googleapis.com/auth/userinfo.email</code></li>
+      <li><code>openid</code></li>
     </ul>
-    <p>All three scopes above are classified as non-sensitive by Google.</p>
+    <p>Minerva does not request any sensitive or restricted scopes. It does not request <code>https://www.googleapis.com/auth/spreadsheets</code>, full-Drive read, Gmail, Calendar, Contacts, or any other broader scope.</p>
+
+    <h3>Data accessed via <code>drive.file</code></h3>
+    <p><strong>What is accessed:</strong> A single Google Sheets spreadsheet titled "Minerva" inside your Google Drive. The <code>drive.file</code> scope is restricted by Google's design so that an application can only see files it has itself created or that the user has explicitly opened with that application. As a result, Minerva is technically and contractually unable to access, list, search, read, or modify any other file in your Google Drive — including documents, photos, sheets, slides, or any other content you did not create through Minerva.</p>
+    <p>Within the Minerva spreadsheet, Minerva accesses the following content types:</p>
+    <ul>
+      <li>Sheet (tab) names and their contents (cell values you create — text, numbers, dates, links, etc.).</li>
+      <li>Sheet structural metadata (which tabs exist, their numeric sheet IDs) so Minerva can add or remove rows/tabs you create through the app.</li>
+      <li>The file's "modifiedTime" and "webViewLink" properties, used to display a link to your spreadsheet from the Minerva interface.</li>
+    </ul>
+    <p><strong>How it is used:</strong> The accessed data is the user's own task / goal / project / note / habit data, displayed and edited within the Minerva user interface. The app reads the spreadsheet to render section list views, dashboards, and the calendar; writes back to the spreadsheet when the user edits a cell, adds a row, deletes a row, or installs a section preset; and, on a user-initiated action, generates a public iCal file (<code>Minerva tasks.ics</code>) and an optional RSS file (<code>Minerva tasks.rss.xml</code>) inside the same Drive — these files are owned by the user, are explicitly created by the user clicking the in-app "Publish" button, and are made world-readable so the user can subscribe to them from a calendar or RSS reader.</p>
+    <p><strong>How it is processed:</strong> All requests originate from the user's web browser and go directly to Google's API servers (<code>sheets.googleapis.com</code>, <code>www.googleapis.com</code>) using the user's own access token. The Minerva web app is a static site (HTML, CSS, JavaScript files served from GitHub Pages); it has no server-side component, no proxy, no backend database, and no logging or analytics infrastructure. The Minerva domain (<code>minerva.thefarshad.com</code>) does not receive any of the data Minerva reads from or writes to your Google Drive.</p>
+    <p><strong>How it is stored:</strong> A copy of the spreadsheet's data is mirrored into the user's own browser using <code>IndexedDB</code> (under origin <code>https://minerva.thefarshad.com</code>), so the app can render data offline and respond instantly to edits. This local mirror is created and stored entirely on the user's device. It is never transmitted anywhere except, on user action, back to the user's own Google Drive via the Sheets API. The user can delete this local mirror at any time via the in-app *Settings → Local store → Clear local mirror* button or by clearing the site's data through their browser's settings.</p>
+    <p><strong>How it is shared:</strong> Minerva does not share, sell, transfer, or disclose Google user data to any third party. Minerva itself does not receive the data (it has no server). The hosted instance at <code>minerva.thefarshad.com</code> serves only static files; the operator of <code>thefarshad.com</code> has no programmatic access to user data.</p>
+
+    <h3>Data accessed via <code>userinfo.email</code> and <code>openid</code></h3>
+    <p><strong>What is accessed:</strong> The user's primary Google Account email address (a single string, e.g. <code>name@example.com</code>) and the standard OpenID Connect identity claim that confirms the user is authenticated.</p>
+    <p><strong>How it is used:</strong> The email address is displayed in the user interface only — for example "Connected as <code>name@example.com</code>" on the Settings page and "Welcome back, <code>name@example.com</code>" on the home page. This is so the user knows which Google account is currently signed in. The OpenID claim is used purely to confirm authentication; no inference, profiling, or analytics is performed on it.</p>
+    <p><strong>How it is processed:</strong> The email is fetched once after sign-in from <code>https://www.googleapis.com/oauth2/v3/userinfo</code> using the user's access token. The request originates from the user's browser; no Minerva server is involved.</p>
+    <p><strong>How it is stored:</strong> The email is cached in the user's browser <code>localStorage</code> alongside the access token, so the UI can display "Connected as &lt;email&gt;" without repeating the userinfo request on every page load. It is removed when the user clicks <em>Disconnect</em> or <em>Clear local config</em>, or when the user clears the site's data through their browser.</p>
+    <p><strong>How it is shared:</strong> The email is not shared, transmitted to any third party, or stored anywhere outside the user's own browser.</p>
+
+    <h3>Use of Google user data for AI / machine learning</h3>
+    <p>Minerva does <strong>not</strong> use Google user data to develop, improve, or train any machine learning or generalized AI model. Google user data is also not transferred to any third party for those purposes.</p>
+    <p>Minerva does include an optional, opt-in AI assistant feature (Settings → AI assistant) that lets the user supply their own API key for an AI provider of their choice (Anthropic, OpenAI, a local Ollama instance, or a custom OpenAI-compatible endpoint). When the user explicitly asks the assistant a question, the user's prompt — which may include excerpts of their Minerva spreadsheet data — is sent directly from the user's browser to the configured AI provider. This transmission only happens at the user's explicit action (clicking *Send* or pressing ⌘/Ctrl+Enter in the assistant overlay) and only goes to the endpoint the user themselves configured. The user's API key is stored only in the user's browser and is never transmitted to <code>minerva.thefarshad.com</code> or any other Minerva-controlled location. If the AI feature is not configured, no data ever leaves the user's browser for AI purposes.</p>
+
+    <h3>Data retention and deletion</h3>
+    <p>Because Minerva has no server-side storage, all retention and deletion is under the user's direct control:</p>
+    <ul>
+      <li><em>Local mirror in IndexedDB:</em> cleared via Settings → Local store → Clear local mirror, or by clearing the site's data in the browser.</li>
+      <li><em>Access token, email, OAuth client ID:</em> cleared via Settings → Disconnect or Clear local config, or by clearing the site's data.</li>
+      <li><em>The Minerva spreadsheet in Google Drive:</em> the user owns it and can delete it from Drive directly at any time. Minerva does not need to be involved.</li>
+      <li><em>Authorization grant:</em> the user can revoke Minerva's access at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Apps with access</a> at any time.</li>
+    </ul>
+
+    <h3>Verification of these statements</h3>
+    <p>Minerva's source code is published under the GNU GPL v3 at <a href="https://github.com/the-farshad/Minerva" target="_blank" rel="noopener">github.com/the-farshad/Minerva</a>. The OAuth scope set is defined in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/auth.js" target="_blank" rel="noopener"><code>assets/auth.js</code></a>, the Sheets/Drive API surface is in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/sheets.js" target="_blank" rel="noopener"><code>assets/sheets.js</code></a>, and the local IndexedDB store is in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/db.js" target="_blank" rel="noopener"><code>assets/db.js</code></a>. Anyone can audit these files to confirm that the disclosures in this section match the application's actual behavior.</p>
     <p>You can revoke these at any time at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Apps with access</a>.</p>
 
     <h2>Children</h2>
