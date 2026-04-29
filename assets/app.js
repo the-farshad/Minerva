@@ -3217,6 +3217,149 @@
     var bookmarkletPanel = el('div', { class: 'tg-panel' });
     paintBookmarklet();
 
+    var diagPanel = el('div', { class: 'tg-panel' });
+    paintDiag();
+
+    function paintDiag() {
+      diagPanel.replaceChildren(
+        el('h3', null, 'Diagnostics'),
+        el('p', { class: 'small muted' },
+          'Run quick health checks across local storage, IndexedDB, service worker, and the configured Google / Telegram / AI endpoints. Useful when something feels off.'
+        ),
+        el('div', { class: 'form-actions' },
+          el('button', { class: 'btn', type: 'button',
+            onclick: function () { void runDiag(); }
+          }, 'Run diagnostics')
+        )
+      );
+    }
+
+    async function runDiag() {
+      var results = el('ul', { class: 'diag-list' });
+      diagPanel.replaceChildren(
+        el('h3', null, 'Diagnostics'),
+        el('p', { class: 'small muted' }, 'Running…'),
+        results
+      );
+
+      function add(status, label, detail) {
+        var icon = status === 'ok' ? 'check-circle' :
+                   status === 'warn' ? 'alert-triangle' :
+                   status === 'fail' ? 'x-circle' : 'circle';
+        var li = el('li', { class: 'diag-item diag-' + status },
+          M.render.icon(icon),
+          el('span', { class: 'diag-label' }, label),
+          detail ? el('span', { class: 'diag-detail small muted' }, detail) : null
+        );
+        results.appendChild(li);
+        M.render.refreshIcons();
+      }
+
+      // 1. localStorage
+      try {
+        var n = 0;
+        for (var k in localStorage) {
+          if (k.indexOf('minerva.') === 0) n++;
+        }
+        add('ok', 'localStorage', n + ' Minerva keys present');
+      } catch (e) {
+        add('fail', 'localStorage', e.message || String(e));
+      }
+
+      // 2. IndexedDB
+      try {
+        var meta = await M.db.getAllMeta();
+        var totalRows = 0;
+        for (var m of meta) {
+          if (!m || !m.tab) continue;
+          totalRows += await M.db.countTab(m.tab);
+        }
+        add('ok', 'IndexedDB', meta.length + ' tabs · ' + totalRows + ' rows mirrored');
+      } catch (e) {
+        add('fail', 'IndexedDB', e.message || String(e));
+      }
+
+      // 3. Service worker
+      if ('serviceWorker' in navigator) {
+        try {
+          var reg = await navigator.serviceWorker.getRegistration();
+          if (reg) add('ok', 'Service worker', 'registered (scope ' + reg.scope + ')');
+          else add('warn', 'Service worker', 'not registered — offline reads disabled');
+        } catch (e) {
+          add('warn', 'Service worker', e.message || String(e));
+        }
+      } else {
+        add('warn', 'Service worker', 'not supported by this browser');
+      }
+
+      // 4. Online status
+      add(navigator.onLine ? 'ok' : 'warn', 'Network',
+        navigator.onLine ? 'online' : 'offline (queued edits will flush on reconnect)');
+
+      // 5. Google APIs
+      var c = readConfig();
+      if (!c.clientId) {
+        add('warn', 'Google API', 'no OAuth client configured');
+      } else {
+        try {
+          var token = await M.auth.getToken(c.clientId);
+          var resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: 'Bearer ' + token }
+          });
+          if (resp.ok) {
+            var data = await resp.json();
+            add('ok', 'Google API', 'reachable as ' + (data.email || 'authorized user'));
+          } else {
+            add('fail', 'Google API', 'userinfo returned ' + resp.status);
+          }
+        } catch (e) {
+          add('fail', 'Google API', e.message || String(e));
+        }
+      }
+
+      // 6. Telegram
+      var tg = (function () { try { return JSON.parse(localStorage.getItem('minerva.telegram.v1') || '{}'); } catch (e) { return {}; } })();
+      if (!tg.token) {
+        add('warn', 'Telegram', 'no bot token configured');
+      } else {
+        try {
+          var me = await M.telegram.getMe(tg.token);
+          add('ok', 'Telegram', 'bot reachable as @' + (me.username || me.first_name));
+        } catch (e) {
+          add('fail', 'Telegram', e.message || String(e));
+        }
+      }
+
+      // 7. AI
+      var ai = M.ai && M.ai.readCfg();
+      if (!ai || !ai.provider) {
+        add('warn', 'AI assistant', 'no provider configured');
+      } else if (!ai.apiKey && ai.provider !== 'ollama') {
+        add('warn', 'AI assistant', 'no API key set for ' + ai.provider);
+      } else {
+        try {
+          var r = await M.ai.ask([
+            { role: 'system', content: 'Reply with exactly the word OK.' },
+            { role: 'user', content: 'OK' }
+          ], { maxTokens: 8 });
+          add('ok', 'AI assistant', ai.provider + ' replied (' + (r.text || '').trim().slice(0, 32) + ')');
+        } catch (e) {
+          add('fail', 'AI assistant', e.message || String(e));
+        }
+      }
+
+      diagPanel.replaceChildren(
+        el('h3', null, 'Diagnostics'),
+        el('p', { class: 'small muted' }, 'Run again any time. Failed checks include the underlying error.'),
+        results,
+        el('div', { class: 'form-actions' },
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            onclick: function () { void runDiag(); }
+          }, 'Run again')
+        )
+      );
+    }
+
     function paintBookmarklet() {
       // The snippet runs on any web page: grabs title/URL/selection, encodes
       // them as a Minerva share token, opens #/capture/<token>.
@@ -3727,7 +3870,8 @@
       { id: 'settings-telegram',   label: 'Telegram bot',  content: tgPanel },
       { id: 'settings-ai',         label: 'AI assistant',  content: aiPanel },
       { id: 'settings-bookmarklet', label: 'Bookmarklet',  content: bookmarkletPanel },
-      { id: 'settings-theme',      label: 'Custom theme',  content: themePanel }
+      { id: 'settings-theme',      label: 'Custom theme',  content: themePanel },
+      { id: 'settings-diag',       label: 'Diagnostics',   content: diagPanel }
     ];
 
     var toc = el('aside', { class: 'settings-toc', 'aria-label': 'Settings sections' });
