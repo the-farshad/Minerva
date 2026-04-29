@@ -826,6 +826,10 @@
     var header = el('div', { class: 'view-section-head' });
     var meta1Span = el('span');
     var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add row');
+    var importBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+      title: 'Import rows from CSV or TSV',
+      onclick: function () { showCsvImport(sec.tab); }
+    }, 'Import');
     var modeToggle = el('div', { class: 'seg seg-mode' });
     var calNav = el('div', { class: 'cal-nav' });
     var filterInput = el('input', {
@@ -834,7 +838,7 @@
     var viewsBar = el('div', { class: 'saved-views' });
 
     header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)));
-    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, addBtn);
+    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, importBtn, addBtn);
     header.appendChild(headerRight);
     view.appendChild(header);
     view.appendChild(viewsBar);
@@ -3000,6 +3004,190 @@
     if (/^#\/share/.test(h)) return '#/share';
     if (h === '#/settings') return '#/settings';
     return '';
+  }
+
+  // ---- CSV/TSV import modal ----
+
+  // Minimal RFC 4180-ish CSV parser. Handles quoted fields with embedded
+  // commas / tabs / newlines / escaped quotes. Auto-detects delimiter on
+  // first call from the first non-quoted occurrence in the first line.
+  function parseDelimited(text) {
+    text = String(text || '').replace(/\r\n?/g, '\n');
+    if (!text.length) return { rows: [], delim: ',' };
+    // Sniff delimiter from the first line, ignoring stuff inside quotes.
+    var firstNl = text.indexOf('\n');
+    var head = firstNl < 0 ? text : text.slice(0, firstNl);
+    var inQ = false;
+    var delim = ',';
+    for (var k = 0; k < head.length; k++) {
+      if (head[k] === '"') inQ = !inQ;
+      else if (!inQ && head[k] === '\t') { delim = '\t'; break; }
+      else if (!inQ && head[k] === ',') { delim = ','; break; }
+      else if (!inQ && head[k] === ';') { delim = ';'; break; }
+    }
+
+    var rows = [];
+    var cur = [''];
+    var inQuote = false;
+    for (var i = 0; i < text.length; i++) {
+      var c = text[i];
+      var next = text[i + 1];
+      if (inQuote) {
+        if (c === '"' && next === '"') { cur[cur.length - 1] += '"'; i++; }
+        else if (c === '"') { inQuote = false; }
+        else { cur[cur.length - 1] += c; }
+      } else {
+        if (c === '"' && cur[cur.length - 1] === '') { inQuote = true; }
+        else if (c === delim) { cur.push(''); }
+        else if (c === '\n') { rows.push(cur); cur = ['']; }
+        else { cur[cur.length - 1] += c; }
+      }
+    }
+    if (cur.length > 1 || cur[0]) rows.push(cur);
+    // Trim trailing all-empty rows (common from a trailing newline).
+    while (rows.length && rows[rows.length - 1].every(function (c) { return !c; })) rows.pop();
+    return { rows: rows, delim: delim };
+  }
+
+  async function showCsvImport(tab) {
+    if (document.querySelector('.csv-overlay')) return;
+    var meta = await M.db.getMeta(tab);
+    if (!meta || !meta.headers) {
+      flash(document.body, 'No schema cached — Sync first.', 'error');
+      return;
+    }
+    var headers = meta.headers;
+
+    var overlay = el('div', { class: 'modal-overlay csv-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+
+    var textarea = document.createElement('textarea');
+    textarea.className = 'editor csv-input';
+    textarea.rows = 8;
+    textarea.placeholder = 'Paste comma- or tab-separated rows. The first row must be column names (matching the section\'s schema). Unrecognized columns are skipped.';
+
+    var preview = el('div', { class: 'csv-preview' });
+    var importBtn = el('button', { class: 'btn', type: 'button', disabled: true });
+    importBtn.textContent = 'Import';
+
+    function updatePreview() {
+      var raw = textarea.value;
+      if (!raw.trim()) {
+        preview.replaceChildren();
+        importBtn.disabled = true;
+        return;
+      }
+      var parsed = parseDelimited(raw);
+      var srcHeaders = parsed.rows[0] || [];
+      var dataRows = parsed.rows.slice(1);
+
+      var mapping = srcHeaders.map(function (h) {
+        return headers.indexOf(h) >= 0 ? h : null;
+      });
+      var matched = srcHeaders.filter(function (_, i) { return mapping[i]; });
+      var unmatched = srcHeaders.filter(function (_, i) { return !mapping[i]; });
+
+      importBtn.disabled = !(matched.length && dataRows.length);
+
+      var summary = el('p', { class: 'small muted' },
+        'Detected ', el('strong', null, dataRows.length + ' row' + (dataRows.length === 1 ? '' : 's')),
+        ' · delimiter ',
+        el('code', null, parsed.delim === '\t' ? 'tab' : (parsed.delim === ';' ? '; ' : ',')),
+        ' · ',
+        matched.length
+          ? el('span', null, 'mapping ', el('strong', null, matched.length + ' column' + (matched.length === 1 ? '' : 's')), ': ', matched.join(', '))
+          : el('span', { class: 'error' }, 'no columns matched the schema — nothing will be imported'),
+        unmatched.length
+          ? el('span', null, ' · skipping ', el('em', null, unmatched.join(', ')))
+          : null
+      );
+
+      var children = [summary];
+      if (dataRows.length) {
+        var n = Math.min(3, dataRows.length);
+        var tbl = el('table', { class: 'csv-preview-table' });
+        var ths = srcHeaders.map(function (h, i) {
+          return el('th', { class: mapping[i] ? '' : 'csv-unmatched' }, h || ' ');
+        });
+        tbl.appendChild(el('thead', null, el('tr', null, ths)));
+        tbl.appendChild(el('tbody', null, dataRows.slice(0, n).map(function (row) {
+          return el('tr', null, srcHeaders.map(function (_, ci) {
+            return el('td', { class: mapping[ci] ? '' : 'csv-unmatched' }, (row[ci] || '').slice(0, 80));
+          }));
+        })));
+        var wrap = el('div', { class: 'csv-preview-wrap' });
+        wrap.appendChild(tbl);
+        children.push(wrap);
+        if (dataRows.length > n) {
+          children.push(el('p', { class: 'small muted' }, '… and ' + (dataRows.length - n) + ' more.'));
+        }
+      }
+      preview.replaceChildren.apply(preview, children);
+    }
+
+    textarea.addEventListener('input', updatePreview);
+
+    importBtn.addEventListener('click', async function () {
+      var parsed = parseDelimited(textarea.value);
+      if (parsed.rows.length < 2) return;
+      var srcHeaders = parsed.rows[0];
+      var dataRows = parsed.rows.slice(1).filter(function (r) {
+        return r.some(function (v) { return String(v).trim(); });
+      });
+      importBtn.disabled = true;
+      importBtn.textContent = 'Importing…';
+      try {
+        var added = 0;
+        for (var i = 0; i < dataRows.length; i++) {
+          var src = dataRows[i];
+          var row = await addRow(tab, headers);
+          srcHeaders.forEach(function (h, j) {
+            if (headers.indexOf(h) >= 0 && h !== 'id' && !M.render.isInternal(h)) {
+              row[h] = src[j] != null ? src[j] : '';
+            }
+          });
+          row._dirty = 1;
+          await M.db.upsertRow(tab, row);
+          added++;
+        }
+        schedulePush();
+        overlay.remove();
+        flash(document.body, 'Imported ' + added + ' row' + (added === 1 ? '' : 's') + ' into ' + tab + '.');
+        await route();
+      } catch (err) {
+        flash(preview, 'Import failed: ' + (err && err.message ? err.message : err), 'error');
+        importBtn.disabled = false;
+        importBtn.textContent = 'Import';
+      }
+    });
+
+    var panel = el('div', { class: 'modal-panel csv-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      el('h3', null, 'Import rows from CSV / TSV — ',
+        el('code', null, tab)
+      ),
+      el('p', { class: 'small muted' },
+        'Paste rows below. First row must be column names. Recognized: ',
+        headers.filter(function (h) { return !M.render.isInternal(h) && h !== 'id'; }).join(', '), '.'
+      ),
+      textarea,
+      preview,
+      el('div', { class: 'form-actions' },
+        importBtn,
+        el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: function () { overlay.remove(); } }, 'Cancel')
+      )
+    );
+
+    panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
+    });
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    setTimeout(function () { textarea.focus(); }, 30);
   }
 
   // ---- row detail modal (double-click row or `d`) ----

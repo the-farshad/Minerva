@@ -1793,6 +1793,51 @@ table.kv tbody tr:hover { background: var(--surface); }
 .capture-panel .form { gap: 0.6rem; }
 .capture-panel .editor { width: 100%; }
 
+/* CSV import */
+.csv-panel { max-width: 720px; }
+.csv-input {
+  font: 0.85rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+  width: 100%;
+  min-height: 8em;
+  resize: vertical;
+}
+.csv-preview {
+  margin: 0.6rem 0;
+  font-size: 0.85rem;
+}
+.csv-preview .error { color: var(--error); }
+.csv-preview-wrap {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin-top: 0.4rem;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.csv-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.csv-preview-table th,
+.csv-preview-table td {
+  padding: 0.3rem 0.55rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18ch;
+}
+.csv-preview-table th { color: var(--accent); font-weight: 500; }
+.csv-preview-table th.csv-unmatched,
+.csv-preview-table td.csv-unmatched {
+  color: var(--muted);
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
 /* row detail */
 .row-detail-panel { max-width: 720px; }
 .row-detail-head {
