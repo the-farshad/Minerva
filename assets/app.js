@@ -3601,6 +3601,59 @@
       }
     },
     {
+      label: 'Proposal — NSF structure',
+      build: async function () {
+        return [
+          { role: 'system', content: 'You are a senior researcher mentoring a colleague through an NSF proposal. Reply concisely in markdown.' },
+          { role: 'user', content: 'Walk me through the NSF proposal structure: every required section, its page limit, what reviewers look for in each. Highlight the Intellectual Merit / Broader Impacts requirement and any common reasons proposals get returned without review (page limits, font size, missing labeled subsections, etc.).' }
+        ];
+      }
+    },
+    {
+      label: 'Proposal — NIH structure',
+      build: async function () {
+        return [
+          { role: 'system', content: 'You are a senior PI mentoring an early-career researcher through an NIH R01. Reply concisely in markdown.' },
+          { role: 'user', content: 'Walk me through the NIH R01 structure. Cover Specific Aims (1 page), Research Strategy (12 pages with Significance / Innovation / Approach subsections, each scored separately), the Approach section\'s emphasis on pitfalls and alternatives, and the modular budget threshold. Note that NIH funds people through their training so emphasize what reviewers look for in the bio sketch as well.' }
+        ];
+      }
+    },
+    {
+      label: 'Proposal — ERC structure',
+      build: async function () {
+        return [
+          { role: 'system', content: 'You are a researcher who has been on ERC review panels. Reply concisely in markdown.' },
+          { role: 'user', content: 'Explain the ERC submission structure: Part B1 (Extended Synopsis 5 pages + CV 2 pages + Track Record 2 pages) and Part B2 (Scientific Proposal 14 pages, only requested at Step 2). Emphasize that ERC funds the PI\'s track record more than the consortium and that ground-breaking / high-risk framing is expected.' }
+        ];
+      }
+    },
+    {
+      label: 'Proposal — critique my abstract',
+      build: async function () {
+        var draft = (prompt('Paste your draft abstract / project summary:') || '').trim();
+        if (!draft) return [
+          { role: 'user', content: 'I need help critiquing a research proposal abstract but I don\'t have one yet.' }
+        ];
+        return [
+          { role: 'system', content: 'You are a senior reviewer critiquing a research proposal abstract. Be specific and constructive. Output a markdown table with three columns: Strength, Weakness, Suggested-revision. End with a one-sentence verdict on whether this would survive a competitive review panel as written.' },
+          { role: 'user', content: 'Here is my draft:\n\n' + draft }
+        ];
+      }
+    },
+    {
+      label: 'Proposal — broader impacts brainstorm',
+      build: async function () {
+        var topic = (prompt('Briefly describe the project (one sentence is fine):') || '').trim();
+        if (!topic) return [
+          { role: 'user', content: 'I need to brainstorm broader impacts but haven\'t described my project.' }
+        ];
+        return [
+          { role: 'system', content: 'You are advising on the Broader Impacts section of an NSF proposal. Output 6–10 concrete, plausible activities the PI could include — diverse across the categories NSF cares about (education, public engagement, dataset/tool dissemination, training underrepresented groups, partnerships with industry/community). Be specific; avoid generic platitudes. Markdown bullet list.' },
+          { role: 'user', content: 'Project: ' + topic }
+        ];
+      }
+    },
+    {
       label: 'Suggest a next action',
       build: async function () {
         var ctx = await M.ai.buildContext();
