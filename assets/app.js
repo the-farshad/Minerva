@@ -3496,6 +3496,59 @@
     setTimeout(function () { textarea.focus(); }, 30);
   }
 
+  // ---- BibTeX export ----
+
+  function bibtexEscape(s) {
+    return String(s == null ? '' : s)
+      .replace(/[{}]/g, '')
+      .replace(/[&%$_#]/g, function (c) { return '\\' + c; });
+  }
+
+  function rowHasBibtex(row) {
+    return !!(row && (row.authors || row.author) && row.title);
+  }
+
+  function rowToBibtex(row) {
+    var kind = String(row.kind || '').toLowerCase();
+    var url = row.url || '';
+    var type = '@article';
+    if (kind === 'book') type = '@book';
+    else if (/arxiv\.org/i.test(url) && !row.venue) type = '@misc';
+    else if (kind === 'video' || kind === 'podcast') type = '@misc';
+    else if (!row.venue) type = '@misc';
+
+    var authorsStr = String(row.authors || row.author || '').trim();
+    var firstLast = authorsStr.split(',')[0].trim().split(/\s+/).pop() || 'item';
+    var year = String(row.year || '').slice(0, 4) || 'nd';
+    var key = (firstLast.toLowerCase().replace(/[^a-z0-9]/g, '') || 'item') + year;
+
+    var fields = [];
+    fields.push('  title  = {' + bibtexEscape(row.title) + '}');
+    if (authorsStr) {
+      var bibAuthors = authorsStr.split(',').map(function (a) { return a.trim(); }).filter(Boolean).join(' and ');
+      fields.push('  author = {' + bibtexEscape(bibAuthors) + '}');
+    }
+    if (row.year) fields.push('  year   = {' + bibtexEscape(row.year) + '}');
+    if (row.venue) fields.push('  journal= {' + bibtexEscape(row.venue) + '}');
+    if (url) fields.push('  url    = {' + url + '}');
+    if (row.pdf) fields.push('  pdf    = {' + row.pdf + '}');
+    if (row.abstract) {
+      var abs = String(row.abstract).replace(/\s+/g, ' ').slice(0, 800);
+      fields.push('  abstract = {' + bibtexEscape(abs) + '}');
+    }
+    if (/arxiv\.org\/abs\/(\d{4}\.\d{4,5})/.test(url)) {
+      var arxivId = url.match(/arxiv\.org\/abs\/(\d{4}\.\d{4,5})/)[1];
+      fields.push('  eprint = {' + arxivId + '}');
+      fields.push('  archivePrefix = {arXiv}');
+    }
+    if (/doi\.org\/(10\.\d{4,9}\/[^\s]+)/.test(url)) {
+      var doi = url.match(/doi\.org\/(10\.\d{4,9}\/[^\s]+)/)[1];
+      fields.push('  doi    = {' + doi + '}');
+    }
+
+    return type + '{' + key + ',\n' + fields.join(',\n') + '\n}';
+  }
+
   // ---- row detail modal (double-click row or `d`) ----
 
   async function showRowDetail(tab, rowId) {
@@ -3585,6 +3638,24 @@
       grid.appendChild(pair[1]);
     });
 
+    var bibtexBtn = rowHasBibtex(row)
+      ? el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: async function () {
+            try {
+              var bib = rowToBibtex(row);
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(bib);
+                flash(panel, 'BibTeX copied to clipboard.');
+              } else {
+                flash(panel, 'Clipboard unavailable — open the console for the BibTeX.');
+              }
+              console.log(bib);
+            } catch (err) {
+              flash(panel, 'Copy failed: ' + (err && err.message ? err.message : err), 'error');
+            }
+          } }, 'Copy BibTeX')
+      : null;
+
     panel.appendChild(el('div', { class: 'form-actions' },
       el('button', { class: 'btn btn-ghost', type: 'button',
         onclick: function () { overlay.remove(); } }, 'Close'),
@@ -3595,6 +3666,7 @@
           overlay.remove();
           if (location.hash !== '#/settings') await route();
         } }, 'Delete row'),
+      bibtexBtn,
       readConfig().spreadsheetId
         ? el('a', { class: 'btn btn-ghost',
             href: M.sheets.spreadsheetUrl(readConfig().spreadsheetId),
