@@ -448,11 +448,84 @@
     return pushInFlight;
   }
 
+  // ---- undo stack ---------------------------------------------------
+
+  var UNDO_KEY = 'minerva.undo.v1';
+  var UNDO_MAX = 50;
+
+  function readUndoStack() {
+    try { return JSON.parse(localStorage.getItem(UNDO_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+  function writeUndoStack(stack) {
+    try { localStorage.setItem(UNDO_KEY, JSON.stringify(stack.slice(-UNDO_MAX))); }
+    catch (e) { /* ignore */ }
+  }
+  function pushUndo(entry) {
+    var s = readUndoStack();
+    entry.ts = Date.now();
+    s.push(entry);
+    writeUndoStack(s);
+  }
+  function popUndo() {
+    var s = readUndoStack();
+    if (!s.length) return null;
+    var last = s.pop();
+    writeUndoStack(s);
+    return last;
+  }
+
+  async function undo() {
+    var entry = popUndo();
+    if (!entry) {
+      flash(document.body, 'Nothing to undo.');
+      return;
+    }
+    try {
+      if (entry.kind === 'edit') {
+        var row = await M.db.getRow(entry.tab, entry.rowId);
+        if (!row) { flash(document.body, 'Row no longer exists.'); return; }
+        row[entry.field] = (entry.prevValue == null) ? '' : entry.prevValue;
+        row._updated = new Date().toISOString();
+        row._dirty = 1;
+        await M.db.upsertRow(entry.tab, row);
+        flash(document.body, 'Undid edit on ' + entry.field + '.');
+      } else if (entry.kind === 'add') {
+        var addedRow = await M.db.getRow(entry.tab, entry.rowId);
+        if (!addedRow) { flash(document.body, 'Row already gone.'); return; }
+        addedRow._deleted = 1;
+        addedRow._dirty = 1;
+        addedRow._updated = new Date().toISOString();
+        await M.db.upsertRow(entry.tab, addedRow);
+        flash(document.body, 'Undid add — row deleted.');
+      } else if (entry.kind === 'delete') {
+        var snap = entry.snapshot;
+        if (!snap || !snap.id) {
+          flash(document.body, 'Snapshot lost — cannot restore.', 'error');
+          return;
+        }
+        snap._deleted = 0;
+        snap._dirty = 1;
+        snap._updated = new Date().toISOString();
+        await M.db.upsertRow(entry.tab, snap);
+        flash(document.body, 'Undid delete — row restored.');
+      }
+      schedulePush();
+      // Re-render current view if it's a list/today view that displays this data.
+      var h = location.hash;
+      if (h === '#/' || h === '#/today' || /^#\/s\//.test(h)) await route();
+    } catch (err) {
+      flash(document.body, 'Undo failed: ' + (err && err.message ? err.message : err), 'error');
+    }
+  }
+
   async function commitCellEdit(tab, rowId, columnName, newValue) {
     var row = await M.db.getRow(tab, rowId);
     if (!row) return;
     if (row[columnName] === newValue) return;
     var prevStatus = row.status;
+    var prevValue = row[columnName];
+    pushUndo({ kind: 'edit', tab: tab, rowId: rowId, field: columnName, prevValue: prevValue });
     row[columnName] = newValue;
     row._updated = new Date().toISOString();
     row._dirty = 1;
@@ -541,6 +614,7 @@
       else row[h] = '';
     });
     await M.db.upsertRow(tab, row);
+    pushUndo({ kind: 'add', tab: tab, rowId: row.id });
     schedulePush();
     return row;
   }
@@ -548,6 +622,10 @@
   async function deleteRow(tab, rowId) {
     var row = await M.db.getRow(tab, rowId);
     if (!row) return;
+    // Take a snapshot before flipping _deleted so undo can restore it.
+    var snapshot = Object.assign({}, row);
+    delete snapshot.tab; // tab is a key in the IndexedDB record, not row data
+    pushUndo({ kind: 'delete', tab: tab, rowId: rowId, snapshot: snapshot });
     row._deleted = 1;
     row._dirty = 1;
     row._updated = new Date().toISOString();
@@ -3138,6 +3216,7 @@
       ['/', 'Quick capture'],
       ['⌘/Ctrl + K', 'Search across everything'],
       ['⌘/Ctrl + J', 'AI assistant'],
+      ['⌘/Ctrl + Z', 'Undo last edit / add / delete'],
       ['q', 'Quick share'],
       ['s', 'Settings'],
       ['j / k', 'Move selection in a section list'],
@@ -3188,6 +3267,15 @@
     if ((e.metaKey || e.ctrlKey) && (e.key === 'j' || e.key === 'J')) {
       e.preventDefault();
       showAI();
+      return;
+    }
+    // Cmd/Ctrl+Z undoes the last Minerva mutation. Only intercept when the
+    // user is not in an editable input — let the browser's native undo
+    // handle text editing.
+    if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey
+        && !e.target.matches('input, textarea, [contenteditable]')) {
+      e.preventDefault();
+      undo();
       return;
     }
     if (e.target.matches('input, textarea, select, [contenteditable]')) return;
