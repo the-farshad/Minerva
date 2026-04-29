@@ -13,15 +13,22 @@
 <link rel="apple-touch-icon" href="docs/assets/minerva-logo.png">
 
 <script>
-// pre-paint: read saved theme/font so there's no flash of the wrong style
+// pre-paint: read saved theme/font/custom-css so there's no flash of the wrong style
 (function () {
   try {
     var t = localStorage.getItem('minerva.theme');
     var f = localStorage.getItem('minerva.font');
+    var c = localStorage.getItem('minerva.customCss');
     var THEMES = ['auto','light','dark','sepia','vt323'];
     var FONTS  = ['system','inter','roboto','ubuntu','vazir','atkinson','vt323'];
     if (THEMES.indexOf(t) >= 0) document.documentElement.setAttribute('data-theme', t);
     if (FONTS.indexOf(f) >= 0) document.documentElement.setAttribute('data-font', f);
+    if (c) {
+      var s = document.createElement('style');
+      s.id = 'minerva-custom-style';
+      s.textContent = c;
+      document.head.appendChild(s);
+    }
   } catch (e) { /* ignore */ }
 })();
 </script>
