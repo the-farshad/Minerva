@@ -1706,6 +1706,28 @@
       .sort(function (a, b) { return String(b.created).localeCompare(String(a.created)); })
       .slice(0, 5);
 
+    // Today's events from the 'events' preset (or any tab with start/end).
+    var startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    var endOfToday = new Date(startOfToday.getTime() + 86400000);
+    var todaysEvents = [];
+    try {
+      var allMeta = await M.db.getAllMeta();
+      for (var m of allMeta) {
+        if (!m || !m.headers || !m.types) continue;
+        if ((m.headers.indexOf('start') < 0) || (m.headers.indexOf('end') < 0)) continue;
+        var rows = await M.db.getAllRows(m.tab);
+        rows.forEach(function (r) {
+          if (r._deleted) return;
+          if (!r.start || !r.end) return;
+          var s = new Date(r.start);
+          if (isNaN(s.getTime())) return;
+          if (s < startOfToday || s >= endOfToday) return;
+          todaysEvents.push({ row: r, start: s, end: new Date(r.end), tab: m.tab });
+        });
+      }
+      todaysEvents.sort(function (a, b) { return a.start - b.start; });
+    } catch (e) { /* non-fatal */ }
+
     var view = el('section', { class: 'view view-today' });
     var todayH2 = el('h2');
     todayH2.appendChild(M.render.icon('sun'));
@@ -1747,6 +1769,25 @@
       }
     });
     view.appendChild(quickAdd);
+
+    // -- events block (only render when there are any) --
+    if (todaysEvents.length) {
+      view.appendChild(el('h3', null, 'Today’s events  ',
+        el('span', { class: 'small muted' }, '(' + todaysEvents.length + ')')));
+      var eul = el('ul', { class: 'today-list' });
+      todaysEvents.forEach(function (e) {
+        var fmt = function (d) { return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+        var li = el('li', { class: 'today-item' });
+        li.appendChild(el('span', { class: 'today-note-date' }, fmt(e.start) + '–' + fmt(e.end)));
+        li.appendChild(el('a', { class: 'today-title', href: '#/s/' + encodeURIComponent(e.tab) },
+          e.row.title || e.row.id));
+        if (e.row.location) {
+          li.appendChild(el('span', { class: 'today-meta small muted' }, e.row.location));
+        }
+        eul.appendChild(li);
+      });
+      view.appendChild(eul);
+    }
 
     // -- tasks block --
     view.appendChild(el('h3', null, 'Tasks  ',
