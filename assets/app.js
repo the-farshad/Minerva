@@ -505,6 +505,45 @@
     return null;
   }
 
+  // Build a map of incoming references TO each row in `targetTab`.
+  // Returns { [rowId]: [{ fromTab, fromCol, fromRow }, ...] }.
+  // Scans every other meta + tab known locally and inspects its ref columns.
+  async function computeBacklinks(targetTab) {
+    var backlinks = {};
+    try {
+      var allMeta = await M.db.getAllMeta();
+      for (var m of allMeta) {
+        if (!m || !m.tab || !m.headers || !m.types) continue;
+        // Find any ref(targetTab) or ref(targetTab,multi) columns on this tab.
+        var refCols = [];
+        for (var i = 0; i < m.headers.length; i++) {
+          var t = M.render.parseType(m.types[i]);
+          if (t.kind === 'ref' && t.refTab === targetTab) {
+            refCols.push({ name: m.headers[i], multi: !!t.multi });
+          }
+        }
+        if (!refCols.length) continue;
+        var rows = await M.db.getAllRows(m.tab);
+        rows.forEach(function (r) {
+          if (r._deleted) return;
+          refCols.forEach(function (c) {
+            var raw = r[c.name];
+            if (raw == null || raw === '') return;
+            var ids = c.multi
+              ? String(raw).split(',').map(function (x) { return x.trim(); }).filter(Boolean)
+              : [String(raw).trim()];
+            ids.forEach(function (id) {
+              if (!id) return;
+              if (!backlinks[id]) backlinks[id] = [];
+              backlinks[id].push({ fromTab: m.tab, fromCol: c.name, fromRow: r });
+            });
+          });
+        });
+      }
+    } catch (e) { /* non-fatal */ }
+    return backlinks;
+  }
+
   function ymd(d) {
     return d.getFullYear() + '-' +
       String(d.getMonth() + 1).padStart(2, '0') + '-' +
@@ -747,6 +786,7 @@
       var meta = await M.db.getMeta(sec.tab);
       var allRows = await M.db.getAllRows(sec.tab);
       var visible = allRows.filter(function (r) { return !r._deleted; });
+      var backlinks = await computeBacklinks(sec.tab);
 
       // Sort: user click overrides _config.defaultSort.
       var sortSpec = userSort
@@ -797,19 +837,61 @@
           '. Switch back to list to edit cells inline.'
         );
       } else if (mode === 'tree' && parentCol) {
-        bodyHost.replaceChildren(renderTree(meta, filtered, sec.tab, parentCol, refresh));
+        bodyHost.replaceChildren(renderTree(meta, filtered, sec.tab, parentCol, refresh, backlinks));
         hint.replaceChildren(
           'Tree groups rows by their ', el('code', null, parentCol),
-          ' field. ', el('strong', null, '+'), ' on a row adds a subtask. Click ▸/▾ to expand. Switch to List to edit cells inline.'
+          ' field. ', el('strong', null, '+'), ' adds a subtask · ',
+          el('strong', null, '↺'),
+          ' shows incoming refs from other sections. Click ▸/▾ to expand.'
         );
       } else {
-        bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh, userSort, onSortChange));
+        bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh, userSort, onSortChange, backlinks));
         hint.replaceChildren(
           'Click any cell to edit. Click a column header to sort. ',
           el('kbd', null, 'Enter'), ' to save, ',
           el('kbd', null, 'Esc'), ' to cancel.'
         );
       }
+
+      paintBacklinksFooter(backlinks);
+    }
+
+    var backlinksFooter = el('div', { class: 'backlinks-footer' });
+    view.appendChild(backlinksFooter);
+
+    function paintBacklinksFooter(backlinks) {
+      backlinksFooter.replaceChildren();
+      var keys = Object.keys(backlinks || {});
+      if (!keys.length) return;
+      // Top-N most-linked rows in this section.
+      var ranked = keys.map(function (id) {
+        return { id: id, refs: backlinks[id] };
+      }).sort(function (a, b) { return b.refs.length - a.refs.length; }).slice(0, 8);
+
+      var rowsById = {};
+      (allRows || []).forEach(function (r) { rowsById[r.id] = r; });
+
+      backlinksFooter.appendChild(el('h3', { class: 'backlinks-h' },
+        '↺ Linked from ',
+        el('span', { class: 'small muted' }, '(' + keys.length + ' row' + (keys.length === 1 ? '' : 's') + ' referenced)')));
+      var ul = el('ul', { class: 'backlinks-list' });
+      ranked.forEach(function (entry) {
+        var row = rowsById[entry.id];
+        if (!row) return;
+        var label = row.title || row.name || entry.id;
+        var byTab = {};
+        entry.refs.forEach(function (ref) {
+          byTab[ref.fromTab] = (byTab[ref.fromTab] || 0) + 1;
+        });
+        var summary = Object.keys(byTab).map(function (t) {
+          return byTab[t] + ' from ' + t;
+        }).join(' · ');
+        var li = el('li', { class: 'backlinks-row' });
+        li.appendChild(el('span', { class: 'backlinks-title' }, label));
+        li.appendChild(el('span', { class: 'small muted' }, summary));
+        ul.appendChild(li);
+      });
+      backlinksFooter.appendChild(ul);
     }
 
     addBtn.addEventListener('click', async function () {
@@ -1174,7 +1256,7 @@
     return view;
   }
 
-  function renderTree(meta, rows, tab, parentCol, refresh) {
+  function renderTree(meta, rows, tab, parentCol, refresh, backlinks) {
     var byId = {};
     rows.forEach(function (r) {
       byId[r.id] = { row: r, children: [] };
@@ -1226,6 +1308,11 @@
 
       if (has) {
         header.appendChild(el('span', { class: 'tree-count small muted' }, node.children.length + ' child' + (node.children.length === 1 ? '' : 'ren')));
+      }
+
+      if (backlinks && backlinks[r.id] && backlinks[r.id].length) {
+        var bn = backlinks[r.id].length;
+        header.appendChild(el('span', { class: 'backlink-badge', title: bn + ' incoming reference' + (bn === 1 ? '' : 's') }, '↺ ' + bn));
       }
 
       var addChildBtn = el('button', {
@@ -1328,7 +1415,7 @@
     return el('div', { class: 'calendar' }, headRow, el('div', { class: 'cal-grid' }, cells));
   }
 
-  function renderSectionTable(meta, rows, tab, refresh, userSort, onSortChange) {
+  function renderSectionTable(meta, rows, tab, refresh, userSort, onSortChange, backlinks) {
     if (!meta || !meta.headers || !meta.headers.length) {
       return el('p', { class: 'muted' }, 'No schema cached yet — open Settings and click Sync now.');
     }
@@ -1375,9 +1462,15 @@
     var tbody = el('tbody', null, rows.map(function (row) {
       var tr = el('tr', { 'data-rowid': row.id });
       if (row._dirty) tr.classList.add('row-dirty');
-      visibleCols.forEach(function (c) {
+      visibleCols.forEach(function (c, ci) {
         var td = el('td', { 'data-col': c.name, 'data-type': c.type, tabindex: '0' });
         td.appendChild(M.render.renderCell(row[c.name], c.type));
+        // Append a small backlink badge to the first visible column.
+        if (ci === 0 && backlinks && backlinks[row.id] && backlinks[row.id].length) {
+          var n = backlinks[row.id].length;
+          var badge = el('span', { class: 'backlink-badge', title: n + ' incoming reference' + (n === 1 ? '' : 's') }, '↺ ' + n);
+          td.appendChild(badge);
+        }
         td.addEventListener('click', function () { startEdit(td, row, c, tab, refresh); });
         td.addEventListener('keydown', function (e) {
           if (e.key === 'Enter' || e.key === ' ') {
