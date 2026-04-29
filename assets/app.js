@@ -1467,11 +1467,17 @@
       opts.heat.forEach(function (row) { row.forEach(function (n) { if (n > maxHeat) maxHeat = n; }); });
     }
 
+    var dayIsWeekend = poll.days.map(function (d) {
+      var dt = new Date(d + 'T00:00:00');
+      var w = dt.getDay();
+      return w === 0 || w === 6;
+    });
+
     var head = el('div', { class: 'meet-grid-head' });
     head.appendChild(el('div', { class: 'meet-grid-corner' }));
-    poll.days.forEach(function (d) {
+    poll.days.forEach(function (d, ci) {
       var lbl = M.meet.dayLabel(d);
-      var col = el('div', { class: 'meet-grid-col-head' },
+      var col = el('div', { class: 'meet-grid-col-head' + (dayIsWeekend[ci] ? ' meet-grid-weekend' : '') },
         el('div', { class: 'meet-grid-weekday' }, lbl.weekday),
         el('div', { class: 'meet-grid-monthday' }, lbl.monthDay)
       );
@@ -1486,7 +1492,7 @@
       for (var c = 0; c < cols; c++) {
         (function (rr, cc) {
           var cell = document.createElement('div');
-          cell.className = 'meet-grid-cell';
+          cell.className = 'meet-grid-cell' + (dayIsWeekend[cc] ? ' meet-grid-weekend' : '');
           cell.dataset.r = rr; cell.dataset.c = cc;
           if (opts.heat) {
             var n = opts.heat[rr][cc];
