@@ -16,7 +16,7 @@
     {
       slug: 'reading',
       title: 'Reading list',
-      icon: '📚',
+      icon: 'library',
       description: 'Articles, papers, podcasts, books — track what you want to read and what you actually read.',
       schema: {
         headers: ['id','title','url','kind','rating','read','tags','notes','_updated'],
@@ -27,7 +27,7 @@
     {
       slug: 'journal',
       title: 'Journal',
-      icon: '📔',
+      icon: 'book-open',
       description: 'Daily journal entries with mood + energy ratings, sorted newest-first.',
       schema: {
         headers: ['id','date','entry','mood','energy','tags','_updated'],
@@ -38,7 +38,7 @@
     {
       slug: 'decisions',
       title: 'Decisions',
-      icon: '⚖️',
+      icon: 'scale',
       description: 'Significant decisions you\'ve made, with context, expected outcome, and a date to revisit.',
       schema: {
         headers: ['id','decision','context','made','revisit','outcome','_updated'],
@@ -49,7 +49,7 @@
     {
       slug: 'books',
       title: 'Books',
-      icon: '📖',
+      icon: 'book',
       description: 'Books you\'re reading or have finished, with start/finish dates and a rating.',
       schema: {
         headers: ['id','title','author','started','finished','rating','notes','_updated'],
@@ -59,7 +59,7 @@
     {
       slug: 'films',
       title: 'Films',
-      icon: '🎬',
+      icon: 'film',
       description: 'Films watched with date, rating, and notes.',
       schema: {
         headers: ['id','title','watched','rating','notes','_updated'],
@@ -70,7 +70,7 @@
     {
       slug: 'workouts',
       title: 'Workouts',
-      icon: '🏋️',
+      icon: 'dumbbell',
       description: 'Strength, cardio, yoga — track date, kind, duration.',
       schema: {
         headers: ['id','date','kind','duration','notes','_updated'],
@@ -81,7 +81,7 @@
     {
       slug: 'papers',
       title: 'Papers',
-      icon: '📄',
+      icon: 'file-text',
       description: 'Research papers — title, authors, year, URL, read flag, notes.',
       schema: {
         headers: ['id','title','authors','year','url','read','notes','_updated'],
@@ -91,7 +91,7 @@
     {
       slug: 'contacts',
       title: 'Contacts',
-      icon: '👥',
+      icon: 'users',
       description: 'People — name, email, phone, tags, notes.',
       schema: {
         headers: ['id','name','email','tel','tags','notes','_updated'],
@@ -101,7 +101,7 @@
     {
       slug: 'travel',
       title: 'Travel',
-      icon: '✈️',
+      icon: 'plane',
       description: 'Trips with dates and notes.',
       schema: {
         headers: ['id','where','start','end','notes','_updated'],
@@ -112,7 +112,7 @@
     {
       slug: 'recipes',
       title: 'Recipes',
-      icon: '🍳',
+      icon: 'chef-hat',
       description: 'Recipes worth keeping — ingredients + steps as markdown.',
       schema: {
         headers: ['id','title','tags','ingredients','steps','_updated'],
@@ -122,7 +122,7 @@
     {
       slug: 'inbox',
       title: 'Inbox',
-      icon: '📥',
+      icon: 'inbox',
       description: 'Quick-capture target — anything you don\'t know where to put yet.',
       schema: {
         headers: ['id','title','body','tags','created','_updated'],
@@ -133,7 +133,7 @@
     {
       slug: 'jobs',
       title: 'Job applications',
-      icon: '💼',
+      icon: 'briefcase',
       description: 'Companies, roles, application status, contacts.',
       schema: {
         headers: ['id','company','role','applied','status','url','contacts','notes','_updated'],
@@ -144,7 +144,7 @@
     {
       slug: 'pomodoros',
       title: 'Pomodoros',
-      icon: '🍅',
+      icon: 'timer',
       description: 'Logged focus sessions from the floating Pomodoro timer (auto-populated when this tab exists).',
       schema: {
         headers: ['id','started','ended','duration','note','_updated'],
@@ -155,7 +155,7 @@
     {
       slug: 'library',
       title: 'Library',
-      icon: '📚',
+      icon: 'library',
       description: 'Unified reading + watch list — papers, articles, videos, books. Pairs with the "+ from URL" button to auto-fetch arXiv, DOI (CrossRef), and YouTube metadata.',
       schema: {
         headers: ['id','kind','title','authors','year','venue','url','pdf','abstract','tags','read','rating','notes','_updated'],
@@ -166,7 +166,7 @@
     {
       slug: 'proposals',
       title: 'Proposals',
-      icon: '📑',
+      icon: 'file-pen-line',
       description: 'Research and grant proposals — funder, deadline, status, and the structured sections reviewers expect. See docs/proposal-guide.md for funder-by-funder rules.',
       schema: {
         headers: ['id','title','funder','program','deadline','status','abstract','aims','methods','broader_impacts','timeline','budget','notes','_updated'],

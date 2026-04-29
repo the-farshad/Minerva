@@ -120,21 +120,22 @@
   }
 
   function renderNav(active) {
-    var items = [{ hash: '#/', label: 'Home' }];
+    var items = [{ hash: '#/', label: 'Home', icon: 'home' }];
     var cfg = readConfig();
     var hasSheet = !!cfg.spreadsheetId;
     if (hasSheet) {
-      items.push({ hash: '#/today', label: '☀ Today', badge: 'today' });
+      items.push({ hash: '#/today', label: 'Today', icon: 'sun', badge: 'today' });
       sectionRows().forEach(function (r) {
         items.push({
           hash: '#/s/' + encodeURIComponent(r.slug),
-          label: ((r.icon ? r.icon + ' ' : '') + (r.title || r.slug)),
+          label: r.title || r.slug,
+          icon: r.icon,
           badge: r.tab === 'tasks' ? 'tasks' : null
         });
       });
     }
-    items.push({ hash: '#/share', label: 'Quick share' });
-    items.push({ hash: '#/settings', label: 'Settings' });
+    items.push({ hash: '#/share', label: 'Quick share', icon: 'qr-code' });
+    items.push({ hash: '#/settings', label: 'Settings', icon: 'settings' });
 
     navEl.innerHTML = '';
     items.forEach(function (it) {
@@ -142,9 +143,12 @@
         href: it.hash,
         class: 'nav-link' + (it.hash === active ? ' active' : ''),
         'data-badge': it.badge || ''
-      }, it.label);
+      });
+      if (it.icon) a.appendChild(M.render.icon(it.icon));
+      a.appendChild(document.createTextNode(it.label));
       navEl.appendChild(a);
     });
+    M.render.refreshIcons();
     if (hasSheet) paintNavBadges();
   }
 
@@ -325,8 +329,10 @@
           var meta = await M.db.getMeta(r.tab);
           if (meta) lastSync = meta.lastPulledAt || null;
         } catch (e) { /* ignore */ }
+        var iconWrap = el('div', { class: 'section-card-icon' });
+        iconWrap.appendChild(M.render.icon(r.icon || 'circle'));
         return el('a', { class: 'section-card', href: '#/s/' + encodeURIComponent(r.slug) },
-          el('div', { class: 'section-card-icon' }, r.icon || '○'),
+          iconWrap,
           el('div', { class: 'section-card-body' },
             el('h3', null, r.title || r.slug),
             el('p', { class: 'small muted' },
@@ -874,7 +880,10 @@
     });
     var viewsBar = el('div', { class: 'saved-views' });
 
-    header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)));
+    var titleH2 = el('h2');
+    if (sec.icon) titleH2.appendChild(M.render.icon(sec.icon));
+    titleH2.appendChild(document.createTextNode(sec.title || sec.slug));
+    header.appendChild(titleH2);
     var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, importWrap, addBtn);
     header.appendChild(headerRight);
     view.appendChild(header);
@@ -1398,11 +1407,13 @@
       .slice(0, 5);
 
     var view = el('section', { class: 'view view-today' });
-    view.appendChild(el('h2', null, '☀ Today  ',
-      el('span', { class: 'small muted' }, new Date().toLocaleDateString(undefined, {
-        weekday: 'long', month: 'long', day: 'numeric'
-      }))
-    ));
+    var todayH2 = el('h2');
+    todayH2.appendChild(M.render.icon('sun'));
+    todayH2.appendChild(document.createTextNode(' Today  '));
+    todayH2.appendChild(el('span', { class: 'small muted' }, new Date().toLocaleDateString(undefined, {
+      weekday: 'long', month: 'long', day: 'numeric'
+    })));
+    view.appendChild(todayH2);
 
     // Quick-add: typing here + Enter creates a task due today.
     var quickAdd = document.createElement('input');
@@ -1626,7 +1637,10 @@
     var view = el('section', { class: 'view view-habits' });
     var header = el('div', { class: 'view-section-head' });
     var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add habit');
-    header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || 'Habits')));
+    var habitsH2 = el('h2');
+    if (sec.icon) habitsH2.appendChild(M.render.icon(sec.icon));
+    habitsH2.appendChild(document.createTextNode(sec.title || 'Habits'));
+    header.appendChild(habitsH2);
     header.appendChild(el('div', { class: 'view-section-head-right' }, addBtn));
     view.appendChild(header);
     view.appendChild(el('p', { class: 'lead' },
@@ -1773,7 +1787,10 @@
 
       if (backlinks && backlinks[r.id] && backlinks[r.id].length) {
         var bn = backlinks[r.id].length;
-        header.appendChild(el('span', { class: 'backlink-badge', title: bn + ' incoming reference' + (bn === 1 ? '' : 's') }, '↺ ' + bn));
+        var bb = el('span', { class: 'backlink-badge', title: bn + ' incoming reference' + (bn === 1 ? '' : 's') });
+        bb.appendChild(M.render.icon('link-2'));
+        bb.appendChild(document.createTextNode(' ' + bn));
+        header.appendChild(bb);
       }
 
       var addChildBtn = el('button', {
@@ -1982,7 +1999,9 @@
         // Append a small backlink badge to the first visible column.
         if (ci === 0 && backlinks && backlinks[row.id] && backlinks[row.id].length) {
           var n = backlinks[row.id].length;
-          var badge = el('span', { class: 'backlink-badge', title: n + ' incoming reference' + (n === 1 ? '' : 's') }, '↺ ' + n);
+          var badge = el('span', { class: 'backlink-badge', title: n + ' incoming reference' + (n === 1 ? '' : 's') });
+          badge.appendChild(M.render.icon('link-2'));
+          badge.appendChild(document.createTextNode(' ' + n));
           td.appendChild(badge);
         }
         td.addEventListener('click', function () { startEdit(td, row, c, tab, refresh); });
@@ -3045,6 +3064,7 @@
 
     renderNav(active);
     content.replaceChildren(view);
+    M.render.refreshIcons();
     setBusy(false);
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
@@ -4001,7 +4021,7 @@
       voiceBtn.type = 'button';
       voiceBtn.className = 'btn btn-ghost voice-btn';
       voiceBtn.title = 'Voice capture (start/stop)';
-      voiceBtn.textContent = '🎤';
+      voiceBtn.appendChild(M.render.icon('mic'));
 
       function stopVoice() {
         if (recognition) {
