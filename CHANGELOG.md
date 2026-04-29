@@ -4,6 +4,19 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.18 — Time, sharing, icons, privacy
+
+- **Schedule view** at `#/schedule`: 7-day grid showing busy blocks (events with start/end columns + tasks with `due`) and free slots inside a configurable work-hours window.
+- **Share my availability**: a modal that picks a date range and work hours, computes free slots, and produces a public URL + QR. Recipients see only your free time at `#/avail/<token>` — the data lives in the URL hash, no backend.
+- **When to meet**: a When2Meet-style group poll. Organizer composes at `#/meet/new`, gets a URL; participants drag-select their availability at `#/meet/<poll>`, copy a response token; organizer's aggregate view at `#/meet/<poll>/<r1>;<r2>;...` builds a heatmap grid and highlights the best (most-overlapping) slots. Touch drag, sticky header, color-mix heat intensity. No backend.
+- **Events** preset (id, title, start, end, location, notes) and **today's events** block in the Today view.
+- **iCal feed** now bundles events alongside tasks; subscribers see meeting blocks in their own calendars.
+- **Lucide icons** throughout: section nav, cards, headers, Pomodoro widget, voice button, backlinks. Bootstrap seeds + presets ship with Lucide names; legacy emoji values still render as text.
+- **Custom CSS theme** in Settings, **per-section accent colour** via `_config.color`, **PDF + YouTube inline preview**, **DOI lookup via CrossRef**, **BibTeX export** (single + bulk), **bookmarklet**, **OpenSearch**, **RSS feed**, **KaTeX** for `latex` columns, **voice capture**, **Pomodoro timer**, **proposals** preset + AI prompts + funder guide.
+- **Light theme** — pinning *Light* on a dark-mode OS now actually goes light (CSS specificity fix).
+- **Offline indicator** — fixed always-visible bug (`[hidden]` was overridden by class display rule).
+- **Privacy policy** rewritten with explicit per-scope disclosure for Google OAuth verification.
+
 ## v0.17 — Research polish
 
 - **DOI lookup** in the URL importer: paste a bare DOI (10.xxxx/yyy) or doi.org URL — Minerva pulls title, authors, year, venue, abstract, and PDF link from CrossRef.
