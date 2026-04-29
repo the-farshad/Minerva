@@ -1221,6 +1221,13 @@
         var firstTd = tr.querySelector('td[data-col]');
         if (firstTd) firstTd.click();
       },
+      detailSelected: function () {
+        if (mode !== 'list' || selectedIndex < 0) return;
+        var tr = rowsInDom()[selectedIndex];
+        if (!tr) return;
+        var rowId = tr.dataset.rowid;
+        if (rowId) showRowDetail(sec.tab, rowId);
+      },
       deleteSelected: async function () {
         if (mode !== 'list' || selectedIndex < 0) return;
         var tr = rowsInDom()[selectedIndex];
@@ -1877,6 +1884,11 @@
       if (row._dirty) tr.classList.add('row-dirty');
       var isSelected = !!selectedIds && selectedIds.has(row.id);
       if (isSelected) tr.classList.add('is-bulk-selected');
+      tr.addEventListener('dblclick', function (e) {
+        // Don't open detail when double-clicking the bulk checkbox or actions
+        if (e.target.closest('.col-bulk, .col-actions, button, input, textarea, select')) return;
+        showRowDetail(tab, row.id);
+      });
 
       // checkbox column
       var rowCb = document.createElement('input');
@@ -2990,6 +3002,123 @@
     return '';
   }
 
+  // ---- row detail modal (double-click row or `d`) ----
+
+  async function showRowDetail(tab, rowId) {
+    if (document.querySelector('.row-detail-overlay')) return;
+    var row = await M.db.getRow(tab, rowId);
+    if (!row) { flash(document.body, 'Row not found.', 'error'); return; }
+    var meta = await M.db.getMeta(tab);
+    if (!meta || !meta.headers) {
+      flash(document.body, 'No schema cached for ' + tab + '.', 'error');
+      return;
+    }
+
+    var overlay = el('div', { class: 'modal-overlay row-detail-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+
+    var titleText = row.title || row.name || row.question || row.decision || row.id;
+    var panel = el('div', { class: 'modal-panel row-detail-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    });
+
+    var head = el('div', { class: 'row-detail-head' },
+      el('h3', null, String(titleText)),
+      el('button', { class: 'icon-btn', type: 'button', title: 'Close',
+        onclick: function () { overlay.remove(); } }, '×')
+    );
+    panel.appendChild(head);
+
+    var subtitle = el('p', { class: 'small muted' },
+      tab + ' · id: ', el('code', null, row.id)
+    );
+    panel.appendChild(subtitle);
+
+    var grid = el('div', { class: 'row-detail-grid' });
+    panel.appendChild(grid);
+
+    function renderField(h, type) {
+      var labelEl = el('div', { class: 'row-detail-label' }, h);
+      var valueEl = el('div', { class: 'row-detail-value', tabindex: '0',
+        'data-col': h, 'data-type': type
+      });
+      valueEl.appendChild(M.render.renderCell(row[h], type));
+
+      function startEditField() {
+        if (valueEl.classList.contains('editing')) return;
+        var current = row[h];
+        var editor = M.editors.make(current, type,
+          async function (newValue) {
+            valueEl.classList.remove('editing');
+            valueEl.replaceChildren(M.render.renderCell(newValue, type));
+            if (newValue !== current) {
+              await commitCellEdit(tab, rowId, h, newValue);
+              row[h] = newValue;
+            }
+          },
+          function () {
+            valueEl.classList.remove('editing');
+            valueEl.replaceChildren(M.render.renderCell(current, type));
+          }
+        );
+        valueEl.classList.add('editing');
+        valueEl.replaceChildren(editor);
+        if (typeof editor.focus === 'function') editor.focus();
+        if (typeof editor.select === 'function' && editor.tagName !== 'TEXTAREA') {
+          try { editor.select(); } catch (e) { /* ignore */ }
+        }
+      }
+
+      valueEl.addEventListener('click', startEditField);
+      valueEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          if (valueEl.classList.contains('editing')) return;
+          e.preventDefault();
+          startEditField();
+        }
+      });
+
+      return [labelEl, valueEl];
+    }
+
+    meta.headers.forEach(function (h, i) {
+      if (M.render.isInternal(h)) return;
+      if (h === 'id') return;
+      var type = meta.types[i] || 'text';
+      var pair = renderField(h, type);
+      grid.appendChild(pair[0]);
+      grid.appendChild(pair[1]);
+    });
+
+    panel.appendChild(el('div', { class: 'form-actions' },
+      el('button', { class: 'btn btn-ghost', type: 'button',
+        onclick: function () { overlay.remove(); } }, 'Close'),
+      el('button', { class: 'btn btn-ghost', type: 'button',
+        onclick: async function () {
+          if (!confirm('Delete this row?')) return;
+          await deleteRow(tab, rowId);
+          overlay.remove();
+          if (location.hash !== '#/settings') await route();
+        } }, 'Delete row'),
+      readConfig().spreadsheetId
+        ? el('a', { class: 'btn btn-ghost',
+            href: M.sheets.spreadsheetUrl(readConfig().spreadsheetId),
+            target: '_blank', rel: 'noopener' }, 'Open in Sheets ↗')
+        : null
+    ));
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !document.activeElement.closest('.editing')) {
+        e.preventDefault();
+        overlay.remove();
+      }
+    });
+  }
+
   // ---- AI assistant overlay (`Cmd/Ctrl+J`) ----
 
   var AI_PROMPTS = [
@@ -3426,8 +3555,10 @@
       ['s', 'Settings'],
       ['j / k', 'Move selection in a section list'],
       ['e', 'Edit selected row'],
+      ['d', 'Open detail view of selected row'],
       ['c', 'Toggle status (done ↔ todo)'],
       ['x', 'Delete selected row'],
+      ['Double-click', 'Row detail (full markdown, all fields)'],
       ['?', 'This panel'],
       ['Esc', 'Close overlay / cancel edit'],
       ['Enter', 'Save current edit']
@@ -3500,6 +3631,7 @@
       if (e.key === 'e') { e.preventDefault(); sectionCtx.editSelected(); return; }
       if (e.key === 'x') { e.preventDefault(); sectionCtx.deleteSelected(); return; }
       if (e.key === 'c') { e.preventDefault(); sectionCtx.toggleDoneSelected(); return; }
+      if (e.key === 'd') { e.preventDefault(); sectionCtx.detailSelected(); return; }
     }
 
     // 1–9 → Nth section.
