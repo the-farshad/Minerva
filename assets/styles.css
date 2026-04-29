@@ -785,6 +785,35 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 
 /* --- schedule view ---------------------------------------- */
 
+.sched-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.6rem;
+  margin: 0.85rem 0;
+  max-width: var(--readw);
+}
+.sched-stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  text-align: left;
+}
+.sched-stat-num {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.sched-stat-lbl {
+  font-size: 0.74rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+}
+
 .sched-days {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

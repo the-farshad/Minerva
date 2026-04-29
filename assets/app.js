@@ -1963,6 +1963,36 @@
     try { slots = M.schedule.freeSlots(busy, { start: rangeStart, end: rangeEnd, workStart: 9, workEnd: 18, skipWeekends: true }); }
     catch (e) { slots = []; }
 
+    // Summary stats — sum busy/free across the whole range, render as
+    // a small headline so the user gets an at-a-glance load picture.
+    var busyMin = busy.reduce(function (s, b) { return s + (b.end - b.start) / 60000; }, 0);
+    var freeMin = slots.reduce(function (s, b) { return s + (b.end - b.start) / 60000; }, 0);
+    var totalMin = freeMin + busyMin;
+    var freePct = totalMin > 0 ? Math.round(100 * freeMin / totalMin) : 0;
+    function fmtH(min) {
+      var h = min / 60;
+      return (h < 10 ? h.toFixed(1) : Math.round(h)) + 'h';
+    }
+    var summary = el('div', { class: 'sched-summary' },
+      el('div', { class: 'sched-stat' },
+        el('div', { class: 'sched-stat-num' }, freePct + '%'),
+        el('div', { class: 'sched-stat-lbl' }, 'free in window')
+      ),
+      el('div', { class: 'sched-stat' },
+        el('div', { class: 'sched-stat-num' }, fmtH(busyMin)),
+        el('div', { class: 'sched-stat-lbl' }, 'scheduled')
+      ),
+      el('div', { class: 'sched-stat' },
+        el('div', { class: 'sched-stat-num' }, fmtH(freeMin)),
+        el('div', { class: 'sched-stat-lbl' }, 'free')
+      ),
+      el('div', { class: 'sched-stat' },
+        el('div', { class: 'sched-stat-num' }, slots.length),
+        el('div', { class: 'sched-stat-lbl' }, 'open slot' + (slots.length === 1 ? '' : 's'))
+      )
+    );
+    view.appendChild(summary);
+
     var daysHost = el('div', { class: 'sched-days' });
     for (var i = 0; i < rangeDays; i++) {
       var d = new Date(rangeStart.getTime() + i * 86400000);
