@@ -832,6 +832,60 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   .heatmap-cell { width: 10px; height: 10px; }
 }
 
+/* --- tree view ---------------------------------------------- */
+
+.tree, .tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tree {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin: 0.75rem 0 1rem;
+  padding: 0.4rem 0;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem 0.3rem 0;
+  border-radius: 4px;
+  transition: background .12s;
+}
+.tree-row:hover { background: var(--surface-2); }
+.tree-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  width: 1.1rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+  padding: 0;
+}
+.tree-toggle:hover { color: var(--fg); }
+.tree-leaf {
+  width: 1.1rem;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.tree-title {
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 0.95rem;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-title:hover { color: var(--accent); }
+.tree-due { font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.tree-count { flex: 0 0 auto; }
+
 /* --- calendar view ----------------------------------------- */
 
 .view-section-head-right {

@@ -475,6 +475,24 @@
     return null;
   }
 
+  function findSelfRefCol(meta, tab) {
+    if (!meta || !meta.headers || !meta.types) return null;
+    for (var i = 0; i < meta.headers.length; i++) {
+      var t = M.render.parseType(meta.types[i]);
+      if (t.kind === 'ref' && t.refTab === tab && !t.multi) return meta.headers[i];
+    }
+    return null;
+  }
+
+  function findProgressCol(meta) {
+    if (!meta || !meta.headers || !meta.types) return null;
+    for (var i = 0; i < meta.headers.length; i++) {
+      var t = M.render.parseType(meta.types[i]);
+      if (t.kind === 'progress') return { name: meta.headers[i], min: t.min || 0, max: t.max || 100 };
+    }
+    return null;
+  }
+
   function ymd(d) {
     return d.getFullYear() + '-' +
       String(d.getMonth() + 1).padStart(2, '0') + '-' +
@@ -568,17 +586,25 @@
       refresh();
     }
 
-    function paintModeToggle(hasDate) {
+    function paintModeToggle(hasDate, hasTree) {
       modeToggle.innerHTML = '';
-      if (!hasDate) return;
+      if (!hasDate && !hasTree) return;
       var listBtn = el('button', { type: 'button', 'data-value': 'list',
         class: mode === 'list' ? 'active' : '' }, 'List');
-      var calBtn = el('button', { type: 'button', 'data-value': 'cal',
-        class: mode === 'cal' ? 'active' : '' }, 'Calendar');
       listBtn.addEventListener('click', function () { switchMode('list'); });
-      calBtn.addEventListener('click', function () { switchMode('cal'); });
       modeToggle.appendChild(listBtn);
-      modeToggle.appendChild(calBtn);
+      if (hasTree) {
+        var treeBtn = el('button', { type: 'button', 'data-value': 'tree',
+          class: mode === 'tree' ? 'active' : '' }, 'Tree');
+        treeBtn.addEventListener('click', function () { switchMode('tree'); });
+        modeToggle.appendChild(treeBtn);
+      }
+      if (hasDate) {
+        var calBtn = el('button', { type: 'button', 'data-value': 'cal',
+          class: mode === 'cal' ? 'active' : '' }, 'Calendar');
+        calBtn.addEventListener('click', function () { switchMode('cal'); });
+        modeToggle.appendChild(calBtn);
+      }
     }
 
     function paintCalNav(visible) {
@@ -639,10 +665,13 @@
       }
 
       var dateCol = findDateCol(meta);
+      var parentCol = findSelfRefCol(meta, sec.tab);
       var canCal = !!dateCol;
-      if (!canCal) mode = 'list';
+      var canTree = !!parentCol;
+      if (mode === 'cal' && !canCal) mode = 'list';
+      if (mode === 'tree' && !canTree) mode = 'list';
 
-      paintModeToggle(canCal);
+      paintModeToggle(canCal, canTree);
       paintCalNav(mode === 'cal');
 
       var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
@@ -661,6 +690,12 @@
         hint.replaceChildren(
           'Calendar groups rows by ', el('code', null, dateCol),
           '. Switch back to list to edit cells inline.'
+        );
+      } else if (mode === 'tree' && parentCol) {
+        bodyHost.replaceChildren(renderTree(meta, filtered, sec.tab, parentCol));
+        hint.replaceChildren(
+          'Tree groups rows by their ', el('code', null, parentCol),
+          ' field. Click ▸/▾ to expand or collapse a branch. Switch to List to edit cells inline.'
         );
       } else {
         bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh, userSort, onSortChange));
@@ -1032,6 +1067,87 @@
 
     await refresh();
     return view;
+  }
+
+  function renderTree(meta, rows, tab, parentCol) {
+    var byId = {};
+    rows.forEach(function (r) {
+      byId[r.id] = { row: r, children: [] };
+    });
+    var roots = [];
+    rows.forEach(function (r) {
+      var pid = r[parentCol];
+      if (pid && byId[pid]) byId[pid].children.push(byId[r.id]);
+      else roots.push(byId[r.id]);
+    });
+
+    var titleCol = (meta.headers || []).indexOf('title') >= 0 ? 'title'
+      : (meta.headers || []).indexOf('name') >= 0 ? 'name'
+      : 'id';
+    var progress = findProgressCol(meta);
+    var statusHeader = (meta.headers || []).indexOf('status') >= 0 ? 'status' : null;
+    var dueHeader = (meta.headers || []).indexOf('due') >= 0 ? 'due'
+      : (meta.headers || []).indexOf('end') >= 0 ? 'end' : null;
+
+    function nodeEl(node, depth) {
+      var r = node.row;
+      var has = node.children.length > 0;
+      var label = r[titleCol] || r.id;
+
+      var wrap = el('li', { class: 'tree-node' });
+      var header = el('div', { class: 'tree-row' });
+      header.style.paddingLeft = (0.4 + depth * 1.1) + 'rem';
+
+      var toggle = has
+        ? el('button', { class: 'tree-toggle', type: 'button', 'aria-expanded': 'true' }, '▾')
+        : el('span', { class: 'tree-leaf' }, '·');
+      header.appendChild(toggle);
+
+      var titleA = el('a', { class: 'tree-title', href: M.sheets.spreadsheetUrl(readConfig().spreadsheetId), target: '_blank', rel: 'noopener' }, String(label));
+      header.appendChild(titleA);
+
+      if (statusHeader) {
+        var s = String(r[statusHeader] || '');
+        if (s) header.appendChild(M.render.renderCell(s, 'select(' + s + ')'));
+      }
+
+      if (progress) {
+        header.appendChild(M.render.renderCell(r[progress.name], 'progress(' + progress.min + '..' + progress.max + ')'));
+      }
+
+      if (dueHeader && r[dueHeader]) {
+        header.appendChild(el('span', { class: 'tree-due small muted' }, String(r[dueHeader]).slice(0, 10)));
+      }
+
+      if (has) {
+        header.appendChild(el('span', { class: 'tree-count small muted' }, node.children.length + ' child' + (node.children.length === 1 ? '' : 'ren')));
+      }
+
+      wrap.appendChild(header);
+
+      if (has) {
+        var childUl = el('ul', { class: 'tree-children' });
+        node.children.forEach(function (c) { childUl.appendChild(nodeEl(c, depth + 1)); });
+        wrap.appendChild(childUl);
+
+        toggle.addEventListener('click', function () {
+          var open = childUl.style.display !== 'none';
+          childUl.style.display = open ? 'none' : '';
+          toggle.textContent = open ? '▸' : '▾';
+          toggle.setAttribute('aria-expanded', String(!open));
+        });
+      }
+
+      return wrap;
+    }
+
+    if (!roots.length) {
+      return el('p', { class: 'muted' }, 'No rows in this section yet.');
+    }
+
+    var root = el('ul', { class: 'tree' });
+    roots.forEach(function (r) { root.appendChild(nodeEl(r, 0)); });
+    return root;
   }
 
   function renderCalendar(rows, dateCol, monthDate, tab) {

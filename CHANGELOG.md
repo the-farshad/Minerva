@@ -4,6 +4,10 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.9 — Tree view for hierarchies
+
+- **Tree mode** is now an option in the section-mode toggle for any section whose schema includes a self-referential ref column (e.g. `goals.parent:ref(goals)` in the seed schema). Renders rows as a collapsible nested list with current status, progress bar, due date, and child count per node. Click ▸/▾ to fold a branch; the title links straight to the row in your spreadsheet.
+
 ## v0.8 — Recurring tasks, click-to-sort, preset gallery
 
 - **Recurring tasks**: a task with a populated `recurrence` column auto-spawns the next instance when its status is set to `done`. Recurrence vocab: `daily`, `weekly`, `biweekly`, `monthly`, `quarterly`, `yearly`, `every N days/weeks/months/years`, `every monday/tuesday/...`. The new row carries forward all user-facing fields, with status reset to `todo` and `due` advanced. Adding a `recurrence:text` column to your `tasks` tab in Sheets is enough to opt in.
