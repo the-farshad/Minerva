@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <ShortName>Minerva</ShortName>
+  <Description>Search across your Minerva planner.</Description>
+  <InputEncoding>UTF-8</InputEncoding>
+  <Image width="64" height="64" type="image/png">https://minerva.thefarshad.com/docs/assets/minerva-logo.png</Image>
+  <Url type="text/html" method="get" template="https://minerva.thefarshad.com/#/search/{searchTerms}"/>
+  <SearchForm>https://minerva.thefarshad.com/</SearchForm>
+</OpenSearchDescription>
