@@ -1504,9 +1504,9 @@
     }
     wrap.appendChild(body);
 
-    // Drag-select. mousedown decides whether we're adding or removing
-    // selections (based on current state of starting cell), then mouseover
-    // applies the same op to every cell traversed.
+    // Drag-select. mousedown / touchstart decides whether we're adding or
+    // removing (based on the starting cell's current state), then
+    // mouseover / touchmove applies the same op to every cell traversed.
     if (!opts.readonly) {
       var dragging = false;
       var addMode = true;
@@ -1516,6 +1516,7 @@
         grid[rr][cc] = on ? 1 : 0;
         cell.classList.toggle('selected', !!on);
       }
+
       body.addEventListener('mousedown', function (e) {
         var cell = e.target.closest('.meet-grid-cell');
         if (!cell) return;
@@ -1530,15 +1531,29 @@
         if (!cell) return;
         paintCell(cell, addMode);
       });
-      var stopDrag = function () { dragging = false; };
-      window.addEventListener('mouseup', stopDrag);
-      // Touch: simpler — tap toggles a single cell.
-      body.addEventListener('click', function (e) {
-        if (dragging) return;
+
+      body.addEventListener('touchstart', function (e) {
         var cell = e.target.closest('.meet-grid-cell');
         if (!cell) return;
-        paintCell(cell, !cell.classList.contains('selected'));
-      });
+        e.preventDefault();
+        dragging = true;
+        addMode = !cell.classList.contains('selected');
+        paintCell(cell, addMode);
+      }, { passive: false });
+      body.addEventListener('touchmove', function (e) {
+        if (!dragging) return;
+        e.preventDefault();
+        var t = e.touches[0];
+        if (!t) return;
+        var hit = document.elementFromPoint(t.clientX, t.clientY);
+        var cell = hit && hit.closest && hit.closest('.meet-grid-cell');
+        if (cell && body.contains(cell)) paintCell(cell, addMode);
+      }, { passive: false });
+
+      var stopDrag = function () { dragging = false; };
+      window.addEventListener('mouseup', stopDrag);
+      window.addEventListener('touchend', stopDrag);
+      window.addEventListener('touchcancel', stopDrag);
     }
 
     return {
@@ -1674,6 +1689,44 @@
 
     var grid = buildSlotGrid(poll, { heat: heat, readonly: true });
     view.appendChild(grid.el);
+
+    // Best-slot summary: which cells have the maximum count? Surface them
+    // in a small list so the organizer doesn't have to squint at the heatmap.
+    var bestCount = 0;
+    heat.forEach(function (row) { row.forEach(function (n) { if (n > bestCount) bestCount = n; }); });
+    if (bestCount > 0) {
+      var bestSlots = [];
+      for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < cols; c++) {
+          if (heat[r][c] === bestCount) {
+            bestSlots.push({
+              date: poll.days[c],
+              time: poll.slots[r],
+              r: r, c: c
+            });
+          }
+        }
+      }
+      // Mark the best cells visually
+      setTimeout(function () {
+        bestSlots.forEach(function (s) {
+          var cell = grid.el.querySelector('.meet-grid-cell[data-r="' + s.r + '"][data-c="' + s.c + '"]');
+          if (cell) cell.classList.add('meet-best');
+        });
+      }, 0);
+      var bestEl = el('div', { class: 'meet-best-summary' },
+        el('h3', null,
+          M.render.icon('sparkles'),
+          ' Best slot' + (bestSlots.length === 1 ? '' : 's'),
+          el('span', { class: 'small muted' }, '  ' + bestCount + ' / ' + responses.length + ' available')
+        ),
+        el('ul', { class: 'avail-list' }, bestSlots.slice(0, 12).map(function (s) {
+          var d = new Date(s.date + 'T' + s.time + ':00');
+          return el('li', null, d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + '  ' + s.time);
+        }))
+      );
+      view.appendChild(bestEl);
+    }
 
     var addInput = el('input', { type: 'text', class: 'editor', placeholder: 'Paste a response URL or token to add' });
     addInput.addEventListener('keydown', function (e) {

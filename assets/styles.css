@@ -912,6 +912,26 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 .meet-grid-cell.meet-heat.selected {
   background: var(--accent);
 }
+.meet-grid-cell.meet-best {
+  box-shadow: inset 0 0 0 2px var(--ok);
+}
+
+.meet-best-summary {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--ok);
+  border-radius: var(--radius);
+  background: var(--surface);
+  max-width: var(--readw);
+}
+.meet-best-summary h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ok);
+}
 
 .meet-output { margin-top: 1rem; }
 .meet-submit {
