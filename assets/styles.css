@@ -783,6 +783,90 @@ table.rows tbody tr.is-selected {
 table.rows tbody tr.is-selected td:first-child { font-weight: 500; }
 table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display: block; }
 
+/* --- schedule view ---------------------------------------- */
+
+.sched-days {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+.sched-day {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.85rem;
+}
+.sched-day.sched-weekend { background: var(--bg); opacity: 0.7; }
+.sched-day-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+.sched-day-name { font-weight: 600; }
+.sched-day-date { color: var(--muted); font-size: 0.85rem; }
+.sched-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+.sched-busy,
+.sched-free {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+}
+.sched-busy {
+  background: var(--surface-2);
+  border-left: 3px solid var(--muted);
+}
+.sched-free {
+  background: transparent;
+  border-left: 3px solid var(--ok);
+  color: var(--fg);
+}
+.sched-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--muted);
+  min-width: 6.5em;
+}
+.sched-label { flex: 1; }
+.sched-tab { font-size: 0.72rem; }
+
+.avail-panel { max-width: 640px; }
+.avail-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+  margin-bottom: 0.85rem;
+}
+.avail-form > .field { grid-column: span 1; }
+.avail-form > .field:has(textarea),
+.avail-form > .field:nth-last-child(-n+2) { grid-column: span 2; }
+.avail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+.avail-list li {
+  padding: 0.3rem 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
 /* --- today view ------------------------------------------- */
 
 .view-today h2 .small { margin-left: 0.5rem; font-weight: 500; }

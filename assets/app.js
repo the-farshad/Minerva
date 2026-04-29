@@ -125,6 +125,7 @@
     var hasSheet = !!cfg.spreadsheetId;
     if (hasSheet) {
       items.push({ hash: '#/today', label: 'Today', icon: 'sun', badge: 'today' });
+      items.push({ hash: '#/schedule', label: 'Schedule', icon: 'calendar-clock' });
       sectionRows().forEach(function (r) {
         items.push({
           hash: '#/s/' + encodeURIComponent(r.slug),
@@ -1344,6 +1345,305 @@
     };
 
     await refresh();
+    return view;
+  }
+
+  // ---- schedule view + availability sharing -------------------------
+
+  function startOfDay(d) {
+    var x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  }
+  function fmtTime(d) {
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  async function viewSchedule() {
+    var cfg = readConfig();
+    var st = M.auth ? M.auth.getState() : { hasToken: false };
+    if (!cfg.spreadsheetId || !st.hasToken) {
+      return el('section', { class: 'view' },
+        el('h2', null, 'Schedule'),
+        el('p', null, 'Connect first.'),
+        el('p', null, el('a', { href: '#/settings' }, 'Open Settings →'))
+      );
+    }
+
+    var view = el('section', { class: 'view view-schedule' });
+    var titleH2 = el('h2');
+    titleH2.appendChild(M.render.icon('calendar-clock'));
+    titleH2.appendChild(document.createTextNode(' Schedule  '));
+    titleH2.appendChild(el('span', { class: 'small muted' }, 'next 7 days'));
+    view.appendChild(titleH2);
+
+    var actionRow = el('div', { class: 'cta-row' },
+      el('button', { class: 'btn', type: 'button',
+        onclick: function () { showAvailabilityShare(); }
+      }, 'Share my availability'),
+      el('a', { class: 'btn btn-ghost', href: '#/today' }, 'Today →')
+    );
+    view.appendChild(actionRow);
+
+    view.appendChild(el('p', { class: 'small muted' },
+      'Busy blocks come from any tab with start + end datetime columns ',
+      '(e.g., the ', el('code', null, 'events'), ' preset) plus tasks with a ',
+      el('code', null, 'due'), ' date. Free slots are computed inside ',
+      el('code', null, '09:00–18:00'), ' Mon–Fri.'
+    ));
+
+    var rangeStart = startOfDay(new Date());
+    var rangeEnd = new Date(rangeStart.getTime() + 7 * 86400000);
+    var busy;
+    try { busy = await M.schedule.collectBusy({ start: rangeStart, end: rangeEnd, workStart: 9 }); }
+    catch (e) { busy = []; }
+    var slots;
+    try { slots = M.schedule.freeSlots(busy, { start: rangeStart, end: rangeEnd, workStart: 9, workEnd: 18, skipWeekends: true }); }
+    catch (e) { slots = []; }
+
+    // Group by day for display
+    var daysHost = el('div', { class: 'sched-days' });
+    for (var i = 0; i < 7; i++) {
+      var d = new Date(rangeStart.getTime() + i * 86400000);
+      var ds = startOfDay(d);
+      var nextDay = new Date(ds.getTime() + 86400000);
+      var dayBusy = busy.filter(function (b) { return b.start >= ds && b.start < nextDay; });
+      var dayFree = slots.filter(function (s) { return s.start >= ds && s.start < nextDay; });
+      var weekend = d.getDay() === 0 || d.getDay() === 6;
+
+      var dayBox = el('div', { class: 'sched-day' + (weekend ? ' sched-weekend' : '') });
+      var head = el('div', { class: 'sched-day-head' },
+        el('span', { class: 'sched-day-name' }, d.toLocaleDateString(undefined, { weekday: 'short' })),
+        el('span', { class: 'sched-day-date' }, d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
+      );
+      dayBox.appendChild(head);
+
+      var blocksHost = el('div', { class: 'sched-blocks' });
+      if (weekend) {
+        blocksHost.appendChild(el('p', { class: 'small muted' }, 'Weekend — outside default work hours.'));
+      } else {
+        if (dayBusy.length) {
+          dayBusy.forEach(function (b) {
+            blocksHost.appendChild(el('div', { class: 'sched-busy' },
+              el('span', { class: 'sched-time' }, fmtTime(b.start) + '–' + fmtTime(b.end)),
+              el('span', { class: 'sched-label' }, b.label),
+              el('span', { class: 'sched-tab small muted' }, b.tab)
+            ));
+          });
+        }
+        if (dayFree.length) {
+          dayFree.forEach(function (s) {
+            blocksHost.appendChild(el('div', { class: 'sched-free' },
+              el('span', { class: 'sched-time' }, fmtTime(s.start) + '–' + fmtTime(s.end)),
+              el('span', { class: 'sched-label' }, 'free')
+            ));
+          });
+        } else if (!dayBusy.length) {
+          blocksHost.appendChild(el('p', { class: 'small muted' }, 'Nothing scheduled. Whole work day is free.'));
+        }
+      }
+      dayBox.appendChild(blocksHost);
+      daysHost.appendChild(dayBox);
+    }
+    view.appendChild(daysHost);
+
+    return view;
+  }
+
+  async function showAvailabilityShare() {
+    if (document.querySelector('.avail-overlay')) return;
+    var overlay = el('div', { class: 'modal-overlay avail-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var weekFromNow = new Date(today.getTime() + 7 * 86400000);
+    function isoDate(d) { return d.toISOString().slice(0, 10); }
+
+    var startInput = el('input', { type: 'date', class: 'editor', value: isoDate(today) });
+    var endInput = el('input', { type: 'date', class: 'editor', value: isoDate(weekFromNow) });
+    var workStartInput = el('input', { type: 'number', class: 'editor', min: '0', max: '23', value: '9' });
+    var workEndInput = el('input', { type: 'number', class: 'editor', min: '1', max: '24', value: '18' });
+    var slotInput = el('input', { type: 'number', class: 'editor', min: '15', max: '480', step: '15', value: '30' });
+    var titleInput = el('input', { type: 'text', class: 'editor',
+      placeholder: 'A friendly note for the recipient (optional)' });
+    var skipWeekendsCb = el('input', { type: 'checkbox', checked: true });
+
+    var preview = el('div', { class: 'avail-preview' });
+    var linkRow = el('div', { class: 'link-row' });
+    var qrWrap = el('div', { class: 'qr-wrap' });
+
+    async function rebuild() {
+      var rs = new Date(startInput.value + 'T00:00:00');
+      var re = new Date(endInput.value + 'T23:59:59');
+      if (re < rs) {
+        preview.replaceChildren(el('p', { class: 'error' }, 'End date must be after start date.'));
+        linkRow.replaceChildren();
+        qrWrap.replaceChildren();
+        return;
+      }
+      var ws = parseInt(workStartInput.value, 10) || 9;
+      var we = parseInt(workEndInput.value, 10) || 18;
+      var sl = parseInt(slotInput.value, 10) || 30;
+      var skipW = skipWeekendsCb.checked;
+
+      var busy = await M.schedule.collectBusy({ start: rs, end: re, workStart: ws });
+      var slots = M.schedule.freeSlots(busy, { start: rs, end: re, workStart: ws, workEnd: we, slotMin: sl, skipWeekends: skipW });
+
+      if (!slots.length) {
+        preview.replaceChildren(el('p', { class: 'muted' }, 'No free slots in this range — try widening the work hours or extending the date range.'));
+        linkRow.replaceChildren();
+        qrWrap.replaceChildren();
+        return;
+      }
+
+      var ul = el('ul', { class: 'avail-list' });
+      slots.slice(0, 24).forEach(function (s) {
+        ul.appendChild(el('li', null, M.schedule.fmtRange(s)));
+      });
+      var summary = el('p', { class: 'small muted' },
+        slots.length + ' free slot' + (slots.length === 1 ? '' : 's') + ' across ',
+        Math.ceil((re - rs) / 86400000), ' days. ',
+        slots.length > 24 ? '(Preview shows first 24.)' : ''
+      );
+      preview.replaceChildren(summary, ul);
+
+      var token = M.schedule.encodeAvailability(slots, {
+        title: titleInput.value.trim(),
+        ws: ws, we: we
+      });
+      var url = location.origin + location.pathname + '#/avail/' + token;
+      var urlInput = el('input', { type: 'text', readonly: true, class: 'url', value: url });
+      linkRow.replaceChildren(
+        urlInput,
+        el('button', { class: 'btn', type: 'button',
+          onclick: function () {
+            urlInput.select();
+            if (navigator.clipboard) navigator.clipboard.writeText(url);
+            flash(linkRow, 'Link copied');
+          } }, 'Copy link')
+      );
+
+      qrWrap.replaceChildren();
+      try {
+        var qr = M.qr(url, { ec: 'M', margin: 2 });
+        qr.classList.add('qr');
+        qrWrap.append(
+          qr,
+          el('div', { class: 'qr-actions' },
+            el('button', { class: 'btn btn-ghost', type: 'button',
+              onclick: function () { M.downloadPng(qr, 'minerva-availability.png'); }
+            }, 'Download PNG'),
+            el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, 'Open public view ↗')
+          )
+        );
+      } catch (e) { /* QR opt-in only when generator is loaded */ }
+    }
+
+    var debounce = null;
+    [startInput, endInput, workStartInput, workEndInput, slotInput, titleInput].forEach(function (i) {
+      i.addEventListener('input', function () {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(rebuild, 200);
+      });
+    });
+    skipWeekendsCb.addEventListener('change', rebuild);
+
+    var panel = el('div', { class: 'modal-panel avail-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      el('h3', null, 'Share my availability'),
+      el('p', { class: 'small muted' },
+        'Generates a public URL containing only your free slots — recipients see when you\'re available, not what you\'re busy with. They can\'t book directly; treat the link as ',
+        el('em', null, '"reach out and pick a slot"'),
+        '.'
+      ),
+      el('div', { class: 'avail-form' },
+        field('From', startInput),
+        field('To', endInput),
+        field('Work hours start', workStartInput),
+        field('Work hours end', workEndInput),
+        field('Min slot (minutes)', slotInput),
+        field('Note', titleInput),
+        el('label', { class: 'small' },
+          skipWeekendsCb,
+          ' Skip weekends'
+        )
+      ),
+      preview,
+      linkRow,
+      qrWrap,
+      el('div', { class: 'form-actions' },
+        el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: function () { overlay.remove(); } }, 'Done')
+      )
+    );
+
+    panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
+    });
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    rebuild();
+  }
+
+  function viewAvailability(token) {
+    var data;
+    try { data = M.schedule.decodeAvailability(token); }
+    catch (e) {
+      return el('section', { class: 'view' },
+        el('h2', null, 'Invalid availability link'),
+        el('p', null, 'This link is malformed or truncated.')
+      );
+    }
+
+    var view = el('section', { class: 'view view-availability' });
+    view.appendChild(el('h2', null, 'Availability'));
+    if (data.meta && data.meta.title) {
+      view.appendChild(el('p', { class: 'lead' }, data.meta.title));
+    }
+    view.appendChild(el('p', { class: 'small muted' },
+      'Free time slots — pick one and reach out to book. Times are in the sender\'s local time zone (',
+      el('em', null, Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'), ' as rendered on this device).'
+    ));
+
+    if (!data.slots.length) {
+      view.appendChild(el('p', { class: 'muted' }, 'No slots available.'));
+      return view;
+    }
+
+    // Group by day
+    var byDay = {};
+    data.slots.forEach(function (s) {
+      var key = M.schedule.dayKey(s.start);
+      if (!byDay[key]) byDay[key] = [];
+      byDay[key].push(s);
+    });
+    var keys = Object.keys(byDay).sort();
+    var grid = el('div', { class: 'sched-days' });
+    keys.forEach(function (k) {
+      var first = byDay[k][0].start;
+      var box = el('div', { class: 'sched-day' });
+      box.appendChild(el('div', { class: 'sched-day-head' },
+        el('span', { class: 'sched-day-name' }, first.toLocaleDateString(undefined, { weekday: 'short' })),
+        el('span', { class: 'sched-day-date' }, first.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
+      ));
+      var blocks = el('div', { class: 'sched-blocks' });
+      byDay[k].forEach(function (s) {
+        blocks.appendChild(el('div', { class: 'sched-free' },
+          el('span', { class: 'sched-time' }, fmtTime(s.start) + '–' + fmtTime(s.end)),
+          el('span', { class: 'sched-label' }, 'available')
+        ));
+      });
+      box.appendChild(blocks);
+      grid.appendChild(box);
+    });
+    view.appendChild(grid);
+
+    view.appendChild(el('p', { class: 'small muted' },
+      'Shared via ', el('a', { href: '#/' }, 'Minerva'), '. The data lives in the URL — no server is involved.'
+    ));
     return view;
   }
 
@@ -3025,6 +3325,10 @@
         view = viewPublic(hash.replace(/^#\/p\//, ''));
       } else if (hash === '#/today') {
         view = await viewToday(); active = '#/today';
+      } else if (hash === '#/schedule') {
+        view = await viewSchedule(); active = '#/schedule';
+      } else if ((sectionMatch = hash.match(/^#\/avail\/(.+)$/))) {
+        view = viewAvailability(sectionMatch[1]); active = '';
       } else if ((sectionMatch = hash.match(/^#\/capture\/(.+)$/))) {
         // Bookmarklet entry point — decode payload and open quick-capture.
         var payload = {};
@@ -3205,6 +3509,7 @@
     var h = location.hash || '#/';
     if (h === '#/' || h === '' || h === '#') return '#/';
     if (h === '#/today') return '#/today';
+    if (h === '#/schedule') return '#/schedule';
     if (/^#\/s\//.test(h)) return h;
     if (/^#\/share/.test(h)) return '#/share';
     if (h === '#/settings') return '#/settings';
