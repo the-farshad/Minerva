@@ -886,6 +886,29 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 .tree-due { font-variant-numeric: tabular-nums; flex: 0 0 auto; }
 .tree-count { flex: 0 0 auto; }
 
+.tree-add-child {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  margin-left: 0.4rem;
+  opacity: 0;
+  transition: opacity .12s, color .12s, border-color .12s, background .12s;
+}
+.tree-row:hover .tree-add-child,
+.tree-add-child:focus-visible { opacity: 1; }
+.tree-add-child:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
 /* --- calendar view ----------------------------------------- */
 
 .view-section-head-right {
