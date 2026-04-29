@@ -164,6 +164,17 @@
       defaultSort: '_updated:desc'
     },
     {
+      slug: 'events',
+      title: 'Events',
+      icon: 'calendar',
+      description: 'Calendar-style events with start + end datetimes. The Schedule view (Today → Schedule) reads these to compute free time and shareable availability.',
+      schema: {
+        headers: ['id','title','start','end','location','notes','_updated'],
+        types:   ['text','text','datetime','datetime','text','markdown','datetime']
+      },
+      defaultSort: 'start'
+    },
+    {
       slug: 'proposals',
       title: 'Proposals',
       icon: 'file-pen-line',
