@@ -1844,9 +1844,40 @@
       }
     });
 
+    var pageUrl = location.origin + location.pathname + location.hash;
     view.appendChild(el('div', { class: 'form-actions' },
       el('label', { class: 'small' }, 'Add response: ', addInput),
-      el('a', { class: 'btn btn-ghost', href: '#/meet/' + pollToken, target: '_blank', rel: 'noopener' }, 'Open participant view ↗')
+      el('a', { class: 'btn btn-ghost', href: '#/meet/' + pollToken, target: '_blank', rel: 'noopener' }, 'Open participant view ↗'),
+      el('button', { class: 'btn btn-ghost', type: 'button',
+        onclick: function () {
+          if (navigator.clipboard) navigator.clipboard.writeText(pageUrl);
+          flash(view, 'Aggregate URL copied — paste it into your bookmarks bar.');
+        } }, 'Copy this URL'),
+      el('button', { class: 'btn btn-ghost', type: 'button',
+        onclick: async function () {
+          try {
+            var meta = await M.db.getMeta('notes');
+            if (!meta || !meta.headers) {
+              flash(view, 'Sync first — notes schema not cached.', 'error');
+              return;
+            }
+            var row = await addRow('notes', meta.headers);
+            if (meta.headers.indexOf('title') >= 0) row.title = '🤝 ' + (poll.t || 'meeting') + ' (aggregate)';
+            if (meta.headers.indexOf('body') >= 0) {
+              row.body = '**Aggregate URL:** ' + pageUrl + '\n\n' +
+                '**Participant URL:** ' + location.origin + location.pathname + '#/meet/' + pollToken + '\n\n' +
+                'Responses so far: ' + responses.map(function (r) { return r.name; }).join(', ');
+            }
+            if (meta.headers.indexOf('tags') >= 0) row.tags = 'meet';
+            if (meta.headers.indexOf('created') >= 0) row.created = new Date().toISOString();
+            row._dirty = 1;
+            await M.db.upsertRow('notes', row);
+            schedulePush();
+            flash(view, 'Saved to notes.');
+          } catch (err) {
+            flash(view, 'Save failed: ' + (err && err.message ? err.message : err), 'error');
+          }
+        } }, 'Save to notes')
     ));
 
     view.appendChild(el('p', { class: 'small muted' },
