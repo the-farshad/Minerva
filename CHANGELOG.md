@@ -4,6 +4,12 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.14 — Quick-add, nav badges, bulk operations
+
+- **Quick-add task** in the Today view: a single text input at the top creates a task with `due=today` and `status=todo` on Enter.
+- **Nav count badges** on the Today and Tasks links: due-or-overdue tasks + habits-not-done-today on Today, all non-done tasks on Tasks. Updates on every renderNav and after every push.
+- **Bulk operations** in section list views: per-row checkbox + select-all in the header. When selection is non-empty, a sticky pill bar appears with **Mark done**, **Delete**, **Clear**. All bulk mutations go through the existing single-row paths so undo works one row at a time, and the recurrence-spawn hook fires per-row on bulk Mark done.
+
 ## v0.13 — Undo (Cmd/Ctrl+Z)
 
 - Mutating operations (cell edits, adds, deletes, status toggles) push to a `localStorage` undo stack capped at 50 entries. **`⌘/Ctrl + Z`** pops the last and applies its inverse: edits restore the previous value, adds become deletes, deletes restore from a snapshot of the row taken at delete time. Re-renders the current view and queues the inverse for push back to Sheets.
