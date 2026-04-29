@@ -1536,10 +1536,97 @@
     var tgPanel = el('div', { class: 'tg-panel' });
     var icalPanel = el('div', { class: 'tg-panel' });
     var presetsPanel = el('div', { class: 'tg-panel' });
+    var aiPanel = el('div', { class: 'tg-panel' });
     paintNotify();
     paintIcal();
     paintPresets();
+    paintAi();
     paintTg();
+
+    function paintAi() {
+      var c = M.ai.readCfg();
+      var providers = [
+        { v: 'anthropic', label: 'Anthropic (Claude)' },
+        { v: 'openai',    label: 'OpenAI' },
+        { v: 'ollama',    label: 'Ollama (local)' },
+        { v: 'byo',       label: 'BYO endpoint (OpenAI-compatible)' }
+      ];
+
+      var aiForm = el('form', { class: 'form', onsubmit: function (e) {
+        e.preventDefault();
+        var f = new FormData(aiForm);
+        M.ai.writeCfg({
+          provider: String(f.get('aiProvider') || ''),
+          apiKey:   String(f.get('aiApiKey') || '').trim(),
+          endpoint: String(f.get('aiEndpoint') || '').trim(),
+          model:    String(f.get('aiModel') || '').trim()
+        });
+        paintAi();
+        flash(aiPanel, 'AI settings saved.');
+      } },
+        field('Provider',
+          (function () {
+            var sel = document.createElement('select');
+            sel.name = 'aiProvider';
+            providers.forEach(function (p) {
+              var o = document.createElement('option');
+              o.value = p.v;
+              o.textContent = p.label;
+              if ((c.provider || 'anthropic') === p.v) o.selected = true;
+              sel.appendChild(o);
+            });
+            return sel;
+          })(),
+          'Anthropic uses the browser-direct beta header. Ollama runs against a local server (set OLLAMA_ORIGINS=* on it). BYO points at any OpenAI-compatible endpoint (LM Studio, vLLM, OpenRouter…).'
+        ),
+        field('API key',
+          el('input', { name: 'aiApiKey', type: 'password',
+            value: c.apiKey || '',
+            placeholder: 'leave blank for Ollama on localhost',
+            autocomplete: 'off', spellcheck: 'false' }),
+          'Stored in your browser only. Sent only to your configured endpoint.'
+        ),
+        field('Endpoint (optional)',
+          el('input', { name: 'aiEndpoint', type: 'text',
+            value: c.endpoint || '',
+            placeholder: M.ai.defaultEndpoint(c.provider || 'anthropic'),
+            autocomplete: 'off', spellcheck: 'false' }),
+          'Leave blank for the provider\'s default.'
+        ),
+        field('Model (optional)',
+          el('input', { name: 'aiModel', type: 'text',
+            value: c.model || '',
+            placeholder: M.ai.defaultModel(c.provider || 'anthropic'),
+            autocomplete: 'off', spellcheck: 'false' }),
+          ''
+        ),
+        el('div', { class: 'form-actions' },
+          el('button', { class: 'btn', type: 'submit' }, 'Save'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            disabled: !(c.provider && (c.apiKey || c.provider === 'ollama')),
+            onclick: function () { showAI('Say hello in one sentence.'); }
+          }, 'Test'),
+          (c.provider || c.apiKey)
+            ? el('button', { class: 'btn btn-ghost', type: 'button',
+                onclick: function () {
+                  if (!confirm('Clear AI settings?')) return;
+                  M.ai.clearCfg();
+                  paintAi();
+                } }, 'Clear AI settings')
+            : null
+        )
+      );
+
+      aiPanel.replaceChildren(
+        el('h3', null, 'AI assistant'),
+        el('p', { class: 'small muted' },
+          'BYO API key. Open the assistant any time with ',
+          el('kbd', null, '⌘/Ctrl + J'),
+          '. Your prompts (and any data context Minerva attaches) go directly from your browser to the configured endpoint — Minerva never proxies AI traffic.'
+        ),
+        aiForm
+      );
+    }
 
     function paintPresets() {
       var c = readConfig();
@@ -1863,7 +1950,8 @@
       presetsPanel,
       notifyPanel,
       icalPanel,
-      tgPanel
+      tgPanel,
+      aiPanel
     );
   }
 
@@ -2226,6 +2314,183 @@
     return '';
   }
 
+  // ---- AI assistant overlay (`Cmd/Ctrl+J`) ----
+
+  var AI_PROMPTS = [
+    {
+      label: 'Summarize my week',
+      build: async function () {
+        var ctx = await M.ai.buildContext({ includeNotes: true });
+        return [
+          { role: 'system', content: 'You are a concise planning assistant. Use the user\'s data below to write a short markdown summary of their last week — what shipped, what slipped, themes. Keep it tight: 5–10 bullet points.\n\n' + ctx },
+          { role: 'user', content: 'Summarize my week.' }
+        ];
+      }
+    },
+    {
+      label: 'Suggest a next action',
+      build: async function () {
+        var ctx = await M.ai.buildContext();
+        return [
+          { role: 'system', content: 'You are a focused planning assistant. Given the user\'s tasks/goals/projects below, propose ONE next concrete action they should take right now — not a list, just the single most-leveraged thing — with a one-sentence rationale.\n\n' + ctx },
+          { role: 'user', content: 'What should I do next?' }
+        ];
+      }
+    },
+    {
+      label: 'Decompose a goal',
+      build: async function () {
+        var ctx = await M.ai.buildContext();
+        return [
+          { role: 'system', content: 'You are a planning assistant. The user wants help breaking down a goal. Use their existing context below for awareness, but ask which specific goal they mean if it isn\'t obvious, then propose 5–8 concrete sub-tasks as a markdown checklist.\n\n' + ctx },
+          { role: 'user', content: 'Help me decompose a goal into next-actionable steps.' }
+        ];
+      }
+    },
+    {
+      label: 'Find duplicates',
+      build: async function () {
+        var ctx = await M.ai.buildContext({ includeNotes: true });
+        return [
+          { role: 'system', content: 'You are a librarian for the user\'s planning data. Scan the rows below and report any likely duplicates or overlaps — same intent under different wording, near-identical titles, etc. Output as a short markdown list grouped by section.\n\n' + ctx },
+          { role: 'user', content: 'Find likely duplicates across my data.' }
+        ];
+      }
+    },
+    {
+      label: 'Cluster my notes',
+      build: async function () {
+        var ctx = await M.ai.buildContext({ includeNotes: true });
+        return [
+          { role: 'system', content: 'You are a librarian. Cluster the user\'s notes into 3–6 themes; for each theme, list the matching note titles as a sublist. Markdown output.\n\n' + ctx },
+          { role: 'user', content: 'Cluster my notes into themes.' }
+        ];
+      }
+    }
+  ];
+
+  async function showAI(seedPrompt) {
+    if (document.querySelector('.ai-overlay')) return;
+    var aiCfg = M.ai.readCfg();
+    var hasProvider = !!(aiCfg.provider && (aiCfg.apiKey || aiCfg.provider === 'ollama'));
+
+    var overlay = el('div', { class: 'modal-overlay ai-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+
+    var input = document.createElement('textarea');
+    input.className = 'editor';
+    input.rows = 3;
+    input.placeholder = 'Ask the assistant… (⌘/Ctrl+Enter to send)';
+    if (seedPrompt) input.value = seedPrompt;
+
+    var output = el('div', { class: 'ai-output' });
+    var statusLine = el('p', { class: 'small muted' });
+
+    function paintStatus() {
+      var c = M.ai.readCfg();
+      if (!c.provider) {
+        statusLine.replaceChildren(
+          el('span', null, 'No provider configured. ',
+            el('a', { href: '#/settings', onclick: function () { overlay.remove(); } }, 'Open Settings →')
+          )
+        );
+      } else {
+        var modelLabel = c.model || M.ai.defaultModel(c.provider);
+        statusLine.replaceChildren(
+          el('span', null, 'Provider: ',
+            el('strong', null, c.provider),
+            ' · model: ',
+            el('em', null, modelLabel),
+            ' · ',
+            el('a', { href: '#/settings', onclick: function () { overlay.remove(); } }, 'change')
+          )
+        );
+      }
+    }
+    paintStatus();
+
+    var sending = false;
+    async function send(messages) {
+      if (sending) return;
+      sending = true;
+      output.replaceChildren(el('p', { class: 'muted small' }, 'Thinking…'));
+      try {
+        var resp = await M.ai.ask(messages, { maxTokens: 2048 });
+        output.replaceChildren(M.render.renderCell(resp.text || '(empty response)', 'markdown'));
+      } catch (err) {
+        output.replaceChildren(
+          el('p', { class: 'error' }, 'Request failed: ' + (err && err.message ? err.message : String(err))),
+          el('p', { class: 'small muted' }, 'Common causes: missing/invalid API key, CORS blocked (try Ollama or a BYO proxy), wrong model name.')
+        );
+      } finally {
+        sending = false;
+      }
+    }
+
+    function freeFormSend() {
+      var text = input.value.trim();
+      if (!text) return;
+      var msgs = [{
+        role: 'system',
+        content: 'You are a concise planning assistant for the Minerva personal-planning app. Reply in markdown when listing or structuring information.'
+      }, {
+        role: 'user',
+        content: text
+      }];
+      send(msgs);
+    }
+
+    var promptButtons = AI_PROMPTS.map(function (p) {
+      return el('button', { class: 'btn btn-ghost ai-prompt-btn', type: 'button',
+        onclick: async function () {
+          if (!hasProvider) {
+            output.replaceChildren(el('p', { class: 'error' },
+              'Configure a provider first in Settings.'));
+            return;
+          }
+          input.value = p.label;
+          var msgs = await p.build();
+          send(msgs);
+        }
+      }, p.label);
+    });
+
+    var panel = el('div', { class: 'modal-panel ai-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      el('div', { class: 'ai-head' },
+        el('h3', null, 'AI assistant'),
+        el('button', { class: 'icon-btn', type: 'button', title: 'Close',
+          onclick: function () { overlay.remove(); } }, '×')
+      ),
+      statusLine,
+      el('div', { class: 'ai-prompts' }, promptButtons),
+      input,
+      el('div', { class: 'form-actions' },
+        el('button', { class: 'btn', type: 'button',
+          onclick: freeFormSend,
+          disabled: !hasProvider }, 'Send'),
+        el('span', { class: 'small muted' }, '⌘/Ctrl+Enter')
+      ),
+      output
+    );
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        freeFormSend();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        overlay.remove();
+      }
+    });
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    setTimeout(function () { input.focus(); }, 30);
+  }
+
   // ---- quick capture overlay (`/`) ----
 
   function pickInboxSection() {
@@ -2479,6 +2744,7 @@
       ['1 – 9', 'Open the Nth section'],
       ['/', 'Quick capture'],
       ['⌘/Ctrl + K', 'Search across everything'],
+      ['⌘/Ctrl + J', 'AI assistant'],
       ['q', 'Quick share'],
       ['s', 'Settings'],
       ['?', 'This panel'],
@@ -2519,6 +2785,12 @@
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault();
       showSearch();
+      return;
+    }
+    // Cmd/Ctrl+J opens AI assistant.
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'j' || e.key === 'J')) {
+      e.preventDefault();
+      showAI();
       return;
     }
     if (e.target.matches('input, textarea, select, [contenteditable]')) return;
