@@ -21,11 +21,11 @@
       headers: ['slug','title','icon','tab','order','enabled','defaultSort','defaultFilter'],
       types:   ['text','text','text','text','number','check','text','text'],
       rows: [
-        ['goals',    'Goals',    '🎯', 'goals',    1, 'TRUE', 'due',         ''],
-        ['tasks',    'Tasks',    '✓',  'tasks',    2, 'TRUE', 'due',         'status:!=done'],
-        ['projects', 'Projects', '📁', 'projects', 3, 'TRUE', 'name',        ''],
-        ['notes',    'Notes',    '📝', 'notes',    4, 'TRUE', 'created:desc',''],
-        ['habits',   'Habits',   '⚡', 'habits',   5, 'TRUE', 'name',        '']
+        ['goals',    'Goals',    'target',          'goals',    1, 'TRUE', 'due',         ''],
+        ['tasks',    'Tasks',    'check-square',    'tasks',    2, 'TRUE', 'due',         'status:!=done'],
+        ['projects', 'Projects', 'folder',          'projects', 3, 'TRUE', 'name',        ''],
+        ['notes',    'Notes',    'file-text',       'notes',    4, 'TRUE', 'created:desc',''],
+        ['habits',   'Habits',   'zap',             'habits',   5, 'TRUE', 'name',        '']
       ]
     },
     _prefs: {

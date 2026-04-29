@@ -146,12 +146,18 @@
     }, 1000);
   }
 
+  function lucide(name) {
+    var i = document.createElement('i');
+    i.setAttribute('data-lucide', name);
+    return i;
+  }
+
   function paint() {
     if (!widget) return;
     if (state.phase === 'idle') {
       widget.classList.remove('pomo-running', 'pomo-break', 'pomo-paused');
       widget.replaceChildren(
-        button('🍅 Pomodoro', 'Start a 25-minute focus session', function () {
+        startButton('Pomodoro', 'Start a 25-minute focus session', function () {
           var note = (prompt('What are you focusing on? (optional)') || '').trim();
           start({ note: note });
         })
@@ -160,40 +166,56 @@
       widget.classList.add('pomo-paused');
       widget.classList.remove('pomo-running', 'pomo-break');
       widget.replaceChildren(
-        labelEl('paused', fmt(state.remainingAtPause || 0)),
-        button('▶', 'Resume', resume),
-        button('×', 'Stop', stop)
+        labelEl('timer', 'paused', fmt(state.remainingAtPause || 0)),
+        iconButton('play', 'Resume', resume),
+        iconButton('x', 'Stop', stop)
       );
     } else if (state.phase === 'focus' || state.phase === 'break') {
       widget.classList.toggle('pomo-running', state.phase === 'focus');
       widget.classList.toggle('pomo-break', state.phase === 'break');
       widget.classList.remove('pomo-paused');
-      var prefix = state.phase === 'focus' ? '🍅' : '☕';
+      var iconName = state.phase === 'focus' ? 'timer' : 'coffee';
       var label = state.phase === 'focus' ? (state.note || 'focus') : 'break';
       widget.replaceChildren(
-        labelEl(prefix + ' ' + label, fmt(remainingMs())),
-        button('⏸', 'Pause', pause),
-        button('×', 'Stop', stop)
+        labelEl(iconName, label, fmt(remainingMs())),
+        iconButton('pause', 'Pause', pause),
+        iconButton('x', 'Stop', stop)
       );
+    }
+    if (window.Minerva && Minerva.render && Minerva.render.refreshIcons) {
+      Minerva.render.refreshIcons();
     }
   }
 
-  function labelEl(prefix, time) {
-    var s = document.createElement('span');
-    s.className = 'pomo-label';
-    s.textContent = prefix + '  ' + time;
-    return s;
-  }
-
-  function button(text, title, onclick) {
+  function startButton(text, title, onclick) {
     var b = document.createElement('button');
-    b.className = 'pomo-btn';
     b.type = 'button';
-    b.textContent = text;
+    b.className = 'pomo-btn pomo-start';
     b.title = title;
+    b.appendChild(lucide('timer'));
+    b.appendChild(document.createTextNode(' ' + text));
     b.addEventListener('click', onclick);
     return b;
   }
+
+  function iconButton(name, title, onclick) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pomo-btn';
+    b.title = title;
+    b.appendChild(lucide(name));
+    b.addEventListener('click', onclick);
+    return b;
+  }
+
+  function labelEl(iconName, prefix, time) {
+    var s = document.createElement('span');
+    s.className = 'pomo-label';
+    s.appendChild(lucide(iconName));
+    s.appendChild(document.createTextNode(' ' + prefix + '  ' + time));
+    return s;
+  }
+
 
   // ---- actions -----------------------------------------------
 

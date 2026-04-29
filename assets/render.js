@@ -362,6 +362,38 @@
     });
   }
 
+  // Lucide icon helper. Accepts an icon name from the Lucide set
+  // (e.g., 'target', 'check-square', 'sun'). If the input doesn't look
+  // like a Lucide identifier (alphanumeric + hyphens) we fall back to a
+  // text node — this is what lets _config.icon fields hold either a
+  // Lucide name or a legacy emoji and have both render correctly.
+  var LUCIDE_NAME = /^[a-z][a-z0-9-]*$/i;
+  function renderIcon(name, opts) {
+    opts = opts || {};
+    var s = String(name == null ? '' : name).trim();
+    if (!s) return document.createTextNode('');
+    if (!LUCIDE_NAME.test(s)) {
+      // Treat as text/emoji: render inside a span for predictable spacing.
+      var t = document.createElement('span');
+      t.className = 'icon icon-emoji';
+      t.textContent = s;
+      return t;
+    }
+    var i = document.createElement('i');
+    i.className = 'icon icon-lucide';
+    i.setAttribute('data-lucide', s.toLowerCase());
+    if (opts.size) i.setAttribute('data-lucide-size', String(opts.size));
+    return i;
+  }
+
+  // Call after a batch of icon insertions so Lucide swaps the <i>
+  // placeholders for inline SVGs. Cheap and idempotent.
+  function refreshIcons() {
+    if (window.lucide && typeof window.lucide.createIcons === 'function') {
+      try { window.lucide.createIcons(); } catch (e) { /* ignore */ }
+    }
+  }
+
   window.Minerva = window.Minerva || {};
   window.Minerva.render = {
     parseType: parseType,
@@ -369,6 +401,8 @@
     renderCell: renderCell,
     applySort: applySort,
     applyFilter: applyFilter,
-    relativeTime: relativeTime
+    relativeTime: relativeTime,
+    icon: renderIcon,
+    refreshIcons: refreshIcons
   };
 })();

@@ -129,6 +129,12 @@
 /* --- reset --------------------------------------------------- */
 
 * { box-sizing: border-box; }
+
+/* Force the HTML 'hidden' attribute to override class-level display rules.
+   Without this, .offline-indicator and .push-indicator (both with
+   display: flex) silently ignore element.hidden = true. */
+[hidden] { display: none !important; }
+
 html { scroll-behavior: smooth; }
 body {
   margin: 0;
@@ -2215,6 +2221,38 @@ table.kv tbody tr:hover { background: var(--surface); }
 }
 .preset-body p { margin: 0; }
 .preset-body .btn { align-self: flex-start; padding: 0.25rem 0.7rem; font-size: 0.82rem; }
+
+/* --- icons (Lucide + emoji fallbacks) --------------------- */
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  line-height: 1;
+}
+.icon-lucide svg,
+i[data-lucide] svg {
+  width: 1em;
+  height: 1em;
+  stroke-width: 1.75;
+  vertical-align: -0.125em;
+}
+.icon-emoji {
+  font-style: normal;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+}
+
+/* When an icon is the leading char of a button/label it pairs with text. */
+.btn .icon,
+.nav-link .icon,
+.section-card-icon .icon {
+  margin-right: 0.4em;
+}
+.btn:not(:has(*:nth-child(2))) .icon,
+.icon-only > .icon {
+  margin-right: 0;
+}
 
 /* --- pomodoro widget (bottom-left, above offline pill) ----- */
 
