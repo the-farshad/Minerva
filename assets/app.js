@@ -359,11 +359,85 @@
     var row = await M.db.getRow(tab, rowId);
     if (!row) return;
     if (row[columnName] === newValue) return;
+    var prevStatus = row.status;
     row[columnName] = newValue;
     row._updated = new Date().toISOString();
     row._dirty = 1;
     await M.db.upsertRow(tab, row);
     schedulePush();
+
+    // Recurring tasks: status -> done transition spawns the next occurrence
+    // for any row that has a `recurrence` column populated. The recurrence
+    // is parsed from a small text vocab (daily, weekly, every N days,
+    // every monday, etc.); see computeNextDue.
+    if (columnName === 'status'
+        && String(newValue).toLowerCase() === 'done'
+        && String(prevStatus || '').toLowerCase() !== 'done'
+        && row.recurrence) {
+      await spawnRecurrence(tab, row).catch(function (e) {
+        console.warn('[Minerva recurrence]', e);
+      });
+    }
+  }
+
+  // ---- recurring tasks ----------------------------------------------
+
+  function computeNextDue(currentDue, recurrence) {
+    if (!currentDue) return null;
+    // Anchor on the date portion; supports both YYYY-MM-DD and full ISO.
+    var iso = String(currentDue).slice(0, 10);
+    var parts = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!parts) return null;
+    var d = new Date(Date.UTC(+parts[1], +parts[2] - 1, +parts[3]));
+    if (isNaN(d.getTime())) return null;
+
+    var rec = String(recurrence || '').toLowerCase().trim();
+    if (rec === 'daily')        d.setUTCDate(d.getUTCDate() + 1);
+    else if (rec === 'weekly')  d.setUTCDate(d.getUTCDate() + 7);
+    else if (rec === 'biweekly' || rec === 'fortnightly') d.setUTCDate(d.getUTCDate() + 14);
+    else if (rec === 'monthly') d.setUTCMonth(d.getUTCMonth() + 1);
+    else if (rec === 'quarterly') d.setUTCMonth(d.getUTCMonth() + 3);
+    else if (rec === 'yearly' || rec === 'annual' || rec === 'annually') d.setUTCFullYear(d.getUTCFullYear() + 1);
+    else {
+      var nm = rec.match(/^every\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)$/);
+      if (nm) {
+        var n = parseInt(nm[1], 10);
+        var unit = nm[2];
+        if (unit.indexOf('day') === 0)        d.setUTCDate(d.getUTCDate() + n);
+        else if (unit.indexOf('week') === 0)  d.setUTCDate(d.getUTCDate() + 7 * n);
+        else if (unit.indexOf('month') === 0) d.setUTCMonth(d.getUTCMonth() + n);
+        else if (unit.indexOf('year') === 0)  d.setUTCFullYear(d.getUTCFullYear() + n);
+        else return null;
+      } else {
+        var dnm = rec.match(/^every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)$/);
+        if (!dnm) return null;
+        var days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+        var target = days.indexOf(dnm[1]);
+        var current = d.getUTCDay();
+        var delta = ((target - current) + 7) % 7 || 7;
+        d.setUTCDate(d.getUTCDate() + delta);
+      }
+    }
+    return d.toISOString().slice(0, 10);
+  }
+
+  async function spawnRecurrence(tab, doneRow) {
+    var nextDue = computeNextDue(doneRow.due, doneRow.recurrence);
+    if (!nextDue) return;
+    var meta = await M.db.getMeta(tab);
+    if (!meta || !meta.headers) return;
+    var newRow = await addRow(tab, meta.headers);
+    meta.headers.forEach(function (h) {
+      if (h === 'id' || h === '_updated') return;
+      if (h.charAt(0) === '_') return;
+      if (h === 'status') newRow[h] = 'todo';
+      else if (h === 'due') newRow[h] = nextDue;
+      else newRow[h] = doneRow[h] != null ? doneRow[h] : '';
+    });
+    newRow._dirty = 1;
+    await M.db.upsertRow(tab, newRow);
+    schedulePush();
+    flash(document.body, 'Spawned next: ' + (newRow.title || 'recurring task') + ' (due ' + nextDue + ')');
   }
 
   async function addRow(tab, headers) {
@@ -619,11 +693,15 @@
   async function markTaskDone(rowId) {
     var row = await M.db.getRow('tasks', rowId);
     if (!row) return;
+    var wasDone = String(row.status || '').toLowerCase() === 'done';
     row.status = 'done';
     row._updated = new Date().toISOString();
     row._dirty = 1;
     await M.db.upsertRow('tasks', row);
     schedulePush();
+    if (!wasDone && row.recurrence) {
+      try { await spawnRecurrence('tasks', row); } catch (e) { console.warn(e); }
+    }
   }
 
   async function viewToday() {
