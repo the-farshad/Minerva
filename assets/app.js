@@ -1612,28 +1612,68 @@
         var resp = { v: 1, name: name, yes: yes };
         var rtoken = M.meet.encodeResponse(resp);
         var aggregateUrl = location.origin + location.pathname + '#/meet/' + token + '/' + rtoken;
-        var subject = encodeURIComponent('Re: ' + (poll.t || 'meeting availability'));
-        var bodyText = encodeURIComponent(
+        var subject = 'Re: ' + (poll.t || 'meeting availability');
+        var bodyText =
           name + ' marked ' + yes.length + ' available slot' + (yes.length === 1 ? '' : 's') +
           ' for "' + (poll.t || 'meeting') + '".\n\n' +
-          'Open this link to add my response to your aggregate view:\n' + aggregateUrl + '\n'
-        );
-        var mailto = poll.o ? 'mailto:' + encodeURIComponent(poll.o) + '?subject=' + subject + '&body=' + bodyText
-          : 'mailto:?subject=' + subject + '&body=' + bodyText;
+          'Open this link to add my response to the aggregate view:\n' + aggregateUrl + '\n';
+
+        var actions = [];
+        // Native share — opens iOS/Android share sheet, also works on
+        // Chromium desktop (Windows / ChromeOS) and Safari on macOS.
+        if (navigator.share) {
+          var shareBtn = el('button', { class: 'btn', type: 'button',
+            onclick: function () {
+              navigator.share({
+                title: poll.t || 'Meeting availability',
+                text: bodyText,
+                url: aggregateUrl
+              }).catch(function () { /* user cancelled */ });
+            } });
+          shareBtn.appendChild(M.render.icon('share-2'));
+          shareBtn.appendChild(document.createTextNode(' Share'));
+          actions.push(shareBtn);
+        }
+
+        var mailto = poll.o
+          ? 'mailto:' + encodeURIComponent(poll.o) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(bodyText)
+          : 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(bodyText);
+        var emailA = el('a', { class: 'btn btn-ghost', href: mailto });
+        emailA.appendChild(M.render.icon('mail'));
+        emailA.appendChild(document.createTextNode(' Email'));
+        actions.push(emailA);
+
+        // Telegram share-link via tg://msg_url; falls back to t.me URL.
+        var tgUrl = 'https://t.me/share/url?url=' + encodeURIComponent(aggregateUrl) + '&text=' + encodeURIComponent(bodyText);
+        var tgA = el('a', { class: 'btn btn-ghost', href: tgUrl, target: '_blank', rel: 'noopener' });
+        tgA.appendChild(M.render.icon('send'));
+        tgA.appendChild(document.createTextNode(' Telegram'));
+        actions.push(tgA);
+
+        // WhatsApp share — wa.me/?text=...
+        var waUrl = 'https://wa.me/?text=' + encodeURIComponent(bodyText + '\n' + aggregateUrl);
+        var waA = el('a', { class: 'btn btn-ghost', href: waUrl, target: '_blank', rel: 'noopener' });
+        waA.appendChild(M.render.icon('message-circle'));
+        waA.appendChild(document.createTextNode(' WhatsApp'));
+        actions.push(waA);
+
         var urlInput = el('input', { type: 'text', readonly: true, class: 'url', value: aggregateUrl });
+        var copyBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: function () {
+            urlInput.select();
+            if (navigator.clipboard) navigator.clipboard.writeText(aggregateUrl);
+            flash(output, 'URL copied');
+          } });
+        copyBtn.appendChild(M.render.icon('copy'));
+        copyBtn.appendChild(document.createTextNode(' Copy URL'));
+        actions.push(copyBtn);
+
         output.replaceChildren(
-          el('p', { class: 'small' }, 'Send this URL back to the organizer:'),
-          el('div', { class: 'link-row' },
-            urlInput,
-            el('button', { class: 'btn', type: 'button',
-              onclick: function () {
-                urlInput.select();
-                if (navigator.clipboard) navigator.clipboard.writeText(aggregateUrl);
-                flash(output, 'URL copied');
-              } }, 'Copy'),
-            el('a', { class: 'btn', href: mailto }, 'Email it ↗')
-          )
+          el('p', { class: 'small' }, 'Send your response back to the organizer:'),
+          el('div', { class: 'meet-share-row' }, actions),
+          el('div', { class: 'link-row' }, urlInput)
         );
+        M.render.refreshIcons();
       }
     }, 'Generate response');
 

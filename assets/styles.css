@@ -934,6 +934,13 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 }
 
 .meet-output { margin-top: 1rem; }
+.meet-share-row {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.4rem 0 0.6rem;
+}
+.meet-share-row .btn { display: inline-flex; align-items: center; gap: 0.35em; }
 .meet-submit {
   display: grid;
   grid-template-columns: 1fr auto;
