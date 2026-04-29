@@ -92,6 +92,10 @@
   // _config cache — refreshed after every sync. Drives nav + home cards.
   var configCache = null;
 
+  // Active section view's keyboard context — set by viewSection while it's
+  // mounted, cleared when the route changes away.
+  var sectionCtx = null;
+
   async function refreshConfig() {
     try {
       var rows = await M.db.getAllRows('_config');
@@ -982,6 +986,78 @@
       writeViewMode(slug, 'list');
       await refresh();
     });
+
+    // Wire j/k/e/x/c row-navigation when this view is the active route.
+    var selectedIndex = -1;
+    function rowsInDom() { return bodyHost.querySelectorAll('tbody tr[data-rowid]'); }
+    function setSelection(idx, scroll) {
+      var trs = rowsInDom();
+      if (!trs.length) { selectedIndex = -1; return; }
+      var prev = bodyHost.querySelector('tr.is-selected');
+      if (prev) prev.classList.remove('is-selected');
+      selectedIndex = Math.max(0, Math.min(trs.length - 1, idx));
+      trs[selectedIndex].classList.add('is-selected');
+      if (scroll !== false) trs[selectedIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    sectionCtx = {
+      slug: slug,
+      tab: sec.tab,
+      mode: function () { return mode; },
+      refresh: refresh,
+      moveSelection: function (delta) {
+        if (mode !== 'list') return;
+        var trs = rowsInDom();
+        if (!trs.length) return;
+        if (selectedIndex < 0) setSelection(delta > 0 ? 0 : trs.length - 1);
+        else setSelection(selectedIndex + delta);
+      },
+      editSelected: function () {
+        if (mode !== 'list' || selectedIndex < 0) return;
+        var tr = rowsInDom()[selectedIndex];
+        if (!tr) return;
+        var firstTd = tr.querySelector('td[data-col]');
+        if (firstTd) firstTd.click();
+      },
+      deleteSelected: async function () {
+        if (mode !== 'list' || selectedIndex < 0) return;
+        var tr = rowsInDom()[selectedIndex];
+        if (!tr) return;
+        var rowId = tr.dataset.rowid;
+        if (!rowId) return;
+        if (!confirm('Delete this row?')) return;
+        await deleteRow(sec.tab, rowId);
+        await refresh();
+        // try to keep cursor near the deleted row
+        var newTrs = rowsInDom();
+        if (newTrs.length) setSelection(Math.min(selectedIndex, newTrs.length - 1), false);
+      },
+      toggleDoneSelected: async function () {
+        if (mode !== 'list' || selectedIndex < 0) return;
+        var tr = rowsInDom()[selectedIndex];
+        if (!tr) return;
+        var rowId = tr.dataset.rowid;
+        if (!rowId) return;
+        var row = await M.db.getRow(sec.tab, rowId);
+        if (!row) return;
+        var headers = (await M.db.getMeta(sec.tab)).headers || [];
+        if (headers.indexOf('status') < 0) {
+          flash(view, 'No status column on this section.', 'error');
+          return;
+        }
+        var prevStatus = row.status;
+        var nowDone = String(row.status || '').toLowerCase() !== 'done';
+        row.status = nowDone ? 'done' : 'todo';
+        row._updated = new Date().toISOString();
+        row._dirty = 1;
+        await M.db.upsertRow(sec.tab, row);
+        schedulePush();
+        if (nowDone && row.recurrence) {
+          try { await spawnRecurrence(sec.tab, row); } catch (e) { /* ignore */ }
+        }
+        await refresh();
+      }
+    };
 
     await refresh();
     return view;
@@ -2454,6 +2530,8 @@
     var hash = location.hash || '#/';
     var view, active = '';
     var sectionMatch;
+    // Clear keyboard context every navigation; viewSection re-installs.
+    sectionCtx = null;
 
     try {
       if (hash === '#/' || hash === '' || hash === '#') {
@@ -3062,6 +3140,10 @@
       ['⌘/Ctrl + J', 'AI assistant'],
       ['q', 'Quick share'],
       ['s', 'Settings'],
+      ['j / k', 'Move selection in a section list'],
+      ['e', 'Edit selected row'],
+      ['c', 'Toggle status (done ↔ todo)'],
+      ['x', 'Delete selected row'],
       ['?', 'This panel'],
       ['Esc', 'Close overlay / cancel edit'],
       ['Enter', 'Save current edit']
@@ -3117,6 +3199,15 @@
     if (e.key === 't') { location.hash = '#/today'; return; }
     if (e.key === 's') { location.hash = '#/settings'; return; }
     if (e.key === 'q') { location.hash = '#/share'; return; }
+
+    // Section-row navigation when a section view is active and in list mode.
+    if (sectionCtx) {
+      if (e.key === 'j') { e.preventDefault(); sectionCtx.moveSelection(1); return; }
+      if (e.key === 'k') { e.preventDefault(); sectionCtx.moveSelection(-1); return; }
+      if (e.key === 'e') { e.preventDefault(); sectionCtx.editSelected(); return; }
+      if (e.key === 'x') { e.preventDefault(); sectionCtx.deleteSelected(); return; }
+      if (e.key === 'c') { e.preventDefault(); sectionCtx.toggleDoneSelected(); return; }
+    }
 
     // 1–9 → Nth section.
     if (/^[1-9]$/.test(e.key)) {

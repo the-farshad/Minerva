@@ -748,6 +748,11 @@ table.rows th.th-sortable:focus-visible {
 }
 table.rows tbody tr:last-child td { border-bottom: 0; }
 table.rows tbody tr:hover { background: var(--surface-2); }
+table.rows tbody tr.is-selected {
+  background: var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+table.rows tbody tr.is-selected td:first-child { font-weight: 500; }
 table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display: block; }
 
 /* --- today view ------------------------------------------- */
