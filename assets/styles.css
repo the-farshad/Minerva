@@ -1541,6 +1541,14 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   max-width: none;
 }
 
+/* latex cell — inline math */
+.latex-cell {
+  display: inline-block;
+  font-size: 1em;
+}
+.latex-cell .katex { font-size: 1em; }
+.latex-cell .katex-display { margin: 0.25em 0; }
+
 /* progress bar */
 .pbar {
   display: inline-flex;
