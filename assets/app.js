@@ -1723,8 +1723,26 @@
     ));
 
     if (responses.length) {
-      view.appendChild(el('p', { class: 'small muted' },
-        responses.map(function (r) { return r.name; }).join(' · ')));
+      var namesEl = el('div', { class: 'meet-names' });
+      responses.forEach(function (resp, i) {
+        var chip = el('span', { class: 'meet-name-chip' });
+        chip.appendChild(document.createTextNode(resp.name));
+        chip.appendChild(el('span', { class: 'small muted' }, ' (' + (resp.yes || []).length + ')'));
+        var rm = el('button', {
+          class: 'meet-name-rm', type: 'button', title: 'Remove this response',
+          'aria-label': 'Remove ' + resp.name,
+          onclick: function () {
+            if (!confirm('Remove ' + resp.name + ' from this aggregate?')) return;
+            var current = responseTokens.slice();
+            current.splice(i, 1);
+            location.hash = '#/meet/' + pollToken + (current.length ? '/' + current.join(';') : '');
+          }
+        });
+        rm.appendChild(M.render.icon('x'));
+        chip.appendChild(rm);
+        namesEl.appendChild(chip);
+      });
+      view.appendChild(namesEl);
     }
 
     var grid = buildSlotGrid(poll, { heat: heat, readonly: true });
