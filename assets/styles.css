@@ -2017,13 +2017,71 @@ table.kv tbody tr:hover { background: var(--surface); }
 .preset-body p { margin: 0; }
 .preset-body .btn { align-self: flex-start; padding: 0.25rem 0.7rem; font-size: 0.82rem; }
 
+/* --- pomodoro widget (bottom-left, above offline pill) ----- */
+
+.pomo-widget {
+  position: fixed;
+  bottom: 4rem;
+  left: 1rem;
+  z-index: 850;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  box-shadow: var(--shadow);
+  font-variant-numeric: tabular-nums;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.pomo-widget.pomo-running {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+.pomo-widget.pomo-break {
+  background: var(--ok);
+  color: #fff;
+  border-color: var(--ok);
+}
+.pomo-widget.pomo-paused {
+  background: var(--surface-2);
+}
+.pomo-label { font-weight: 500; }
+.pomo-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.95rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s;
+}
+.pomo-btn:hover { background: rgba(255,255,255,0.18); }
+.pomo-widget:not(.pomo-running):not(.pomo-break) .pomo-btn:hover { background: var(--bg); }
+
+@media (max-width: 600px) {
+  .pomo-widget { bottom: 4rem; left: 0.6rem; font-size: 0.78rem; }
+}
+
 /* --- offline indicator (bottom-left pill) ------------------ */
 
 .offline-indicator {
   position: fixed;
   bottom: 1rem;
   left: 1rem;
-  z-index: 900;
+  z-index: 901;
   background: var(--error);
   color: #fff;
   border-radius: 999px;

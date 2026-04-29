@@ -3811,6 +3811,7 @@
       ['c', 'Toggle status (done ↔ todo)'],
       ['x', 'Delete selected row'],
       ['Double-click', 'Row detail (full markdown, all fields)'],
+      ['⌘/Ctrl + ⇧ + P', 'Pomodoro start / pause'],
       ['?', 'This panel'],
       ['Esc', 'Close overlay / cancel edit'],
       ['Enter', 'Save current edit']
@@ -3864,6 +3865,12 @@
         && !e.target.matches('input, textarea, [contenteditable]')) {
       e.preventDefault();
       undo();
+      return;
+    }
+    // Cmd/Ctrl+Shift+P toggles the pomodoro timer.
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+      e.preventDefault();
+      if (M.pomodoro) M.pomodoro.toggle();
       return;
     }
     if (e.target.matches('input, textarea, select, [contenteditable]')) return;
@@ -4003,6 +4010,9 @@
     ensurePushIndicator();
     ensureOfflineIndicator();
     paintOnlineState();
+    // Expose schedulePush so the pomodoro module can flush its log writes.
+    window.MinervaSchedulePush = schedulePush;
+    if (M.pomodoro) M.pomodoro.mount();
     window.addEventListener('online', function () {
       paintOnlineState();
       // a transition online → trigger any pending pushes
