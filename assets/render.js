@@ -79,6 +79,30 @@
     return div;
   }
 
+  function renderLatex(value) {
+    if (value == null || value === '') return document.createTextNode('');
+    var src = String(value);
+    var s = document.createElement('span');
+    s.className = 'latex-cell';
+    if (typeof katex !== 'undefined' && katex.render) {
+      try {
+        // Display math when the source contains a newline; inline otherwise.
+        var displayMode = /\n/.test(src);
+        katex.render(src, s, {
+          throwOnError: false,
+          displayMode: displayMode,
+          output: 'html'
+        });
+        return s;
+      } catch (e) {
+        // fall through to text fallback
+      }
+    }
+    s.textContent = truncate(src, 140);
+    s.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    return s;
+  }
+
   function slugify(v) {
     return String(v).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   }
@@ -254,6 +278,8 @@
       case 'number':      return span('num', value == null ? '' : String(value));
       case 'markdown':
         return renderMarkdown(value);
+      case 'latex':
+        return renderLatex(value);
       case 'longtext': {
         // longtext is treated as plain prose with paragraph breaks preserved.
         var s = String(value == null ? '' : value);
