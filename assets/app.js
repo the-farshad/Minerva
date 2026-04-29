@@ -2021,11 +2021,21 @@
       } else {
         if (dayBusy.length) {
           dayBusy.forEach(function (b) {
-            blocksHost.appendChild(el('div', { class: 'sched-busy' },
+            var blockEl = el('div', { class: 'sched-busy', tabindex: '0',
+              title: 'Open ' + b.label + ' (' + b.tab + ')',
+              onclick: function () { showRowDetail(b.tab, b.rowId); }
+            },
               el('span', { class: 'sched-time' }, fmtTime(b.start) + '–' + fmtTime(b.end)),
               el('span', { class: 'sched-label' }, b.label),
               el('span', { class: 'sched-tab small muted' }, b.tab)
-            ));
+            );
+            blockEl.addEventListener('keydown', function (e) {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                showRowDetail(b.tab, b.rowId);
+              }
+            });
+            blocksHost.appendChild(blockEl);
           });
         }
         if (dayFree.length) {
