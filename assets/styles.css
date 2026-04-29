@@ -1555,6 +1555,73 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   vertical-align: middle;
 }
 
+/* --- settings layout (TOC + body) -------------------------- */
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+.settings-toc {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  font-size: 0.88rem;
+  padding-right: 0.5rem;
+}
+.settings-toc h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.settings-toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.settings-toc a {
+  display: block;
+  padding: 0.35rem 0.5rem;
+  color: var(--muted);
+  text-decoration: none;
+  border-radius: 5px;
+  border-left: 2px solid transparent;
+}
+.settings-toc a:hover {
+  color: var(--fg);
+  background: var(--surface);
+  border-left-color: var(--accent);
+}
+.settings-section {
+  scroll-margin-top: 1rem;
+}
+.settings-section + .settings-section {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 800px) {
+  .settings-layout { grid-template-columns: 1fr; gap: 0.5rem; }
+  .settings-toc {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .settings-toc ul { flex-direction: row; flex-wrap: wrap; gap: 0.3rem; }
+  .settings-toc a { padding: 0.3rem 0.6rem; border: 1px solid var(--border); border-left: 1px solid var(--border); }
+}
+
 /* --- settings panels --------------------------------------- */
 
 .auth-status,
