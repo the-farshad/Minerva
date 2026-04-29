@@ -4,6 +4,12 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.12 — Onboarding, Settings TOC, j/k navigation
+
+- **First-run onboarding card** on the home view: a 4-step checklist (open the app · create OAuth client · paste it in Settings · Connect Google) with progress bar, completed checkmarks, and a CTA button that jumps to the next undone step. Replaces the generic callouts when the user isn't connected yet; the callouts still render below in a compact form.
+- **Settings TOC sidebar** — sticky left-rail navigation jumps you to any of the seven panels (Connection, Local store, Add a section, Notifications, Calendar feed, Telegram, AI). Mobile flips it to a horizontal chip strip.
+- **j/k row navigation** in section list views: `j`/`k` move selection, `e` edits, `c` toggles status, `x` deletes — with the recurrence-spawn hook firing on `c` when applicable. Help cheatsheet updated.
+
 ## v0.11 — Saved views, push error state, backlinks
 
 - **Saved views** per section: capture the current sort + live filter as a named view; recall with one click. Stored in `localStorage` per slug. Pill bar above the section's lead also shows a `Clear` button when the active view diverges from `_config` defaults.
