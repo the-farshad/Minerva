@@ -2203,6 +2203,42 @@
     paintTheme();
     paintTg();
 
+    var bookmarkletPanel = el('div', { class: 'tg-panel' });
+    paintBookmarklet();
+
+    function paintBookmarklet() {
+      // The snippet runs on any web page: grabs title/URL/selection, encodes
+      // them as a Minerva share token, opens #/capture/<token>.
+      var origin = (location.origin || 'https://minerva.thefarshad.com');
+      var snippet =
+        "javascript:(function(){" +
+        "var t=document.title||'',u=location.href,s=String(window.getSelection&&window.getSelection()||'');" +
+        "var p={title:t.slice(0,160),body:u+(s?'\\n\\n'+s:'')};" +
+        "var j=JSON.stringify(p);" +
+        "var b=btoa(unescape(encodeURIComponent(j))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');" +
+        "window.open(" + JSON.stringify(origin) + "+'/#/capture/'+b,'_blank');" +
+        "})();";
+
+      bookmarkletPanel.replaceChildren(
+        el('h3', null, 'Quick-capture bookmarklet'),
+        el('p', { class: 'small muted' },
+          'Drag this link to your browser\'s bookmarks bar. Clicking it on any web page opens Minerva\'s quick-capture modal pre-filled with the page title, URL, and any selected text — picks up the inbox/notes section by default. Works on any browser that allows ',
+          el('code', null, 'javascript:'), ' bookmarks.'
+        ),
+        el('p', null,
+          el('a', {
+            class: 'btn',
+            href: snippet,
+            onclick: function (e) { e.preventDefault(); flash(bookmarkletPanel, 'Drag this link to your bookmarks bar — don\'t click here.'); }
+          }, '+ Capture to Minerva')
+        ),
+        el('details', null,
+          el('summary', { class: 'small muted' }, 'View / copy the snippet'),
+          el('pre', { class: 'small' }, snippet)
+        )
+      );
+    }
+
     function paintTheme() {
       var current = localStorage.getItem('minerva.customCss') || '';
       var ta = document.createElement('textarea');
@@ -2679,6 +2715,7 @@
       { id: 'settings-ical',       label: 'Calendar feed', content: icalPanel },
       { id: 'settings-telegram',   label: 'Telegram bot',  content: tgPanel },
       { id: 'settings-ai',         label: 'AI assistant',  content: aiPanel },
+      { id: 'settings-bookmarklet', label: 'Bookmarklet',  content: bookmarkletPanel },
       { id: 'settings-theme',      label: 'Custom theme',  content: themePanel }
     ];
 
@@ -2915,6 +2952,14 @@
         view = viewPublic(hash.replace(/^#\/p\//, ''));
       } else if (hash === '#/today') {
         view = await viewToday(); active = '#/today';
+      } else if ((sectionMatch = hash.match(/^#\/capture\/(.+)$/))) {
+        // Bookmarklet entry point — decode payload and open quick-capture.
+        var payload = {};
+        try { payload = M.decode(sectionMatch[1]); } catch (e) { /* invalid */ }
+        view = await viewHome();
+        active = '#/';
+        history.replaceState(null, '', '#/');
+        setTimeout(function () { showCapture(payload); }, 50);
       } else if ((sectionMatch = hash.match(/^#\/search\/(.+)$/))) {
         // OpenSearch landing — open the global-search overlay seeded.
         view = await viewHome();
@@ -3579,7 +3624,7 @@
       || sects[0] || null;
   }
 
-  async function showCapture() {
+  async function showCapture(seed) {
     if (document.querySelector('.capture-overlay')) return;
     var cfg = readConfig();
     var st = M.auth ? M.auth.getState() : { hasToken: false };
@@ -3590,6 +3635,7 @@
     var sects = sectionRows();
     if (!sects.length) return;
     var initial = pickInboxSection();
+    seed = seed || {};
 
     var overlay = el('div', { class: 'modal-overlay capture-overlay',
       onclick: function () { overlay.remove(); }
@@ -3608,11 +3654,17 @@
     titleInput.type = 'text';
     titleInput.placeholder = 'Title';
     titleInput.className = 'editor';
+    if (seed.title) titleInput.value = seed.title;
 
     var bodyTa = document.createElement('textarea');
     bodyTa.rows = 4;
     bodyTa.placeholder = 'Body (optional). Cmd/Ctrl + Enter to save.';
     bodyTa.className = 'editor';
+    if (seed.body) bodyTa.value = seed.body;
+    if (seed.slug) {
+      var match = sects.find(function (s) { return s.slug === seed.slug; });
+      if (match) sectSelect.value = match.slug;
+    }
 
     // Voice capture (Web Speech API) — transcribes into the body textarea.
     var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
