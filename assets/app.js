@@ -1898,6 +1898,14 @@
     return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   }
 
+  function readScheduleRange() {
+    try { return parseInt(localStorage.getItem('minerva.schedule.range') || '7', 10) || 7; }
+    catch (e) { return 7; }
+  }
+  function writeScheduleRange(n) {
+    try { localStorage.setItem('minerva.schedule.range', String(n)); } catch (e) { /* ignore */ }
+  }
+
   async function viewSchedule() {
     var cfg = readConfig();
     var st = M.auth ? M.auth.getState() : { hasToken: false };
@@ -1912,11 +1920,25 @@
     var view = el('section', { class: 'view view-schedule' });
     var titleH2 = el('h2');
     titleH2.appendChild(M.render.icon('calendar-clock'));
-    titleH2.appendChild(document.createTextNode(' Schedule  '));
-    titleH2.appendChild(el('span', { class: 'small muted' }, 'next 7 days'));
+    titleH2.appendChild(document.createTextNode(' Schedule'));
     view.appendChild(titleH2);
 
+    var rangeDays = readScheduleRange();
+    var rangeSeg = el('div', { class: 'seg seg-mode' });
+    [7, 14, 30].forEach(function (n) {
+      var btn = el('button', { type: 'button', 'data-value': String(n),
+        class: n === rangeDays ? 'active' : '',
+        onclick: function () {
+          rangeDays = n;
+          writeScheduleRange(n);
+          route();
+        }
+      }, n + ' days');
+      rangeSeg.appendChild(btn);
+    });
+
     var actionRow = el('div', { class: 'cta-row' },
+      rangeSeg,
       el('button', { class: 'btn', type: 'button',
         onclick: function () { showAvailabilityShare(); }
       }, 'Share my availability'),
@@ -1933,7 +1955,7 @@
     ));
 
     var rangeStart = startOfDay(new Date());
-    var rangeEnd = new Date(rangeStart.getTime() + 7 * 86400000);
+    var rangeEnd = new Date(rangeStart.getTime() + rangeDays * 86400000);
     var busy;
     try { busy = await M.schedule.collectBusy({ start: rangeStart, end: rangeEnd, workStart: 9 }); }
     catch (e) { busy = []; }
@@ -1941,9 +1963,8 @@
     try { slots = M.schedule.freeSlots(busy, { start: rangeStart, end: rangeEnd, workStart: 9, workEnd: 18, skipWeekends: true }); }
     catch (e) { slots = []; }
 
-    // Group by day for display
     var daysHost = el('div', { class: 'sched-days' });
-    for (var i = 0; i < 7; i++) {
+    for (var i = 0; i < rangeDays; i++) {
       var d = new Date(rangeStart.getTime() + i * 86400000);
       var ds = startOfDay(d);
       var nextDay = new Date(ds.getTime() + 86400000);
@@ -1960,7 +1981,7 @@
 
       var blocksHost = el('div', { class: 'sched-blocks' });
       if (weekend) {
-        blocksHost.appendChild(el('p', { class: 'small muted' }, 'Weekend — outside default work hours.'));
+        blocksHost.appendChild(el('p', { class: 'small muted' }, 'Weekend.'));
       } else {
         if (dayBusy.length) {
           dayBusy.forEach(function (b) {
