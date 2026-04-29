@@ -834,10 +834,14 @@
     var header = el('div', { class: 'view-section-head' });
     var meta1Span = el('span');
     var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add row');
+    var urlBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+      title: 'Add from URL (arXiv / YouTube / web page)',
+      onclick: function () { showUrlImport(sec.tab); }
+    }, '+ from URL');
     var importBtn = el('button', { class: 'btn btn-ghost', type: 'button',
       title: 'Import rows from CSV or TSV',
       onclick: function () { showCsvImport(sec.tab); }
-    }, 'Import');
+    }, 'CSV');
     var modeToggle = el('div', { class: 'seg seg-mode' });
     var calNav = el('div', { class: 'cal-nav' });
     var filterInput = el('input', {
@@ -846,7 +850,7 @@
     var viewsBar = el('div', { class: 'saved-views' });
 
     header.appendChild(el('h2', null, (sec.icon ? sec.icon + ' ' : '') + (sec.title || sec.slug)));
-    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, importBtn, addBtn);
+    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, urlBtn, importBtn, addBtn);
     header.appendChild(headerRight);
     view.appendChild(header);
     view.appendChild(viewsBar);
@@ -3135,6 +3139,151 @@
     if (/^#\/share/.test(h)) return '#/share';
     if (h === '#/settings') return '#/settings';
     return '';
+  }
+
+  // ---- smart URL import modal (arXiv / YouTube / generic) ----
+
+  async function showUrlImport(tab) {
+    if (document.querySelector('.url-import-overlay')) return;
+    var meta = await M.db.getMeta(tab);
+    if (!meta || !meta.headers) {
+      flash(document.body, 'No schema cached — Sync first.', 'error');
+      return;
+    }
+
+    var overlay = el('div', { class: 'modal-overlay url-import-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'editor';
+    input.placeholder = 'arXiv ID (2401.12345) or URL · YouTube URL · any other URL';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+
+    var preview = el('div', { class: 'url-import-preview' });
+    var addBtn = el('button', { class: 'btn', type: 'button', disabled: true }, 'Add to ' + tab);
+    var fetched = null;
+    var debounce = null;
+
+    function renderField(label, value) {
+      if (!value) return null;
+      return el('div', { class: 'url-import-field' },
+        el('strong', null, label),
+        el('span', null, String(value).slice(0, 600))
+      );
+    }
+
+    async function lookup() {
+      var raw = input.value.trim();
+      fetched = null;
+      addBtn.disabled = true;
+      if (!raw) { preview.replaceChildren(); return; }
+      preview.replaceChildren(el('p', { class: 'small muted' }, 'Looking up…'));
+      try {
+        var data = await M.import.lookup(raw);
+        if (!data) {
+          preview.replaceChildren(el('p', { class: 'small muted' },
+            'Not recognized as arXiv, YouTube, or a URL. Either paste a real URL or use ',
+            el('em', null, '+ Add row'), ' to enter manually.'));
+          return;
+        }
+        fetched = data;
+        var matches = Object.keys(data).filter(function (k) {
+          return meta.headers.indexOf(k) >= 0 && data[k];
+        });
+        var unmappable = Object.keys(data).filter(function (k) {
+          return meta.headers.indexOf(k) < 0 && data[k];
+        });
+
+        var nodes = [];
+        var thumb = data.thumbnail
+          ? (function () {
+              var img = document.createElement('img');
+              img.src = data.thumbnail;
+              img.className = 'url-import-thumb';
+              img.alt = '';
+              return img;
+            })()
+          : null;
+        if (thumb) nodes.push(thumb);
+        ['kind', 'title', 'authors', 'year', 'url', 'pdf', 'abstract'].forEach(function (k) {
+          var f = renderField(k, data[k]);
+          if (f) nodes.push(f);
+        });
+
+        nodes.push(el('p', { class: 'small muted' },
+          'Will populate ',
+          el('strong', null, matches.length + ' column' + (matches.length === 1 ? '' : 's')),
+          ': ', matches.join(', ') || '(none)',
+          unmappable.length
+            ? ' · skipping (no column): ' + unmappable.join(', ')
+            : ''
+        ));
+
+        preview.replaceChildren.apply(preview, nodes);
+        addBtn.disabled = matches.length === 0;
+      } catch (err) {
+        preview.replaceChildren(el('p', { class: 'error small' },
+          'Lookup failed: ' + (err && err.message ? err.message : err)));
+      }
+    }
+
+    input.addEventListener('input', function () {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(lookup, 350);
+    });
+
+    addBtn.addEventListener('click', async function () {
+      if (!fetched) return;
+      addBtn.disabled = true;
+      addBtn.textContent = 'Adding…';
+      try {
+        var row = await addRow(tab, meta.headers);
+        Object.keys(fetched).forEach(function (k) {
+          if (meta.headers.indexOf(k) >= 0) row[k] = fetched[k];
+        });
+        if (meta.headers.indexOf('read') >= 0) row.read = 'FALSE';
+        row._dirty = 1;
+        await M.db.upsertRow(tab, row);
+        schedulePush();
+        overlay.remove();
+        flash(document.body, 'Added: ' + (fetched.title || fetched.url || 'row'));
+        await route();
+      } catch (err) {
+        flash(preview, 'Add failed: ' + (err && err.message ? err.message : err), 'error');
+        addBtn.disabled = false;
+        addBtn.textContent = 'Add to ' + tab;
+      }
+    });
+
+    var panel = el('div', { class: 'modal-panel url-import-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      el('h3', null, 'Add from URL — ', el('code', null, tab)),
+      el('p', { class: 'small muted' },
+        'Auto-fetches metadata from ',
+        el('strong', null, 'arXiv'), ' (paste 2401.12345 or any arxiv URL) and ',
+        el('strong', null, 'YouTube'), ' (any watch / youtu.be URL). Other URLs are added with title-only when CORS allows, or just the URL otherwise.'
+      ),
+      input,
+      preview,
+      el('div', { class: 'form-actions' },
+        addBtn,
+        el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: function () { overlay.remove(); } }, 'Cancel')
+      )
+    );
+
+    panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
+      if (e.key === 'Enter' && !addBtn.disabled) { e.preventDefault(); addBtn.click(); }
+    });
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    setTimeout(function () { input.focus(); }, 30);
   }
 
   // ---- CSV/TSV import modal ----

@@ -151,6 +151,17 @@
         types:   ['text','datetime','datetime','duration','text','datetime']
       },
       defaultSort: 'started:desc'
+    },
+    {
+      slug: 'library',
+      title: 'Library',
+      icon: '📚',
+      description: 'Unified reading + watch list — papers, articles, videos, books. Pairs with the "+ from URL" button to auto-fetch arXiv and YouTube metadata.',
+      schema: {
+        headers: ['id','kind','title','authors','year','url','pdf','abstract','tags','read','rating','notes','_updated'],
+        types:   ['text','select(paper,article,book,video,podcast)','text','text','number','link','link','markdown','multiselect()','check','rating(0..5)','markdown','datetime']
+      },
+      defaultSort: '_updated:desc'
     }
   ];
 
