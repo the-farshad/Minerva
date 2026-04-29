@@ -2187,11 +2187,74 @@
     var icalPanel = el('div', { class: 'tg-panel' });
     var presetsPanel = el('div', { class: 'tg-panel' });
     var aiPanel = el('div', { class: 'tg-panel' });
+    var themePanel = el('div', { class: 'tg-panel' });
     paintNotify();
     paintIcal();
     paintPresets();
     paintAi();
+    paintTheme();
     paintTg();
+
+    function paintTheme() {
+      var current = localStorage.getItem('minerva.customCss') || '';
+      var ta = document.createElement('textarea');
+      ta.className = 'editor';
+      ta.rows = 8;
+      ta.spellcheck = false;
+      ta.placeholder = "[data-theme=\"light\"] {\n  --accent: #c44;\n  --bg: #fafafa;\n}\n\n.section-card { border-radius: 16px; }";
+      ta.value = current;
+
+      function apply(css) {
+        var existing = document.getElementById('minerva-custom-style');
+        if (existing) existing.remove();
+        if (!css) return;
+        var s = document.createElement('style');
+        s.id = 'minerva-custom-style';
+        s.textContent = css;
+        document.head.appendChild(s);
+      }
+
+      themePanel.replaceChildren(
+        el('h3', null, 'Custom theme'),
+        el('p', { class: 'small muted' },
+          'Override any CSS variable or class. Persists in your browser only. Useful keys: ',
+          el('code', null, '--accent'), ', ',
+          el('code', null, '--bg'), ', ',
+          el('code', null, '--surface'), ', ',
+          el('code', null, '--fg'), ', ',
+          el('code', null, '--radius'), '. Scope to a theme with ',
+          el('code', null, '[data-theme="dark"] { ... }'), '.'
+        ),
+        ta,
+        el('div', { class: 'form-actions' },
+          el('button', { class: 'btn', type: 'button',
+            onclick: function () {
+              var css = ta.value;
+              localStorage.setItem('minerva.customCss', css);
+              apply(css);
+              flash(themePanel, 'Saved & applied.');
+            }
+          }, 'Save & apply'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            onclick: function () {
+              apply(ta.value);
+              flash(themePanel, 'Previewed (not saved).');
+            }
+          }, 'Preview'),
+          (current
+            ? el('button', { class: 'btn btn-ghost', type: 'button',
+                onclick: function () {
+                  if (!confirm('Remove your custom CSS?')) return;
+                  localStorage.removeItem('minerva.customCss');
+                  apply('');
+                  ta.value = '';
+                  paintTheme();
+                  flash(themePanel, 'Reset to defaults.');
+                } }, 'Reset')
+            : null)
+        )
+      );
+    }
 
     function paintAi() {
       var c = M.ai.readCfg();
@@ -2607,7 +2670,8 @@
       { id: 'settings-notify',     label: 'Notifications', content: notifyPanel },
       { id: 'settings-ical',       label: 'Calendar feed', content: icalPanel },
       { id: 'settings-telegram',   label: 'Telegram bot',  content: tgPanel },
-      { id: 'settings-ai',         label: 'AI assistant',  content: aiPanel }
+      { id: 'settings-ai',         label: 'AI assistant',  content: aiPanel },
+      { id: 'settings-theme',      label: 'Custom theme',  content: themePanel }
     ];
 
     var toc = el('aside', { class: 'settings-toc', 'aria-label': 'Settings sections' });
