@@ -4,6 +4,12 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.11 — Saved views, push error state, backlinks
+
+- **Saved views** per section: capture the current sort + live filter as a named view; recall with one click. Stored in `localStorage` per slug. Pill bar above the section's lead also shows a `Clear` button when the active view diverges from `_config` defaults.
+- **Push indicator error state**: when a sync fails, the bottom-right pill flips red with `⚠ Sync failed`, an inline **Retry** button, and a × to dismiss. Hover Retry for the underlying error message. Tab-level errors that `pushAll` previously swallowed now surface here too.
+- **Backlinks**: every section computes incoming references from every other tab's `ref(thisTab)` columns. Each row gets a small `↺ N` badge in list and tree views; the bottom of the section shows a *Linked from* panel with the top-8 most-referenced rows and a per-source-tab breakdown.
+
 ## v0.10 — AI assistant
 
 - **AI assistant** at ⌘/Ctrl+J. Provider-agnostic wrapper supports four modes: Anthropic (Claude — uses the `anthropic-dangerous-direct-browser-access: true` browser-direct header), OpenAI / OpenAI-compatible, Ollama (local), or BYO endpoint. API keys live only in `localStorage`; nothing is proxied through Minerva's static-site origin.
