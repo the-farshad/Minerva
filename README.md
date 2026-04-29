@@ -22,23 +22,47 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 - **Habit heatmap** — the habits section shows each habit as a card with current streak, a Done-today button, and a 12-week contribution-graph heatmap.
 - **Per-section live filter** — typed search box in the section header filters rows live in either list or calendar mode.
 - **Global search** — `⌘/Ctrl+K` opens a fuzzy search across every row in every section.
-- **Quick capture** — `/` opens a modal that captures a title + body to your inbox/notes section, mapped onto the most natural columns even on user-defined sections.
+- **Quick capture** — `/` opens a modal that captures a title + body to your inbox/notes section, mapped onto the most natural columns even on user-defined sections. Optional 🎤 voice capture via Web Speech API.
+- **Bookmarklet** — drag *Capture to Minerva* from Settings to your browser's bookmarks bar; clicking it on any web page opens quick-capture pre-filled with the page's title, URL, and any selected text.
+- **Tree view** for sections with a self-referential `ref` column (e.g. `goals.parent`) — collapsible nested layout with `+` to add subtasks in place.
+- **Today** view at `#/today`: due/overdue tasks with one-click ✓, habits not done today, recent notes — your daily landing page.
+- **Saved views** per section: capture sort + filter combos as named pills; click to recall.
+- **Bulk operations** — checkbox column + select-all; *Mark done* / *Delete* / *Copy BibTeX* / *Clear* in the bulk action bar.
+- **Click-to-sort** column headers, **j/k row navigation**, **double-click row** for full-detail modal, **`d`** opens detail of selected row.
+
+### Research workflow
+- **Smart URL import** — *+ Import → From URL* per section auto-fetches metadata from arXiv (paste an id or URL), DOI (paste a DOI or doi.org URL → CrossRef metadata), and YouTube (oEmbed). Generic URLs added URL-only.
+- **CSV/TSV paste import** — *+ Import → Paste CSV/TSV* with auto-detected delimiter and live preview.
+- **Library** preset — unified papers · articles · books · videos · podcasts with `kind`, `title`, `authors`, `year`, `venue`, `url`, `pdf`, `abstract`, `tags`, `read`, `rating`, `notes` columns.
+- **Proposals** preset — `funder`, `deadline`, `status`, plus the structured markdown sections (abstract, aims, methods, broader_impacts, timeline, budget, notes) reviewers expect.
+- **Funder-by-funder rules**: [`docs/proposal-guide.md`](docs/proposal-guide.md) covers NSF, NIH, ERC, DOE — page limits, what each section must contain, common reasons proposals get returned without review, and a 48-hour pre-submission checklist.
+- **AI assistant prompts** for proposal work — *NSF / NIH / ERC structure*, *critique my abstract*, *broader impacts brainstorm*.
+- **Inline PDF and YouTube preview** — link cells get a 👁 button when the URL is a PDF or YouTube video; click opens an embedded viewer modal.
+- **BibTeX export** per row (in the row-detail modal) and bulk-from-selection (in the bulk action bar).
+- **KaTeX** rendering for `latex` columns.
 
 ### Sharing & integrations
 - **Public share + QR** — build a note / question / poll; get a stable URL and a crisp SVG QR code (downloadable as a 16× PNG). No login required; the data lives in the URL hash.
 - **Calendar feed (iCal)** — publishes your tasks as a public `.ics` file in your own Drive, subscribable from Apple Calendar, Google Calendar, Outlook — anywhere. Click *Update feed* in Settings to refresh.
+- **RSS feed** of completed-this-week tasks — separate page at [`/rss.html`](rss.html) generates the feed in Drive.
+- **OpenSearch** — register Minerva search in your browser's address bar (`m <query>`).
 - **Telegram bot** — paste a bot token (BotFather, ~3 min) and a chat ID. Minerva pings your chat once per due/overdue task per day. Setup: [`docs/setup-telegram.md`](docs/setup-telegram.md). For an optional **always-on** bridge (reminders fire even with no Minerva tab open; inbound bot messages become note rows automatically), there's a [drop-in Apps Script template](docs/setup-telegram-always-on.md).
 - **Browser desktop notifications** — alongside (or instead of) Telegram, the same reminder ticker fires native desktop notifications.
+- **AI assistant** (`⌘/Ctrl+J`) — BYO Anthropic / OpenAI / Ollama / BYO endpoint. Built-in prompts: summarize my week, suggest a next action, decompose a goal, find duplicates, cluster my notes, and the four proposal prompts.
 
 ### Look & feel
 - **5 themes** — `auto · light · dark · sepia · vt323-yellow` (homage to [thefarshad.com](https://thefarshad.com)).
 - **7 fonts** — `system · Inter · Roboto · Ubuntu · Vazirmatn · Atkinson Hyperlegible · VT323`. Picker buttons render `Aa` in their own face for quick scan.
-- **Resume state** — last view, scroll position, view modes (list/calendar) per section all persist in `localStorage` so reload picks up exactly where you left off.
-- **Push indicator** — subtle bottom-right pill while a sync is in flight; bottom-left red pill when offline.
-- **Keyboard shortcuts** — `g` / `q` / `s` for nav, `1`–`9` for sections, `/` for quick capture, `⌘/Ctrl+K` for search, `?` for the help cheatsheet.
+- **Custom theme** — Settings → Custom theme: paste raw CSS variable overrides; live-applied and persisted.
+- **Per-section accent color** — set `_config.color` to a hex/rgb/hsl value; the section view tints accordingly.
+- **Resume state** — last view, scroll position, view modes (list/calendar/tree) per section all persist in `localStorage` so reload picks up exactly where you left off.
+- **Push indicator** — subtle bottom-right pill while a sync is in flight, flips red on error with a *Retry* button. Bottom-left red pill when offline.
+- **Pomodoro timer** — floating bottom-left widget (`⌘/Ctrl+⇧+P` to toggle). 25-min focus / 5-min break, optional logging to a `pomodoros` tab.
+- **Keyboard shortcuts** — `g` / `t` / `q` / `s` for nav, `1`–`9` for sections, `/` quick capture, `⌘/Ctrl+K` global search, `⌘/Ctrl+J` AI assistant, `⌘/Ctrl+Z` undo, `⌘/Ctrl+⇧+P` pomodoro, `j/k/e/c/x/d` for row navigation, `?` cheatsheet.
 
 ### Offline / install
 - **PWA** — installable from your browser's *Install* / *Add to Home Screen*, with a service worker that caches the static shell. Read your data offline; edits queue and flush automatically when you reconnect.
+- **Undo** — `⌘/Ctrl+Z` reverses the last edit / add / delete (50-deep stack in `localStorage`).
 
 ---
 
