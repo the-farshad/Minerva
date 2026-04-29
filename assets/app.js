@@ -303,25 +303,102 @@
       );
     }
 
-    // Not connected — landing.
-    var primaryCta = cfg.clientId
-      ? el('a', { class: 'btn', href: '#/settings' }, 'Connect your Google account →')
-      : el('a', { class: 'btn', href: '#/settings' }, 'Set up in Settings →');
+    // Not connected — landing with a 4-step setup checklist.
     return el('section', { class: 'view' },
       el('h2', null, 'Welcome to Minerva'),
       el('p', { class: 'lead' },
-        'Minerva is a lightweight personal planner — goals, tasks, projects, notes — stored in a Google Sheet that ',
+        'A lightweight personal planner — goals, tasks, projects, notes — stored in a Google Sheet that ',
         el('em', null, 'you'),
-        ' own. The app is a static site; nothing is on our servers because there are no servers.'
+        ' own. Static site, no servers, no accounts. Four short steps to get started:'
       ),
-      el('div', { class: 'callouts' },
-        callout('Bring your own Sheet', 'Each user connects their own Google account. Minerva creates one spreadsheet per user and reads its routes, sections, and column types from a `_config` tab inside it.'),
-        callout('Share publicly with QR', 'Any note, question, or poll can become a public card with a stable URL and a QR code — perfect for posters, surveys, and quick handoffs.'),
-        callout('No build, no backend', 'Pure HTML/CSS/JS on GitHub Pages. Hackable. Forkable. Yours.')
+      renderOnboarding(cfg, st),
+      el('div', { class: 'callouts callouts-compact' },
+        callout('Share publicly with QR', 'Any note, question, or poll can become a public card with a stable URL and a QR code. Works without connecting.'),
+        callout('No build, no backend', 'Pure HTML/CSS/JS on GitHub Pages. Hackable. Forkable. Yours.'),
+        callout('Open source', el('span', null,
+          'Minerva is GPL-3. Source: ',
+          el('a', { href: 'https://github.com/the-farshad/Minerva', target: '_blank', rel: 'noopener' }, 'github.com/the-farshad/Minerva')
+        ))
       ),
       el('div', { class: 'cta-row' },
-        primaryCta,
-        el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Quick share & QR')
+        el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Try Quick share & QR (no login) →')
+      )
+    );
+  }
+
+  function renderOnboarding(cfg, st) {
+    // Step 1: site is loading, so Pages is on (or we're on localhost).
+    var step1Done = true;
+    // Step 2: detected only by side effect — if connect succeeded.
+    var step2Done = !!st.hasToken;
+    // Step 3: client ID saved locally.
+    var step3Done = !!cfg.clientId;
+    // Step 4: connected to a spreadsheet.
+    var step4Done = !!(st.hasToken && cfg.spreadsheetId);
+
+    var doneCount = [step1Done, step2Done, step3Done, step4Done].filter(Boolean).length;
+
+    function step(n, done, current, title, body) {
+      var classes = 'onboarding-step';
+      if (done) classes += ' is-done';
+      if (current) classes += ' is-current';
+      return el('li', { class: classes },
+        el('span', { class: 'onboarding-num' }, done ? '✓' : String(n)),
+        el('div', { class: 'onboarding-body' },
+          el('h3', null, title),
+          el('p', null, body)
+        )
+      );
+    }
+
+    var firstUndone = !step1Done ? 1 : !step3Done ? 3 : !step4Done ? 4 : 0;
+
+    var progressFill = el('div', { class: 'onboarding-progress-fill' });
+    progressFill.style.width = (doneCount / 4 * 100) + '%';
+
+    return el('div', { class: 'onboarding' },
+      el('div', { class: 'onboarding-progress' },
+        progressFill,
+        el('span', { class: 'onboarding-progress-label' }, doneCount + ' / 4 done')
+      ),
+      el('ol', { class: 'onboarding-steps' },
+        step(1, step1Done, false,
+          'Open the app',
+          el('span', null, 'Done — you\'re here. The hosted instance is at ',
+            el('a', { href: 'https://minerva.thefarshad.com', target: '_blank', rel: 'noopener' }, 'minerva.thefarshad.com'),
+            '.'
+          )
+        ),
+        step(2, step3Done, firstUndone === 3,
+          'Create a Google OAuth Client ID',
+          el('span', null,
+            '~5 minutes in Google Cloud Console. The detailed walkthrough lives in ',
+            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'docs/setup-google-oauth.md'),
+            '. Three non-sensitive scopes: ', el('code', null, 'drive.file'), ', ',
+            el('code', null, 'userinfo.email'), ', ', el('code', null, 'openid'), '.'
+          )
+        ),
+        step(3, step3Done, firstUndone === 3,
+          'Paste it into Settings',
+          el('span', null, 'Open ',
+            el('a', { href: '#/settings' }, 'Settings'),
+            ' and paste your Client ID into the OAuth field. Save.'
+          )
+        ),
+        step(4, step4Done, firstUndone === 4,
+          'Connect Google',
+          el('span', null,
+            'Click ', el('strong', null, 'Connect Google'),
+            ' in Settings. Minerva will create a spreadsheet in your Drive and seed it. After that, sections appear in the nav and editing is one click away.'
+          )
+        )
+      ),
+      el('div', { class: 'onboarding-cta' },
+        firstUndone === 3
+          ? el('a', { class: 'btn', href: '#/settings' }, 'Open Settings →')
+          : firstUndone === 4
+            ? el('a', { class: 'btn', href: '#/settings' }, 'Connect Google →')
+            : null
       )
     );
   }
