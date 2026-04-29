@@ -823,6 +823,14 @@
       : null;
 
     var view = el('section', { class: 'view view-section' });
+    // Per-section accent: if the user added a `color` column to _config,
+    // use that value as --accent for everything inside the section view.
+    if (sec.color && /^#?[0-9a-f]{3,8}$|^rgb|^hsl/i.test(String(sec.color).trim())) {
+      var c = String(sec.color).trim();
+      if (/^[0-9a-f]{3,8}$/i.test(c)) c = '#' + c;
+      view.style.setProperty('--accent', c);
+      view.style.setProperty('--accent-2', c);
+    }
     var header = el('div', { class: 'view-section-head' });
     var meta1Span = el('span');
     var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add row');
@@ -2907,6 +2915,20 @@
         view = viewPublic(hash.replace(/^#\/p\//, ''));
       } else if (hash === '#/today') {
         view = await viewToday(); active = '#/today';
+      } else if ((sectionMatch = hash.match(/^#\/search\/(.+)$/))) {
+        // OpenSearch landing — open the global-search overlay seeded.
+        view = await viewHome();
+        active = '#/';
+        var q = decodeURIComponent(sectionMatch[1]);
+        // Defer slightly so the route's content lands before the overlay.
+        setTimeout(function () {
+          showSearch();
+          var input = document.querySelector('.search-overlay .search-input');
+          if (input) {
+            input.value = q;
+            input.dispatchEvent(new Event('input'));
+          }
+        }, 50);
       } else if ((sectionMatch = hash.match(/^#\/s\/(.+)$/))) {
         var slug = decodeURIComponent(sectionMatch[1]);
         view = await viewSection(slug);

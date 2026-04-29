@@ -10,12 +10,14 @@
 
 'use strict';
 
-var CACHE_VERSION = 'minerva-v9';
+var CACHE_VERSION = 'minerva-v10';
 var SHELL = [
   './',
   './index.html',
   './privacy.html',
   './terms.html',
+  './rss.html',
+  './opensearch.xml',
   './assets/styles.css',
   './assets/qr.js',
   './assets/share.js',

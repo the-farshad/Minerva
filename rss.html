@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minerva — RSS feed</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<header>
+  <div class="head-row">
+    <div class="head-titles">
+      <a href="./" class="back" title="Back to Minerva">←</a>
+      <h1>RSS feed</h1>
+    </div>
+  </div>
+  <p class="subtitle">Completed-this-week tasks, generated locally from your Sheet.</p>
+</header>
+
+<main>
+  <section class="view">
+    <p class="lead">Minerva can publish your completed-this-week tasks as a public RSS feed in your own Drive — same architecture as the iCal feed: client-side generation, public Drive file, anyone can subscribe.</p>
+
+    <p>Click <strong>Generate / refresh feed</strong> to (re-)publish. After publishing, paste the URL into your RSS reader.</p>
+
+    <div id="rss-app" class="form" style="max-width: var(--readw)">
+      <p class="muted small">Loading…</p>
+    </div>
+
+    <p class="small muted">Tip: bookmark this page and click the button when you want a refreshed feed. Most RSS readers refetch on their own schedule, so subscribers see updates without you doing anything.</p>
+  </section>
+</main>
+
+<footer>
+  <p>
+    <a href="./">home</a>
+    · <a href="privacy.html">privacy</a>
+    · <a href="terms.html">terms</a>
+    · <a href="https://github.com/the-farshad/Minerva" target="_blank" rel="noopener">source</a>
+  </p>
+</footer>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="assets/auth.js"></script>
+<script src="assets/sheets.js"></script>
+<script src="assets/db.js"></script>
+<script>
+(function () {
+  'use strict';
+  var STORE = 'minerva.config.v1';
+  function readCfg() {
+    try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; }
+  }
+
+  function escapeXml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  async function buildRss() {
+    var rows = await Minerva.db.getAllRows('tasks').catch(function () { return []; });
+    var sevenAgo = Date.now() - 7 * 86400000;
+    var done = (rows || []).filter(function (r) {
+      if (r._deleted) return false;
+      if (String(r.status || '').toLowerCase() !== 'done') return false;
+      var ts = r._updated ? Date.parse(r._updated) : 0;
+      return ts && ts >= sevenAgo;
+    }).sort(function (a, b) {
+      return Date.parse(b._updated) - Date.parse(a._updated);
+    });
+
+    var items = done.map(function (r) {
+      var pubDate = new Date(r._updated || Date.now()).toUTCString();
+      var title = r.title || r.id;
+      var desc = [];
+      if (r.notes) desc.push(r.notes);
+      if (r.priority) desc.push('priority: ' + r.priority);
+      if (r.project) desc.push('project: ' + r.project);
+      return [
+        '<item>',
+        '<title>' + escapeXml(title) + '</title>',
+        '<guid isPermaLink="false">minerva-task-' + escapeXml(r.id) + '</guid>',
+        '<pubDate>' + pubDate + '</pubDate>',
+        '<description>' + escapeXml(desc.join(' · ')) + '</description>',
+        '</item>'
+      ].join('');
+    }).join('\n');
+
+    var rss = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<rss version="2.0">',
+      '<channel>',
+      '<title>Minerva — completed this week</title>',
+      '<link>https://minerva.thefarshad.com/</link>',
+      '<description>Tasks marked done in the last 7 days.</description>',
+      '<lastBuildDate>' + new Date().toUTCString() + '</lastBuildDate>',
+      items,
+      '</channel>',
+      '</rss>'
+    ].join('\n');
+
+    return { rss: rss, count: done.length };
+  }
+
+  async function uploadFeed(token, content) {
+    var name = 'Minerva tasks.rss.xml';
+    var mime = 'application/rss+xml';
+    // find or create
+    var q = "name='" + name + "' and mimeType='" + mime + "' and trashed=false";
+    var resp = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) +
+      '&fields=' + encodeURIComponent('files(id)'),
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    if (!resp.ok) throw new Error('Drive list ' + resp.status);
+    var found = await resp.json();
+    var existingId = (found.files && found.files[0] && found.files[0].id) || null;
+
+    var boundary = 'minerva-rss-' + Date.now();
+    var metadata = { name: name, mimeType: mime };
+    var body =
+      '--' + boundary + '\r\n' +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      JSON.stringify(metadata) + '\r\n' +
+      '--' + boundary + '\r\n' +
+      'Content-Type: ' + mime + '\r\n\r\n' +
+      content + '\r\n' +
+      '--' + boundary + '--';
+
+    var url = existingId
+      ? 'https://www.googleapis.com/upload/drive/v3/files/' + existingId + '?uploadType=multipart&fields=id'
+      : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
+
+    var up = await fetch(url, {
+      method: existingId ? 'PATCH' : 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'multipart/related; boundary=' + boundary
+      },
+      body: body
+    });
+    if (!up.ok) throw new Error('Drive upload ' + up.status);
+    var d = await up.json();
+    var fileId = d.id || existingId;
+
+    // Make public (idempotent — 400 if already public is fine)
+    try {
+      await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '/permissions?fields=id', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ role: 'reader', type: 'anyone', allowFileDiscovery: false })
+      });
+    } catch (e) { /* non-fatal */ }
+
+    return fileId;
+  }
+
+  async function main() {
+    var host = document.getElementById('rss-app');
+    var cfg = readCfg();
+    if (!cfg.clientId || !cfg.spreadsheetId) {
+      host.innerHTML = '<p class="muted">Connect Minerva first — open the <a href="./#/settings">Settings</a> page on the main app and complete the OAuth flow, then come back here.</p>';
+      return;
+    }
+
+    var btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = 'Generate / refresh feed';
+    var output = document.createElement('div');
+    host.replaceChildren(btn, output);
+
+    btn.addEventListener('click', async function () {
+      btn.disabled = true;
+      output.innerHTML = '<p class="muted small">Generating…</p>';
+      try {
+        var built = await buildRss();
+        var token = await Minerva.auth.getToken(cfg.clientId);
+        var fileId = await uploadFeed(token, built.rss);
+        var pub = 'https://drive.google.com/uc?id=' + encodeURIComponent(fileId) + '&export=download';
+        output.innerHTML = '';
+        var p = document.createElement('p');
+        p.className = 'small muted';
+        p.textContent = 'Published ' + built.count + ' completed task' + (built.count === 1 ? '' : 's') + ' from the last 7 days.';
+        output.appendChild(p);
+        var row = document.createElement('div');
+        row.className = 'link-row';
+        var input = document.createElement('input');
+        input.className = 'url';
+        input.type = 'text';
+        input.readOnly = true;
+        input.value = pub;
+        row.appendChild(input);
+        var copy = document.createElement('button');
+        copy.className = 'btn btn-ghost';
+        copy.type = 'button';
+        copy.textContent = 'Copy';
+        copy.addEventListener('click', function () {
+          navigator.clipboard && navigator.clipboard.writeText(pub);
+          copy.textContent = 'Copied';
+          setTimeout(function () { copy.textContent = 'Copy'; }, 1200);
+        });
+        row.appendChild(copy);
+        output.appendChild(row);
+      } catch (err) {
+        output.innerHTML = '<p class="error">Failed: ' + (err && err.message ? err.message : err) + '</p>';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', main);
+  if (document.readyState !== 'loading') main();
+})();
+</script>
+</body>
+</html>
