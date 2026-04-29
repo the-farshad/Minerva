@@ -4,6 +4,12 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.19 — Schedule polish + meet polish + diagnostics
+
+- **Schedule range** — 7 / 14 / 30 day toggle, persisted per-user. Summary header line shows free percentage, scheduled hours, free hours, open-slot count for the visible window.
+- **When-to-meet** — load a previous response token (`?r=<token>`) to edit instead of starting fresh; native share / email / Telegram / WhatsApp / copy buttons after submitting; removable response chips on the aggregate view; "Save to notes" + "Copy this URL" actions; weekend column dimming.
+- **Diagnostics panel** in Settings runs seven on-demand checks (localStorage, IndexedDB, service worker, online status, Google API via userinfo, Telegram via getMe, AI via a tiny ping). Results render with status icons and the underlying error text.
+
 ## v0.18 — Time, sharing, icons, privacy
 
 - **Schedule view** at `#/schedule`: 7-day grid showing busy blocks (events with start/end columns + tasks with `due`) and free slots inside a configurable work-hours window.
