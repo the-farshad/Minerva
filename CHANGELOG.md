@@ -4,6 +4,13 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.10 — AI assistant
+
+- **AI assistant** at ⌘/Ctrl+J. Provider-agnostic wrapper supports four modes: Anthropic (Claude — uses the `anthropic-dangerous-direct-browser-access: true` browser-direct header), OpenAI / OpenAI-compatible, Ollama (local), or BYO endpoint. API keys live only in `localStorage`; nothing is proxied through Minerva's static-site origin.
+- Five built-in quick prompts that ground the model in your own data (tasks/goals/projects, optionally notes): *Summarize my week*, *Suggest a next action*, *Decompose a goal*, *Find duplicates*, *Cluster my notes*.
+- Free-form prompt area with a `system` message that frames Minerva as a planning assistant. ⌘/Ctrl+Enter sends. Response renders as markdown.
+- Settings panel for provider/key/endpoint/model with a *Test* button that opens the assistant pre-filled.
+
 ## v0.9 — Tree view for hierarchies
 
 - **Tree mode** is now an option in the section-mode toggle for any section whose schema includes a self-referential ref column (e.g. `goals.parent:ref(goals)` in the seed schema). Renders rows as a collapsible nested list with current status, progress bar, due date, and child count per node. Click ▸/▾ to fold a branch; the title links straight to the row in your spreadsheet.
