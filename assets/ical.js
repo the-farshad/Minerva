@@ -66,19 +66,21 @@
     return out;
   }
 
-  function buildIcs(tasks) {
+  function buildIcs(tasks, events) {
     var lines = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
-      'PRODID:-//Minerva//tasks//EN',
+      'PRODID:-//Minerva//feed//EN',
       'CALSCALE:GREGORIAN',
       'METHOD:PUBLISH',
-      'X-WR-CALNAME:Minerva tasks',
+      'X-WR-CALNAME:Minerva',
       'X-WR-TIMEZONE:UTC'
     ];
     var stamp = nowStamp();
     var emitted = 0;
-    tasks.forEach(function (r) {
+
+    // Tasks → all-day or single-point events anchored on `due`.
+    (tasks || []).forEach(function (r) {
       if (r._deleted) return;
       var status = String(r.status || '').toLowerCase();
       var rawDue = r.due;
@@ -88,11 +90,10 @@
       if (!dateOnly && !full) return;
 
       lines.push('BEGIN:VEVENT');
-      lines.push(fold('UID:' + r.id + '@minerva'));
+      lines.push(fold('UID:task-' + r.id + '@minerva'));
       lines.push('DTSTAMP:' + stamp);
       if (dateOnly) {
         lines.push('DTSTART;VALUE=DATE:' + dateOnly);
-        // For all-day tasks, end-date exclusive = next day
         var d = new Date(dateOnly.slice(0, 4) + '-' + dateOnly.slice(4, 6) + '-' + dateOnly.slice(6, 8) + 'T00:00:00Z');
         d.setUTCDate(d.getUTCDate() + 1);
         var endStr = d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate());
@@ -108,16 +109,36 @@
       if (r.notes) desc.push(r.notes);
       if (r.link) desc.push('Link: ' + r.link);
       if (r.project) desc.push('Project: ' + r.project);
-      if (desc.length) {
-        lines.push(fold('DESCRIPTION:' + escapeIcsText(desc.join('\n'))));
-      }
+      if (desc.length) lines.push(fold('DESCRIPTION:' + escapeIcsText(desc.join('\n'))));
       lines.push('STATUS:' + (status === 'done' ? 'COMPLETED' : 'CONFIRMED'));
       if (status === 'done') lines.push('PERCENT-COMPLETE:100');
       lines.push('END:VEVENT');
       emitted++;
     });
+
+    // Events → real time-bracketed VEVENTs.
+    (events || []).forEach(function (r) {
+      if (r._deleted) return;
+      if (!r.start || !r.end) return;
+      var startFull = dtFull(r.start);
+      var endFull = dtFull(r.end);
+      if (!startFull || !endFull) return;
+      lines.push('BEGIN:VEVENT');
+      lines.push(fold('UID:event-' + r.id + '@minerva'));
+      lines.push('DTSTAMP:' + stamp);
+      lines.push('DTSTART:' + startFull);
+      lines.push('DTEND:' + endFull);
+      lines.push(fold('SUMMARY:' + escapeIcsText(r.title || r.id)));
+      var desc = [];
+      if (r.notes) desc.push(r.notes);
+      if (r.location) lines.push(fold('LOCATION:' + escapeIcsText(r.location)));
+      if (desc.length) lines.push(fold('DESCRIPTION:' + escapeIcsText(desc.join('\n'))));
+      lines.push('STATUS:CONFIRMED');
+      lines.push('END:VEVENT');
+      emitted++;
+    });
+
     lines.push('END:VCALENDAR');
-    // Strict ICS uses CRLF.
     return { ics: lines.join('\r\n') + '\r\n', count: emitted };
   }
 
@@ -209,8 +230,9 @@
   // ---- public entry ----
 
   async function publish(token) {
-    var rows = await Minerva.db.getAllRows('tasks').catch(function () { return []; });
-    var built = buildIcs(rows || []);
+    var tasks = await Minerva.db.getAllRows('tasks').catch(function () { return []; });
+    var events = await Minerva.db.getAllRows('events').catch(function () { return []; });
+    var built = buildIcs(tasks || [], events || []);
 
     var existing = await findFile(token);
     var resp = await uploadFile(token, existing && existing.id, built.ics);
