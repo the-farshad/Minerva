@@ -606,6 +606,7 @@
       el('div', { class: 'home-footer-cta' },
         el('a', { href: '#/share', class: 'home-footer-link' }, 'Quick share'),
         el('a', { href: '#/schedule', class: 'home-footer-link' }, 'Schedule'),
+        el('a', { href: '#/graph', class: 'home-footer-link' }, 'Graph'),
         el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), class: 'home-footer-link', target: '_blank', rel: 'noopener' }, 'Spreadsheet ↗'),
         el('a', { href: '#/settings', class: 'home-footer-link' }, 'Settings')
       )
@@ -4398,6 +4399,40 @@
     );
   }
 
+  async function viewGraph() {
+    var view = el('section', { class: 'view view-graph' });
+    var h2 = el('h2');
+    h2.appendChild(M.render.icon('network'));
+    h2.appendChild(document.createTextNode(' Graph'));
+    view.appendChild(h2);
+    view.appendChild(el('p', { class: 'small muted' },
+      'Cross-tab links between rows. Each ',
+      el('code', null, 'ref'), ' column becomes an edge. Drag to pan, scroll to zoom, click a node to open it.'));
+
+    var host = el('div', { class: 'graph-host-shell' });
+    view.appendChild(host);
+
+    if (!(M.graph && M.graph.buildGraphFromAll && M.graph.renderGraph)) {
+      host.appendChild(el('p', { class: 'muted' }, 'Graph module unavailable.'));
+      return view;
+    }
+
+    try {
+      var data = await M.graph.buildGraphFromAll();
+      // Empty state: no section has a ref column at all.
+      if (!data.hasRefColumns || !data.nodes.length) {
+        host.appendChild(el('p', { class: 'muted graph-empty-msg' },
+          'No connections — add a ref column to a section to see the cross-tab graph.'));
+        return view;
+      }
+      M.graph.renderGraph(host, data);
+    } catch (e) {
+      console.warn('viewGraph: build failed', e);
+      host.appendChild(el('p', { class: 'muted' }, 'Could not build graph.'));
+    }
+    return view;
+  }
+
   // ---- router ----
 
   async function route() {
@@ -4419,6 +4454,8 @@
         view = viewPublic(hash.replace(/^#\/p\//, ''));
       } else if (hash === '#/today') {
         view = await viewToday(); active = '#/today';
+      } else if (hash === '#/graph') {
+        view = await viewGraph(); active = '#/graph';
       } else if (hash === '#/schedule') {
         view = await viewSchedule(); active = '#/schedule';
       } else if ((sectionMatch = hash.match(/^#\/avail\/(.+)$/))) {
@@ -5821,6 +5858,7 @@
       ['t', 'Today'],
       ['n', 'Focus the home quick-add (jumps home if needed)'],
       ['1 – 9', 'Open the Nth section'],
+      ['#/graph', 'Cross-tab graph view'],
       ['/', 'Quick capture'],
       ['⌘/Ctrl + K', 'Search across everything'],
       ['⌘/Ctrl + J', 'AI assistant'],
@@ -6043,6 +6081,13 @@
   // hand off into existing app flows.
   M.app = M.app || {};
   M.app.showRowDetail = showRowDetail;
+  M.app.tabTitle = function (tab) {
+    var rows = configCache || [];
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].tab === tab && rows[i].title) return rows[i].title;
+    }
+    return '';
+  };
 
   async function boot() {
     bindPicker();

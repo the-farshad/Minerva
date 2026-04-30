@@ -1,14 +1,15 @@
-/* Minerva — section graph view (slice A-1).
+/* Minerva — section graph view (slices A-1, A-2).
  *
  * Hand-rolled SVG graph for sections that have a self-referential
- * ref(<self>) column (today: goals.parent). Builds a {nodes, edges}
- * graph from the section's rows, computes a layered-DAG layout via
- * longest-path layering, and renders straight/curved edges with
- * cycle-tolerant DFS coloring. No library, no force layout — those
- * arrive in slice A-3.
+ * ref(<self>) column (today: goals.parent), and a top-level cross-tab
+ * graph that unions every ref column across every section. Builds a
+ * {nodes, edges} graph, computes a layered-DAG layout via longest-path
+ * layering, and renders straight/curved edges with cycle-tolerant DFS
+ * coloring. No library, no force layout — those arrive in slice A-3.
  *
  * Public surface:
  *   M.graph.buildGraphFromTab(tab)    -> Promise<{nodes, edges, cycleEdges}>
+ *   M.graph.buildGraphFromAll()       -> Promise<{nodes, edges, cycleEdges, tabs}>
  *   M.graph.renderGraph(host, data)   -> void  (mounts SVG, wires events)
  */
 (function () {
@@ -47,6 +48,69 @@
   function rowLabel(row) {
     if (!row) return '';
     return String(row.title || row.name || row.question || row.decision || row.id || '');
+  }
+
+  function tabLabel(tab) {
+    var t = String(tab || '');
+    if (!t) return '';
+    // Try to look up the section title from cached config.
+    try {
+      if (window.Minerva && window.Minerva.app && typeof window.Minerva.app.tabTitle === 'function') {
+        var title = window.Minerva.app.tabTitle(t);
+        if (title) return title;
+      }
+    } catch (e) { /* ignore */ }
+    // Fallback: capitalize the slug.
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
+  // ---- cycle detection (shared) ----------------------------------------
+  // DFS coloring: White=0, Gray=1, Black=2. Edges to a Gray node are
+  // back-edges; we move them to cycleEdges so the rest forms a DAG.
+  // Iterative to avoid stack overflow on long chains.
+  function splitCycleEdges(nodes, rawEdges) {
+    var adj = {};
+    nodes.forEach(function (n) { adj[n.id] = []; });
+    rawEdges.forEach(function (e) {
+      if (adj[e.from]) adj[e.from].push(e.to);
+    });
+
+    var color = {};
+    nodes.forEach(function (n) { color[n.id] = 0; });
+    var cycleSet = {};
+
+    function visit(start) {
+      var stack = [{ id: start, i: 0 }];
+      color[start] = 1;
+      while (stack.length) {
+        var top = stack[stack.length - 1];
+        var children = adj[top.id] || [];
+        if (top.i >= children.length) {
+          color[top.id] = 2;
+          stack.pop();
+          continue;
+        }
+        var next = children[top.i++];
+        var c = color[next];
+        if (c === 0) {
+          color[next] = 1;
+          stack.push({ id: next, i: 0 });
+        } else if (c === 1) {
+          cycleSet[top.id + '->' + next] = true;
+        }
+      }
+    }
+    for (var ni = 0; ni < nodes.length; ni++) {
+      if (color[nodes[ni].id] === 0) visit(nodes[ni].id);
+    }
+
+    var edges = [];
+    var cycleEdges = [];
+    rawEdges.forEach(function (e) {
+      if (cycleSet[e.from + '->' + e.to]) cycleEdges.push(e);
+      else edges.push(e);
+    });
+    return { edges: edges, cycleEdges: cycleEdges };
   }
 
   // ---- build graph from a section's rows --------------------------------
@@ -88,57 +152,145 @@
       });
     }
 
-    // ---- DFS coloring to detect back-edges (cycles) -------------------
-    // White = 0 (unvisited), Gray = 1 (in current stack), Black = 2 (done).
-    // An edge to a Gray node is a back-edge; move it to cycleEdges so the
-    // remaining edges form a DAG.
-    var adj = {};
-    nodes.forEach(function (n) { adj[n.id] = []; });
-    rawEdges.forEach(function (e) { adj[e.from].push(e.to); });
+    var split = splitCycleEdges(nodes, rawEdges);
+    return { nodes: nodes, edges: split.edges, cycleEdges: split.cycleEdges };
+  }
 
-    var color = {};
-    nodes.forEach(function (n) { color[n.id] = 0; });
+  // ---- build graph from every section with ref columns -----------------
+  // Returns the union of cross-tab edges. Self-ref columns
+  // (e.g. goals.parent -> goals) are still included. Habit-tab nodes
+  // get a synthetic self-loop as a schema-level signal of "recurring."
 
-    var cycleSet = {}; // key "from->to" => true if back-edge
-    var stack;
+  async function buildGraphFromAll() {
+    var allMeta = [];
+    try { allMeta = (await M.db.getAllMeta()) || []; }
+    catch (e) { allMeta = []; }
 
-    function visit(start) {
-      // Iterative DFS to avoid stack-overflow on very long chains.
-      stack = [{ id: start, i: 0 }];
-      color[start] = 1;
-      while (stack.length) {
-        var top = stack[stack.length - 1];
-        var children = adj[top.id];
-        if (top.i >= children.length) {
-          color[top.id] = 2;
-          stack.pop();
-          continue;
+    var nodes = [];
+    var byId = {};
+    var rawEdges = [];
+    var tabsSet = {};
+
+    function ensureNode(rowId, tab, row) {
+      if (!rowId) return null;
+      var key = String(rowId);
+      var existing = byId[key];
+      if (existing) {
+        if (!existing.row && row) existing.row = row;
+        if ((!existing.label || existing.label === existing.id) && row) {
+          existing.label = rowLabel(row) || existing.label;
         }
-        var next = children[top.i++];
-        var c = color[next];
-        if (c === 0) {
-          color[next] = 1;
-          stack.push({ id: next, i: 0 });
-        } else if (c === 1) {
-          // back-edge — cycle
-          cycleSet[top.id + '->' + next] = true;
-        }
-        // c === 2: cross/forward edge in DAG terms — keep as-is
+        return existing;
       }
+      var n = {
+        id: key,
+        label: row ? rowLabel(row) : key,
+        tab: tab,
+        row: row || null
+      };
+      nodes.push(n);
+      byId[key] = n;
+      if (tab) tabsSet[tab] = true;
+      return n;
     }
 
-    for (var ni = 0; ni < nodes.length; ni++) {
-      if (color[nodes[ni].id] === 0) visit(nodes[ni].id);
+    // Pass 1: register every alive row as a node (so dangling refs that
+    // happen to point at a known row still resolve).
+    for (var i = 0; i < allMeta.length; i++) {
+      var m = allMeta[i];
+      if (!m || !m.tab) continue;
+      // Skip _config / _prefs / _log and any internal tab.
+      if (m.tab.charAt(0) === '_') continue;
+      var rows;
+      try { rows = await M.db.getAllRows(m.tab); }
+      catch (e) { rows = []; }
+      (rows || []).forEach(function (r) {
+        if (!r || r._deleted) return;
+        ensureNode(r.id, m.tab, r);
+      });
     }
 
-    var edges = [];
-    var cycleEdges = [];
+    // Pass 2: walk every ref column on every section and emit edges.
+    var hasRefColumns = false;
+    for (var j = 0; j < allMeta.length; j++) {
+      var meta = allMeta[j];
+      if (!meta || !meta.tab || !meta.headers || !meta.types) continue;
+      if (meta.tab.charAt(0) === '_') continue;
+
+      var refCols = [];
+      for (var k = 0; k < meta.headers.length; k++) {
+        var t = M.render.parseType(meta.types[k]);
+        if (t.kind === 'ref' && t.refTab) {
+          refCols.push({ name: meta.headers[k], refTab: t.refTab, multi: !!t.multi });
+        }
+      }
+      if (!refCols.length) continue;
+      hasRefColumns = true;
+
+      var rows2;
+      try { rows2 = await M.db.getAllRows(meta.tab); }
+      catch (e) { rows2 = []; }
+      (rows2 || []).forEach(function (r) {
+        if (!r || r._deleted) return;
+        var fromId = String(r.id || '');
+        if (!fromId) return;
+        refCols.forEach(function (c) {
+          var raw = r[c.name];
+          if (raw == null || raw === '') return;
+          var ids = c.multi
+            ? String(raw).split(',').map(function (x) { return x.trim(); }).filter(Boolean)
+            : [String(raw).trim()];
+          ids.forEach(function (toId) {
+            if (!toId) return;
+            // If the target row hasn't been seen, register a stub node so
+            // dangling cross-tab refs still surface in the graph.
+            if (!byId[toId]) ensureNode(toId, c.refTab, null);
+            rawEdges.push({
+              from: fromId,
+              to: toId,
+              fromTab: meta.tab,
+              toTab: c.refTab
+            });
+          });
+        });
+      });
+    }
+
+    // Strip self-edges out of the cycle/DAG split so they don't bleed
+    // into the dashed cycle arcs; the renderer treats e.from === e.to
+    // as a self-loop badge instead.
+    var nonSelf = [];
+    var selfFromData = [];
     rawEdges.forEach(function (e) {
-      if (cycleSet[e.from + '->' + e.to]) cycleEdges.push(e);
-      else edges.push(e);
+      if (e.from === e.to) selfFromData.push(e);
+      else nonSelf.push(e);
     });
 
-    return { nodes: nodes, edges: edges, cycleEdges: cycleEdges };
+    var split = splitCycleEdges(nodes, nonSelf);
+
+    // Habit-tab nodes get a synthetic self-loop. This is the schema-
+    // level signal of "recurring" — the renderer draws the loop indicator
+    // when it sees an edge with from === to.
+    var selfLoopEdges = selfFromData.slice();
+    var habitSeen = {};
+    selfFromData.forEach(function (e) { habitSeen[e.from] = true; });
+    nodes.forEach(function (n) {
+      if (n.tab === 'habits' && !habitSeen[n.id]) {
+        selfLoopEdges.push({
+          from: n.id, to: n.id, selfLoop: true,
+          fromTab: 'habits', toTab: 'habits'
+        });
+      }
+    });
+
+    var tabs = Object.keys(tabsSet).sort();
+    return {
+      nodes: nodes,
+      edges: split.edges.concat(selfLoopEdges),
+      cycleEdges: split.cycleEdges,
+      tabs: tabs,
+      hasRefColumns: hasRefColumns
+    };
   }
 
   // ---- layered-DAG layout ----------------------------------------------
@@ -155,6 +307,7 @@
     });
     edges.forEach(function (e) {
       if (!inAdj[e.to] || !outAdj[e.from]) return;
+      if (e.from === e.to) return; // self-loops don't affect layering
       inAdj[e.to].push(e.from);
       outAdj[e.from].push(e.to);
       indeg[e.to]++;
@@ -325,18 +478,40 @@
   function renderGraph(host, data) {
     if (!host) return;
     host.innerHTML = '';
-    host.classList.add('graph-host');
 
     var nodes = (data && data.nodes) || [];
     var edges = (data && data.edges) || [];
     var cycleEdges = (data && data.cycleEdges) || [];
     var tab = data && data.tab;
+    var tabsList = (data && data.tabs) || null;
+    var emptyMsg = (data && data.emptyMessage) ||
+      'No nodes — create some rows in this section to see the graph.';
+
+    // When a chip filter is requested, wrap the SVG in a container so
+    // chips sit above the graph host without leaking out of overflow.
+    var graphHost = host;
+    var chipsRow = null;
+    if (tabsList && tabsList.length) {
+      // Caller's host may already carry .graph-host (legacy) — strip it
+      // since the inner canvas is the actual scroll/pan target.
+      host.classList.remove('graph-host');
+      chipsRow = document.createElement('div');
+      chipsRow.className = 'graph-chips';
+      var canvasHost = document.createElement('div');
+      canvasHost.className = 'graph-host';
+      host.classList.add('graph-wrap');
+      host.appendChild(chipsRow);
+      host.appendChild(canvasHost);
+      graphHost = canvasHost;
+    } else {
+      host.classList.add('graph-host');
+    }
 
     if (!nodes.length) {
       var empty = document.createElement('div');
       empty.className = 'graph-empty';
-      empty.textContent = 'No nodes — create some rows in this section to see the graph.';
-      host.appendChild(empty);
+      empty.textContent = emptyMsg;
+      graphHost.appendChild(empty);
       return;
     }
 
@@ -375,6 +550,7 @@
 
     // Forward edges.
     edges.forEach(function (e) {
+      if (e.from === e.to) return; // self-loops drawn as node badges
       var p1 = positions[e.from];
       var p2 = positions[e.to];
       if (!p1 || !p2) return;
@@ -387,7 +563,9 @@
       var path = svgEl('path', {
         class: 'graph-edge',
         d: buildEdgePath(p1t, p2t),
-        'marker-end': 'url(#minerva-graph-arrow)'
+        'marker-end': 'url(#minerva-graph-arrow)',
+        'data-from-tab': e.fromTab || '',
+        'data-to-tab': e.toTab || ''
       });
       edgesG.appendChild(path);
     });
@@ -400,23 +578,27 @@
       var path = svgEl('path', {
         class: 'graph-edge graph-edge-cycle',
         d: buildCyclePath(p1, p2),
-        'marker-end': 'url(#minerva-graph-arrow)'
+        'marker-end': 'url(#minerva-graph-arrow)',
+        'data-from-tab': e.fromTab || '',
+        'data-to-tab': e.toTab || ''
       });
       edgesG.appendChild(path);
     });
 
-    // Habit nodes (whole habits tab) get a self-loop badge as a schema-level
-    // signal of "recurring." Other tabs only get a self-loop when the row's
-    // own data points at itself.
-    var habitTab = tab === 'habits';
+    // Habit nodes get a self-loop badge as a schema-level signal of
+    // "recurring." Other tabs only get a self-loop when the row's own
+    // data points at itself.
+    var singleHabitTab = tab === 'habits';
 
     nodes.forEach(function (n) {
       var p = positions[n.id];
       if (!p) return;
+      var nodeTab = n.tab || tab || '';
       var g = svgEl('g', {
         class: 'graph-node',
         tabindex: '0',
         'data-row-id': n.id,
+        'data-tab': nodeTab,
         transform: 'translate(' + p.x + ',' + p.y + ')'
       });
       g.appendChild(svgEl('circle', { r: NODE_R, cx: 0, cy: 0 }));
@@ -426,7 +608,8 @@
       edges.concat(cycleEdges).forEach(function (e) {
         if (e.from === n.id && e.to === n.id) selfRef = true;
       });
-      if (habitTab || selfRef) {
+      var isHabit = singleHabitTab || nodeTab === 'habits';
+      if (isHabit || selfRef) {
         g.appendChild(svgEl('circle', {
           class: 'graph-self-loop',
           cx: NODE_R + 6, cy: -NODE_R - 2, r: 4,
@@ -448,11 +631,12 @@
 
       var openDetail = function () {
         var rowId = n.id;
+        var detailTab = nodeTab;
         if (M.app && typeof M.app.showRowDetail === 'function') {
-          M.app.showRowDetail(tab, rowId);
+          M.app.showRowDetail(detailTab, rowId);
         } else {
           // Fall back to URL hash so the existing router can pick it up.
-          location.hash = '#/s/' + tab + '?row=' + encodeURIComponent(rowId);
+          location.hash = '#/s/' + detailTab + '?row=' + encodeURIComponent(rowId);
         }
       };
       g.addEventListener('click', function (ev) {
@@ -469,7 +653,47 @@
       nodesG.appendChild(g);
     });
 
-    host.appendChild(svg);
+    graphHost.appendChild(svg);
+
+    // ---- chip filter -----------------------------------------------------
+    if (chipsRow) {
+      var hidden = {}; // tab => true when hidden
+      function applyVisibility() {
+        // Hide nodes whose tab is hidden.
+        var nodeEls = nodesG.querySelectorAll('.graph-node');
+        for (var i = 0; i < nodeEls.length; i++) {
+          var t = nodeEls[i].getAttribute('data-tab') || '';
+          nodeEls[i].style.display = hidden[t] ? 'none' : '';
+        }
+        // Hide edges whose endpoint tab is hidden.
+        var edgeEls = edgesG.querySelectorAll('.graph-edge');
+        for (var j = 0; j < edgeEls.length; j++) {
+          var ft = edgeEls[j].getAttribute('data-from-tab') || '';
+          var tt = edgeEls[j].getAttribute('data-to-tab') || '';
+          edgeEls[j].style.display = (hidden[ft] || hidden[tt]) ? 'none' : '';
+        }
+      }
+      tabsList.forEach(function (t) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'graph-chip is-active';
+        btn.setAttribute('data-tab', t);
+        btn.textContent = tabLabel(t);
+        btn.addEventListener('click', function () {
+          if (hidden[t]) {
+            delete hidden[t];
+            btn.classList.add('is-active');
+            btn.classList.remove('is-hidden');
+          } else {
+            hidden[t] = true;
+            btn.classList.remove('is-active');
+            btn.classList.add('is-hidden');
+          }
+          applyVisibility();
+        });
+        chipsRow.appendChild(btn);
+      });
+    }
 
     // ---- pan + zoom via viewBox manipulation -----------------------------
     var view = { x: 0, y: 0, w: W, h: H };
@@ -482,7 +706,7 @@
     var lastX = 0, lastY = 0;
     var didDrag = false;
 
-    host.addEventListener('wheel', function (ev) {
+    graphHost.addEventListener('wheel', function (ev) {
       ev.preventDefault();
       var rect = svg.getBoundingClientRect();
       var px = (ev.clientX - rect.left) / rect.width;
@@ -501,17 +725,17 @@
       applyView();
     }, { passive: false });
 
-    host.addEventListener('pointerdown', function (ev) {
+    graphHost.addEventListener('pointerdown', function (ev) {
       if (ev.target.closest && ev.target.closest('.graph-node')) return;
       dragging = true;
       didDrag = false;
       dragId = ev.pointerId;
       lastX = ev.clientX;
       lastY = ev.clientY;
-      try { host.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
-      host.classList.add('is-panning');
+      try { graphHost.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+      graphHost.classList.add('is-panning');
     });
-    host.addEventListener('pointermove', function (ev) {
+    graphHost.addEventListener('pointermove', function (ev) {
       if (!dragging || ev.pointerId !== dragId) return;
       var dx = ev.clientX - lastX;
       var dy = ev.clientY - lastY;
@@ -529,16 +753,17 @@
       if (!dragging) return;
       if (ev && ev.pointerId !== dragId) return;
       dragging = false;
-      try { host.releasePointerCapture(dragId); } catch (e) { /* ignore */ }
-      host.classList.remove('is-panning');
+      try { graphHost.releasePointerCapture(dragId); } catch (e) { /* ignore */ }
+      graphHost.classList.remove('is-panning');
     }
-    host.addEventListener('pointerup', endDrag);
-    host.addEventListener('pointercancel', endDrag);
-    host.addEventListener('pointerleave', function (ev) { if (dragging) endDrag(ev); });
+    graphHost.addEventListener('pointerup', endDrag);
+    graphHost.addEventListener('pointercancel', endDrag);
+    graphHost.addEventListener('pointerleave', function (ev) { if (dragging) endDrag(ev); });
   }
 
   M.graph = {
     buildGraphFromTab: buildGraphFromTab,
+    buildGraphFromAll: buildGraphFromAll,
     renderGraph: renderGraph
   };
 })();
