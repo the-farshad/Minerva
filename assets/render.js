@@ -178,6 +178,7 @@
       ic.className = i <= n ? 'star-on' : 'star-off';
       s.appendChild(ic);
     }
+    scheduleRefresh();
     return s;
   }
 
@@ -203,6 +204,7 @@
     var i = document.createElement('i');
     i.setAttribute('data-lucide', on ? 'check-square' : 'square');
     s.appendChild(i);
+    scheduleRefresh();
     return s;
   }
 
@@ -242,6 +244,7 @@
       var ei = document.createElement('i');
       ei.setAttribute('data-lucide', 'eye');
       btn.appendChild(ei);
+      scheduleRefresh();
       btn.addEventListener('click', function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
@@ -423,6 +426,7 @@
     i.className = 'icon icon-lucide';
     i.setAttribute('data-lucide', s.toLowerCase());
     if (opts.size) i.setAttribute('data-lucide-size', String(opts.size));
+    scheduleRefresh();
     return i;
   }
 
@@ -432,6 +436,24 @@
     if (window.lucide && typeof window.lucide.createIcons === 'function') {
       try { window.lucide.createIcons(); } catch (e) { /* ignore */ }
     }
+  }
+
+  // Coalesced auto-refresh. Any code path that creates a fresh
+  // <i data-lucide> placeholder calls this; the actual createIcons()
+  // runs once on the next animation frame, batching every placeholder
+  // mounted during the current task. Defends against the long tail of
+  // event-handler / modal / async paths that mount icons after the
+  // route()-level refreshIcons() has already fired.
+  var refreshScheduled = false;
+  function scheduleRefresh() {
+    if (refreshScheduled) return;
+    refreshScheduled = true;
+    var run = function () {
+      refreshScheduled = false;
+      refreshIcons();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    else setTimeout(run, 0);
   }
 
   window.Minerva = window.Minerva || {};
