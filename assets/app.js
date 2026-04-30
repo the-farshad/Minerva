@@ -607,8 +607,11 @@
       var classes = 'onboarding-step';
       if (done) classes += ' is-done';
       if (current) classes += ' is-current';
+      var num = el('span', { class: 'onboarding-num' });
+      if (done) num.appendChild(M.render.icon('check'));
+      else num.appendChild(document.createTextNode(String(n)));
       return el('li', { class: classes },
-        el('span', { class: 'onboarding-num' }, done ? '✓' : String(n)),
+        num,
         el('div', { class: 'onboarding-body' },
           el('h3', null, title),
           el('p', null, body)
@@ -2072,7 +2075,7 @@
               return;
             }
             var row = await addRow('notes', meta.headers);
-            if (meta.headers.indexOf('title') >= 0) row.title = '🤝 ' + (poll.t || 'meeting') + ' (aggregate)';
+            if (meta.headers.indexOf('title') >= 0) row.title = (poll.t || 'meeting') + ' — meet aggregate';
             if (meta.headers.indexOf('body') >= 0) {
               row.body = '**Aggregate URL:** ' + pageUrl + '\n\n' +
                 '**Participant URL:** ' + location.origin + location.pathname + '#/meet/' + pollToken + '\n\n' +
@@ -2604,7 +2607,10 @@
     view.appendChild(el('h3', null, 'Tasks  ',
       el('span', { class: 'small muted' }, '(' + tasks.length + ')')));
     if (!tasks.length) {
-      view.appendChild(el('p', { class: 'muted' }, 'Nothing due today. ✓'));
+      var emptyTasks = el('p', { class: 'muted' });
+      emptyTasks.appendChild(document.createTextNode('Nothing due today. '));
+      emptyTasks.appendChild(M.render.icon('check'));
+      view.appendChild(emptyTasks);
     } else {
       var ul = el('ul', { class: 'today-list' });
       tasks.forEach(function (t) {
@@ -2615,6 +2621,7 @@
           class: 'today-check',
           type: 'button',
           title: 'Mark done',
+          'aria-label': 'Mark task done',
           onclick: async function () {
             doneBtn.disabled = true;
             await markTaskDone(t.id);
@@ -2622,7 +2629,8 @@
             li.style.textDecoration = 'line-through';
             setTimeout(function () { li.remove(); }, 300);
           }
-        }, '✓');
+        });
+        doneBtn.appendChild(M.render.icon('check'));
         li.appendChild(doneBtn);
         var titleSpan = el('a', {
           class: 'today-title',
@@ -2648,7 +2656,10 @@
       view.appendChild(el('p', { class: 'muted' },
         'No habits yet — ', el('a', { href: '#/s/habits' }, 'add one →')));
     } else if (!habitsLeft.length) {
-      view.appendChild(el('p', { class: 'muted' }, 'All done for today. 🔥'));
+      var allDone = el('p', { class: 'muted' });
+      allDone.appendChild(document.createTextNode('All done for today. '));
+      allDone.appendChild(M.render.icon('flame'));
+      view.appendChild(allDone);
     } else {
       var hwrap = el('div', { class: 'today-habits' });
       habitsLeft.forEach(function (h) {
@@ -2662,7 +2673,9 @@
             card.style.opacity = '0.5';
             setTimeout(function () { card.remove(); }, 300);
           }
-        }, '✓ Done');
+        });
+        btn.appendChild(M.render.icon('check'));
+        btn.appendChild(document.createTextNode(' Done'));
         card.appendChild(btn);
         hwrap.appendChild(card);
       });
@@ -2845,19 +2858,26 @@
             'Target: ', el('code', null, String(h.target)) + ' / day'));
         }
         card.appendChild(renderHeatmap(byDate, 12, h.color || 'var(--accent)'));
-        card.appendChild(el('div', { class: 'habit-actions' },
-          el('button', {
-            class: 'btn' + (done ? ' btn-ghost' : ''),
-            type: 'button',
-            onclick: async function () {
-              try {
-                await logHabitToday(h.id);
-                await refresh();
-              } catch (e) {
-                flash(view, 'Could not log: ' + e.message, 'error');
-              }
+        var habitDoneBtn2 = el('button', {
+          class: 'btn' + (done ? ' btn-ghost' : ''),
+          type: 'button',
+          onclick: async function () {
+            try {
+              await logHabitToday(h.id);
+              await refresh();
+            } catch (e) {
+              flash(view, 'Could not log: ' + e.message, 'error');
             }
-          }, done ? 'Log another today' : '✓ Done today'),
+          }
+        });
+        if (done) {
+          habitDoneBtn2.appendChild(document.createTextNode('Log another today'));
+        } else {
+          habitDoneBtn2.appendChild(M.render.icon('check'));
+          habitDoneBtn2.appendChild(document.createTextNode(' Done today'));
+        }
+        card.appendChild(el('div', { class: 'habit-actions' },
+          habitDoneBtn2,
           el('a', { class: 'btn btn-ghost',
             href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Edit in Sheets ↗')
         ));
@@ -3778,7 +3798,12 @@
               el('h4', null, p.title),
               el('p', { class: 'small muted' }, p.description),
               taken
-                ? el('span', { class: 'small muted' }, '✓ already added')
+                ? (function () {
+                    var tag = el('span', { class: 'small muted' });
+                    tag.appendChild(M.render.icon('check'));
+                    tag.appendChild(document.createTextNode(' already added'));
+                    return tag;
+                  })()
                 : el('button', { class: 'btn btn-ghost', type: 'button',
                     onclick: async function () {
                       try {
@@ -5383,7 +5408,7 @@
     bodyRow.appendChild(bodyTa);
     if (voiceBtn) bodyRow.appendChild(voiceBtn);
     var bodyField = field('Body', bodyRow,
-      voiceBtn ? 'Click 🎤 for voice capture (Web Speech API).' : null);
+      voiceBtn ? 'Click the mic button for voice capture (Web Speech API).' : null);
 
     var form = el('form', { class: 'modal-panel capture-panel',
       onclick: function (e) { e.stopPropagation(); },

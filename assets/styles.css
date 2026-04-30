@@ -1316,12 +1316,15 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   border: 1px solid var(--border);
   background: var(--bg);
   border-radius: 4px;
-  font-size: 0.8rem;
-  color: transparent;
   cursor: pointer;
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
   transition: border-color .12s, color .12s, background .12s;
 }
+.today-check svg { width: 0.95em; height: 0.95em; stroke-width: 2.4; }
 .today-check:hover {
   border-color: var(--ok);
   color: var(--ok);
@@ -1865,15 +1868,19 @@ table.rows tr.row-dirty td:first-child {
   appearance: none;
   border: 0;
   background: transparent;
-  color: #cccccc;
-  font-size: 1.2rem;
-  line-height: 1;
-  padding: 0 0.05rem;
+  color: var(--border);
+  padding: 0.1rem 0.15rem;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: color .1s, transform .05s;
 }
+.star-btn svg { width: 1.1rem; height: 1.1rem; }
 .star-btn.on { color: #f4ba2a; }
+.star-btn.on svg { fill: currentColor; }
 .star-btn:hover { color: #f4ba2a; transform: scale(1.1); }
+.star-btn:hover svg { fill: currentColor; }
 .star-btn:active { transform: scale(0.95); }
 
 /* progress slider */
@@ -2107,10 +2114,15 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 
 /* stars */
 .stars {
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: 0.04em;
+  display: inline-flex;
+  gap: 1px;
   color: #f4ba2a;
+  line-height: 1;
 }
+.stars svg { width: 0.95em; height: 0.95em; }
+.stars .star-on   { color: #f4ba2a; fill: #f4ba2a; }
+.stars .star-on   svg { fill: currentColor; }
+.stars .star-off  { color: var(--border); }
 
 /* chip / chips */
 .chip {
@@ -2142,7 +2154,12 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 .chip-ref:hover { color: var(--accent); border-color: var(--accent); }
 
 /* check */
-.check { font-size: 1rem; line-height: 1; }
+.check {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+.check svg { width: 1em; height: 1em; }
 .check-on { color: var(--ok); }
 .check-off { color: var(--muted); }
 
@@ -2165,13 +2182,15 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 0.78rem;
-  padding: 0 0.35rem;
+  padding: 0.1rem 0.3rem;
   border-radius: 4px;
   cursor: pointer;
-  line-height: 1.4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: color .12s, border-color .12s, background .12s;
 }
+.cell-preview svg { width: 0.95em; height: 0.95em; }
 .cell-preview:hover {
   color: var(--accent);
   border-color: var(--accent);

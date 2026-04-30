@@ -165,14 +165,19 @@
               var star = document.createElement('button');
               star.type = 'button';
               star.className = 'star-btn' + (val <= n ? ' on' : '');
-              star.textContent = val <= n ? '★' : '☆';
               star.title = val + ' / ' + max;
+              var ic = document.createElement('i');
+              ic.setAttribute('data-lucide', 'star');
+              star.appendChild(ic);
               star.addEventListener('click', function (e) {
                 e.preventDefault();
                 onCommit(String(val));
               });
               rwrap.appendChild(star);
             })(i);
+          }
+          if (window.lucide && window.lucide.createIcons) {
+            try { window.lucide.createIcons(); } catch (e) { /* ignore */ }
           }
         }
         paintStars(current);
