@@ -3227,7 +3227,8 @@
       },
       function onCancel() {
         endEdit(M.render.renderCell(current, col.type));
-      }
+      },
+      { tab: tab, rowId: row.id, col: col.name }
     );
     td.classList.add('editing');
     td.replaceChildren(editor);
@@ -4384,6 +4385,27 @@
         var slug = decodeURIComponent(sectionMatch[1]);
         view = await viewSection(slug);
         active = '#/s/' + encodeURIComponent(slug);
+      } else if ((sectionMatch = hash.match(/^#\/draw\/([^/]+)\/([^?]+)(?:\?(.*))?$/))) {
+        // Sketch editor — `M.draw.openEditor` mounts directly into #content
+        // because the canvas needs to size against the live viewport, not a
+        // detached subtree. Return null and let the post-route logic skip
+        // replaceChildren (handled below).
+        var drawTab = decodeURIComponent(sectionMatch[1]);
+        var drawRowId = decodeURIComponent(sectionMatch[2]);
+        var qs = sectionMatch[3] || '';
+        var drawCol = '';
+        qs.split('&').forEach(function (kv) {
+          var p = kv.split('=');
+          if (decodeURIComponent(p[0] || '') === 'col') drawCol = decodeURIComponent(p[1] || '');
+        });
+        if (!drawCol) {
+          view = viewNotFound(hash);
+        } else {
+          renderNav('');
+          M.draw.openEditor(drawTab, drawRowId, drawCol);
+          setBusy(false);
+          return;
+        }
       } else {
         view = viewNotFound(hash);
       }
@@ -4970,28 +4992,55 @@
         'data-col': h, 'data-type': type
       });
       var parsed = M.render.parseType(type);
-      if (parsed.kind === 'drawing' && row[h]) {
-        var raw = String(row[h]).trim();
-        var src = /^(https?:|data:)/i.test(raw)
-          ? raw
-          : 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(raw) + '&sz=w800';
-        var big = el('img', {
-          class: 'cell-drawing row-detail-drawing',
-          loading: 'lazy',
-          alt: '',
-          src: src
+      if (parsed.kind === 'drawing') {
+        var raw = String(row[h] || '').trim();
+        if (raw && raw !== 'pending') {
+          var src = /^(https?:|data:)/i.test(raw)
+            ? raw
+            : 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(raw) + '&sz=w800';
+          var big = el('img', {
+            class: 'cell-drawing row-detail-drawing',
+            loading: 'lazy',
+            alt: '',
+            src: src
+          });
+          big.onerror = function () {
+            var fb = el('span', { class: 'muted small cell-drawing-fallback' }, '[' + raw + ']');
+            if (big.parentNode) big.parentNode.replaceChild(fb, big);
+          };
+          valueEl.appendChild(big);
+        } else if (raw === 'pending') {
+          valueEl.appendChild(el('span', { class: 'muted small' }, 'Sketch saved locally — uploads on next sync.'));
+        } else {
+          valueEl.appendChild(el('span', { class: 'muted small' }, '— no sketch yet —'));
+        }
+        var editBtn = el('button', {
+          class: 'btn btn-ghost row-detail-draw-edit',
+          type: 'button',
+          onclick: function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            location.hash = '#/draw/' + encodeURIComponent(tab) +
+                            '/' + encodeURIComponent(rowId) +
+                            '?col=' + encodeURIComponent(h);
+          }
         });
-        big.onerror = function () {
-          var fb = el('span', { class: 'muted small cell-drawing-fallback' }, '[' + raw + ']');
-          if (big.parentNode) big.parentNode.replaceChild(fb, big);
-        };
-        valueEl.appendChild(big);
+        editBtn.appendChild(M.render.icon('pencil-line'));
+        editBtn.appendChild(document.createTextNode(' ' + (raw ? 'Edit sketch' : 'Draw sketch')));
+        valueEl.appendChild(editBtn);
       } else {
         valueEl.appendChild(M.render.renderCell(row[h], type));
       }
 
       function startEditField() {
         if (valueEl.classList.contains('editing')) return;
+        // Drawings are opened via the explicit Edit button — not inline.
+        if (parsed.kind === 'drawing') {
+          location.hash = '#/draw/' + encodeURIComponent(tab) +
+                          '/' + encodeURIComponent(rowId) +
+                          '?col=' + encodeURIComponent(h);
+          return;
+        }
         var current = row[h];
         var editor = M.editors.make(current, type,
           async function (newValue) {
@@ -5005,7 +5054,8 @@
           function () {
             valueEl.classList.remove('editing');
             valueEl.replaceChildren(M.render.renderCell(current, type));
-          }
+          },
+          { tab: tab, rowId: rowId, col: h }
         );
         valueEl.classList.add('editing');
         valueEl.replaceChildren(editor);
@@ -5074,6 +5124,7 @@
 
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
+    M.render.refreshIcons();
 
     panel.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && !document.activeElement.closest('.editing')) {

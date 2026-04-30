@@ -1,21 +1,24 @@
 /* Minerva — local IndexedDB store.
  *
- * One database with two stores:
- *   rows  — keyed by [tab, id]; one row per row in the user's spreadsheet.
- *           Carries the data fields plus internal metadata: _rowIndex,
- *           _updated (string), _dirty (1|0 — for Phase 3 push), _deleted (1|0).
- *           Indexes: byTab, byTabUpdated, byTabDirty.
- *   meta  — keyed by tab; per-tab schema cache (headers, types) plus
- *           sync metadata (lastPulledAt, lastPushedAt).
+ * One database with three stores:
+ *   rows     — keyed by [tab, id]; one row per row in the user's spreadsheet.
+ *              Carries the data fields plus internal metadata: _rowIndex,
+ *              _updated (string), _dirty (1|0 — for Phase 3 push), _deleted (1|0).
+ *              Indexes: byTab, byTabUpdated, byTabDirty.
+ *   meta     — keyed by tab; per-tab schema cache (headers, types) plus
+ *              sync metadata (lastPulledAt, lastPushedAt).
+ *   drawings — keyed by [tab, rowId, col]; pending sketch payloads
+ *              ({ strokes, svg, _dirty, _updated, _fileId? }) waiting for
+ *              upload to Drive. Added in v2 for the touch-canvas editor.
  *
- * The store is intentionally generic — there is no table per section. Adding
- * a section in `_config` does not require an IndexedDB schema bump.
+ * The rows/meta stores are intentionally generic — adding a section in
+ * `_config` does not require an IndexedDB schema bump.
  */
 (function () {
   'use strict';
 
   var DB_NAME = 'minerva';
-  var DB_VERSION = 1;
+  var DB_VERSION = 2;
   var _db = null;
 
   function open() {
@@ -24,6 +27,8 @@
       var req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = function (e) {
         var db = e.target.result;
+        // v1 → rows + meta. Guarded with `contains` so re-running on a
+        // fresh DB and on an existing DB are both safe.
         if (!db.objectStoreNames.contains('rows')) {
           var rows = db.createObjectStore('rows', { keyPath: ['tab', 'id'] });
           rows.createIndex('byTab', 'tab', { unique: false });
@@ -32,6 +37,11 @@
         }
         if (!db.objectStoreNames.contains('meta')) {
           db.createObjectStore('meta', { keyPath: 'tab' });
+        }
+        // v2 → drawings store for the sketch editor. Existing rows/meta
+        // are untouched on upgrade — only the new store is created.
+        if (!db.objectStoreNames.contains('drawings')) {
+          db.createObjectStore('drawings', { keyPath: ['tab', 'rowId', 'col'] });
         }
       };
       req.onsuccess = function () {
@@ -140,13 +150,50 @@
     return reqP(tx(db, 'meta').getAll());
   }
 
+  // --- drawings -------------------------------------------------
+
+  async function getDrawing(tab, rowId, col) {
+    var db = await open();
+    return reqP(tx(db, 'drawings').get([tab, rowId, col]));
+  }
+
+  async function putDrawing(tab, rowId, col, payload) {
+    var db = await open();
+    var rec = Object.assign({}, payload, { tab: tab, rowId: rowId, col: col });
+    return reqP(tx(db, 'drawings', 'readwrite').put(rec));
+  }
+
+  async function deleteDrawing(tab, rowId, col) {
+    var db = await open();
+    return reqP(tx(db, 'drawings', 'readwrite').delete([tab, rowId, col]));
+  }
+
+  async function getDirtyDrawingsForRow(tab, rowId) {
+    var db = await open();
+    var store = tx(db, 'drawings');
+    // Compound key range: every entry whose [tab,rowId,*] prefix matches.
+    var range = IDBKeyRange.bound([tab, rowId, ''], [tab, rowId, '￿']);
+    return new Promise(function (resolve, reject) {
+      var out = [];
+      var c = store.openCursor(range);
+      c.onsuccess = function () {
+        var cur = c.result;
+        if (!cur) { resolve(out); return; }
+        if (cur.value && cur.value._dirty) out.push(cur.value);
+        cur.continue();
+      };
+      c.onerror = function () { reject(c.error); };
+    });
+  }
+
   // --- bulk ops -------------------------------------------------
 
   async function clearAll() {
     var db = await open();
     await Promise.all([
       reqP(db.transaction('rows', 'readwrite').objectStore('rows').clear()),
-      reqP(db.transaction('meta', 'readwrite').objectStore('meta').clear())
+      reqP(db.transaction('meta', 'readwrite').objectStore('meta').clear()),
+      reqP(db.transaction('drawings', 'readwrite').objectStore('drawings').clear())
     ]);
   }
 
@@ -187,6 +234,10 @@
     getAllMeta: getAllMeta,
     clearAll: clearAll,
     close: close,
-    ulid: ulid
+    ulid: ulid,
+    getDrawing: getDrawing,
+    putDrawing: putDrawing,
+    deleteDrawing: deleteDrawing,
+    getDirtyDrawingsForRow: getDirtyDrawingsForRow
   };
 })();

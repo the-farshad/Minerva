@@ -83,6 +83,47 @@
     return 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(ssId) + '/edit';
   }
 
+  // Generic multipart upload to Drive. Creates a new file (POST) or updates
+  // an existing one (PATCH). Returns the parsed Drive response (which carries
+  // `id` for the file). Used by ical.js and draw.js so the multipart
+  // boilerplate lives in one place.
+  async function uploadDriveFile(token, name, mimeType, content, existingFileId) {
+    var boundary = 'minerva-boundary-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    var metadata = { name: name, mimeType: mimeType };
+    var body =
+      '--' + boundary + '\r\n' +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      JSON.stringify(metadata) + '\r\n' +
+      '--' + boundary + '\r\n' +
+      'Content-Type: ' + mimeType + '\r\n\r\n' +
+      content + '\r\n' +
+      '--' + boundary + '--';
+    var url, method;
+    if (existingFileId) {
+      url = 'https://www.googleapis.com/upload/drive/v3/files/' + encodeURIComponent(existingFileId) +
+            '?uploadType=multipart&fields=id,webViewLink';
+      method = 'PATCH';
+    } else {
+      url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink';
+      method = 'POST';
+    }
+    var resp = await fetch(url, {
+      method: method,
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'multipart/related; boundary=' + boundary
+      },
+      body: body
+    });
+    if (!resp.ok) {
+      var text = await resp.text();
+      var err = new Error('Drive upload ' + resp.status + ': ' + text.slice(0, 300));
+      err.status = resp.status;
+      throw err;
+    }
+    return resp.json();
+  }
+
   window.Minerva = window.Minerva || {};
   window.Minerva.sheets = {
     findByName: findByName,
@@ -92,6 +133,7 @@
     getValues: getValues,
     updateValues: updateValues,
     appendValues: appendValues,
-    spreadsheetUrl: spreadsheetUrl
+    spreadsheetUrl: spreadsheetUrl,
+    uploadDriveFile: uploadDriveFile
   };
 })();

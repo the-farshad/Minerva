@@ -57,11 +57,43 @@
     });
   }
 
-  function make(value, type, onCommit, onCancel) {
+  function make(value, type, onCommit, onCancel, ctx) {
     var t = (type && typeof type === 'object') ? type : Minerva.render.parseType(type);
     var v = value == null ? '' : String(value);
 
     switch (t.kind) {
+      case 'drawing': {
+        // Drawings can't be edited inline — clicking the cell hands off to
+        // the full-screen canvas editor at #/draw/<tab>/<rowId>?col=<col>.
+        // The button we return is what `startEdit` mounts; clicking it
+        // navigates. ctx must carry { tab, rowId, col } for the route.
+        var db = document.createElement('button');
+        db.type = 'button';
+        db.className = 'editor editor-drawing btn';
+        db.appendChild(Minerva.render.icon('pencil-line'));
+        db.appendChild(document.createTextNode(' ' + (v ? 'Edit sketch…' : 'Open sketch editor…')));
+        db.addEventListener('click', function (e) {
+          e.preventDefault();
+          if (!ctx || !ctx.tab || !ctx.rowId || !ctx.col) {
+            if (onCancel) onCancel();
+            return;
+          }
+          location.hash = '#/draw/' + encodeURIComponent(ctx.tab) +
+                          '/' + encodeURIComponent(ctx.rowId) +
+                          '?col=' + encodeURIComponent(ctx.col);
+        });
+        db.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && onCancel) onCancel();
+        });
+        // Auto-navigate on the same tick so a cell-click goes straight in
+        // without a second click — matches user expectation for "click to
+        // edit." A microtask defer lets startEdit finish mounting first.
+        Promise.resolve().then(function () {
+          if (db.isConnected) db.click();
+        });
+        return db;
+      }
+
       case 'check': {
         var cb = document.createElement('input');
         cb.type = 'checkbox';

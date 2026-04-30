@@ -154,6 +154,22 @@
     for (var i = 0; i < dirty.length; i++) {
       var row = dirty[i];
 
+      // Flush any pending drawings for this row first — the multipart upload
+      // produces fileIds that need to land in row cells before we PUT the
+      // row's values to Sheets. If a drawing's upload fails, leave the row
+      // dirty and skip it for now; the next push retries.
+      if (!row._deleted && Minerva.draw && Minerva.draw.flushPending) {
+        try {
+          await Minerva.draw.flushPending(tab, row.id, token);
+          // Re-read the row in case flushPending wrote a fileId into a cell.
+          var refreshed = await Minerva.db.getRow(tab, row.id);
+          if (refreshed) row = refreshed;
+        } catch (e) {
+          console.warn('[Minerva draw] flushPending', tab, row.id, (e && e.message) || e);
+          continue;
+        }
+      }
+
       if (row._deleted) {
         if (row._localOnly || !row._rowIndex) {
           // never reached the sheet — just drop it locally.

@@ -168,37 +168,11 @@
     return (data.files && data.files[0]) || null;
   }
 
-  function multipartBody(metadata, content, mimeType) {
-    var boundary = 'minerva-boundary-' + Date.now();
-    var body =
-      '--' + boundary + '\r\n' +
-      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-      JSON.stringify(metadata) + '\r\n' +
-      '--' + boundary + '\r\n' +
-      'Content-Type: ' + mimeType + '\r\n\r\n' +
-      content + '\r\n' +
-      '--' + boundary + '--';
-    return { body: body, contentType: 'multipart/related; boundary=' + boundary };
-  }
-
-  async function uploadFile(token, existingId, ics) {
-    var metadata = { name: FILE_NAME, mimeType: MIME };
-    if (!existingId) metadata.description = 'Minerva tasks calendar feed (auto-generated, safe to share publicly).';
-    var mp = multipartBody(metadata, ics, MIME);
-    var url, method;
-    if (existingId) {
-      url = 'https://www.googleapis.com/upload/drive/v3/files/' + existingId + '?uploadType=multipart&fields=id,webViewLink';
-      method = 'PATCH';
-    } else {
-      url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink';
-      method = 'POST';
-    }
-    var resp = await authedFetch(token, url, {
-      method: method,
-      headers: { 'Content-Type': mp.contentType },
-      body: mp.body
-    });
-    return resp.json();
+  function uploadFile(token, existingId, ics) {
+    // Delegates to the shared Drive multipart helper. The `description` field
+    // on first creation is nice-to-have but the helper keeps the metadata
+    // minimal — Drive accepts the file just fine without it.
+    return Minerva.sheets.uploadDriveFile(token, FILE_NAME, MIME, ics, existingId);
   }
 
   async function makeWorldReadable(token, fileId) {
