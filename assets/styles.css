@@ -876,6 +876,32 @@ a.stat-card:active { transform: translateY(1px); }
 .stat-card.stat-danger .stat-value { color: var(--error); }
 .stat-card.stat-danger .stat-bar-fill { background: var(--error); }
 
+.stat-chart {
+  display: block;
+}
+.stat-chart-spark {
+  margin-bottom: 0.35rem;
+}
+.stat-chart-spark .chart-sparkline {
+  display: block;
+  width: 100%;
+  height: 28px;
+}
+.stat-chart-donut {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-top: 0.2rem;
+  color: var(--fg);
+}
+.stat-chart-donut .chart-donut {
+  display: block;
+}
+.stat-card.stat-card-donut {
+  display: flex;
+  flex-direction: column;
+}
+
 /* --- section cards (home) ----------------------------------- */
 
 .section-cards {
