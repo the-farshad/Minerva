@@ -169,11 +169,15 @@
 
   function renderRating(value, t) {
     var n = Math.max(t.min, Math.min(t.max, Number(value) || 0));
-    var s = span('stars');
-    var filled = '★'.repeat(n);
-    var empty = '☆'.repeat(t.max - n);
-    s.textContent = filled + empty;
+    var s = document.createElement('span');
+    s.className = 'stars';
     s.title = n + ' / ' + t.max;
+    for (var i = 1; i <= t.max; i++) {
+      var ic = document.createElement('i');
+      ic.setAttribute('data-lucide', 'star');
+      ic.className = i <= n ? 'star-on' : 'star-off';
+      s.appendChild(ic);
+    }
     return s;
   }
 
@@ -194,7 +198,11 @@
 
   function renderCheck(value) {
     var on = value === true || value === 'TRUE' || value === 'true' || value === 1 || value === '1';
-    var s = span('check' + (on ? ' check-on' : ' check-off'), on ? '☑' : '☐');
+    var s = document.createElement('span');
+    s.className = 'check' + (on ? ' check-on' : ' check-off');
+    var i = document.createElement('i');
+    i.setAttribute('data-lucide', on ? 'check-square' : 'square');
+    s.appendChild(i);
     return s;
   }
 
@@ -229,7 +237,11 @@
       btn.type = 'button';
       btn.className = 'cell-preview';
       btn.title = 'Preview ' + (isPdfUrl(raw) ? 'PDF' : 'video');
-      btn.textContent = '👁';
+      // Eye icon as a Lucide placeholder; lucide.createIcons() runs at the
+      // end of every route() and route() runs after every cell render.
+      var ei = document.createElement('i');
+      ei.setAttribute('data-lucide', 'eye');
+      btn.appendChild(ei);
       btn.addEventListener('click', function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
