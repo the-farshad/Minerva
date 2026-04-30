@@ -340,10 +340,13 @@
       var out = [];
       for (var m of allMeta) {
         if (!m || !m.tab || m.tab.charAt(0) === '_') continue;
+        if (/_log$/.test(m.tab)) continue;
         var rows = await M.db.getAllRows(m.tab);
         rows.forEach(function (r) {
           if (r._deleted) return;
           if (!r._updated) return;
+          var hasLabel = (r.title && String(r.title).trim()) || (r.name && String(r.name).trim());
+          if (!hasLabel) return;
           var ts = Date.parse(r._updated);
           if (!ts) return;
           out.push({ tab: m.tab, row: r, ts: ts });
@@ -438,7 +441,6 @@
         await M.db.upsertRow('tasks', row);
         schedulePush();
         qa.value = '';
-        flash(hero, 'Added: ' + title);
         await route(); // refresh stats inline
         // Re-focus the new quick-add input so the user can keep
         // brain-dumping tasks one after another without reaching
