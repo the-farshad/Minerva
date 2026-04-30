@@ -5014,6 +5014,7 @@
         } else {
           valueEl.appendChild(el('span', { class: 'muted small' }, '— no sketch yet —'));
         }
+        var actions = el('div', { class: 'row-detail-draw-actions' });
         var editBtn = el('button', {
           class: 'btn btn-ghost row-detail-draw-edit',
           type: 'button',
@@ -5027,7 +5028,29 @@
         });
         editBtn.appendChild(M.render.icon('pencil-line'));
         editBtn.appendChild(document.createTextNode(' ' + (raw ? 'Edit sketch' : 'Draw sketch')));
-        valueEl.appendChild(editBtn);
+        actions.appendChild(editBtn);
+
+        if (raw && raw !== 'pending') {
+          var exportBtn = el('button', {
+            class: 'btn btn-ghost row-detail-draw-export',
+            type: 'button',
+            onclick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (M.draw && typeof M.draw.exportPdf === 'function') {
+                M.draw.exportPdf(tab, rowId, h).catch(function (err) {
+                  console.warn('[Minerva draw] export failed', err);
+                  flash(panel, 'Export failed: ' + (err && err.message ? err.message : err), 'error');
+                });
+              }
+            }
+          });
+          exportBtn.appendChild(M.render.icon('file-down'));
+          exportBtn.appendChild(document.createTextNode(' Export PDF'));
+          actions.appendChild(exportBtn);
+        }
+
+        valueEl.appendChild(actions);
       } else {
         valueEl.appendChild(M.render.renderCell(row[h], type));
       }

@@ -2281,7 +2281,16 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 }
 .row-detail-draw-edit {
   display: inline-block;
+}
+.row-detail-draw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   margin-top: 0.5rem;
+  align-items: center;
+}
+.row-detail-draw-export {
+  display: inline-block;
 }
 
 /* full-screen sketch editor (touch canvas) */
