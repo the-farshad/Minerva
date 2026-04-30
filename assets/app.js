@@ -256,7 +256,33 @@
         }).length;
         var pct = tasks.length ? Math.round(100 * done / tasks.length) : 0;
 
-        stats.push({ label: 'Tasks done',  value: done + ' / ' + tasks.length, pct: pct, href: '#/s/tasks' });
+        // 30-day completion sparkline series — bucket done tasks by
+        // _updated date, oldest first. NaN dates fall through.
+        var DAYS = 30;
+        var series = new Array(DAYS);
+        for (var si = 0; si < DAYS; si++) series[si] = 0;
+        var startD = new Date();
+        startD.setHours(0, 0, 0, 0);
+        var startMs = startD.getTime() - (DAYS - 1) * 86400000;
+        var doneRecent = 0;
+        tasks.forEach(function (r) {
+          if (statusOf(r) !== 'done') return;
+          var ts = r._updated ? Date.parse(r._updated) : NaN;
+          if (!isFinite(ts)) return;
+          var idx = Math.floor((ts - startMs) / 86400000);
+          if (idx >= 0 && idx < DAYS) {
+            series[idx]++;
+            doneRecent++;
+          }
+        });
+
+        stats.push({
+          label: 'Tasks done',
+          value: done + ' / ' + tasks.length,
+          pct: pct,
+          href: '#/s/tasks',
+          chart: { kind: 'sparkline', series: series, total: doneRecent }
+        });
         stats.push({ label: 'Due today',   value: String(dueToday), accent: dueToday > 0, href: '#/s/tasks' });
         stats.push({ label: 'Overdue',     value: String(overdue),  danger: overdue > 0,  href: '#/s/tasks' });
       }
@@ -268,7 +294,13 @@
       if (goals.length) {
         var totalProgress = goals.reduce(function (s, r) { return s + (Number(r.progress) || 0); }, 0);
         var avg = goals.length ? Math.round(totalProgress / goals.length) : 0;
-        stats.push({ label: 'Avg goal progress', value: avg + '%', pct: avg, href: '#/s/goals' });
+        stats.push({
+          label: 'Avg goal progress',
+          value: avg + '%',
+          pct: avg,
+          href: '#/s/goals',
+          chart: { kind: 'donut', value: avg, max: 100 }
+        });
       }
     } catch (e) { /* ignore */ }
 
@@ -293,18 +325,36 @@
   }
 
   function renderStatCard(s) {
-    var children = [
-      el('div', { class: 'stat-label' }, s.label),
-      el('div', { class: 'stat-value' }, s.value)
-    ];
-    if (typeof s.pct === 'number') {
-      var bar = el('div', { class: 'stat-bar' });
-      var fill = el('div', { class: 'stat-bar-fill' });
-      fill.style.width = Math.max(0, Math.min(100, s.pct)) + '%';
-      bar.appendChild(fill);
-      children.push(bar);
+    var hasChart = s.chart && M.charts;
+    var isDonut = hasChart && s.chart.kind === 'donut';
+    var isSpark = hasChart && s.chart.kind === 'sparkline';
+
+    var children = [];
+    children.push(el('div', { class: 'stat-label' }, s.label));
+
+    if (isSpark) {
+      var sparkSvg = M.charts.sparkline(s.chart.series, { width: 120, height: 28, fill: true });
+      sparkSvg.setAttribute('aria-label',
+        '30-day task completion: ' + (s.chart.total || 0) + ' done');
+      children.push(el('div', { class: 'stat-chart stat-chart-spark' }, sparkSvg));
+      children.push(el('div', { class: 'stat-value' }, s.value));
+    } else if (isDonut) {
+      var donutSvg = M.charts.donut(s.chart.value, s.chart.max || 100, { size: 56, thickness: 8 });
+      donutSvg.setAttribute('aria-label', s.label + ': ' + s.value);
+      children.push(el('div', { class: 'stat-chart stat-chart-donut' }, donutSvg));
+    } else {
+      children.push(el('div', { class: 'stat-value' }, s.value));
+      if (typeof s.pct === 'number') {
+        var bar = el('div', { class: 'stat-bar' });
+        var fill = el('div', { class: 'stat-bar-fill' });
+        fill.style.width = Math.max(0, Math.min(100, s.pct)) + '%';
+        bar.appendChild(fill);
+        children.push(bar);
+      }
     }
+
     var cls = 'stat-card';
+    if (isDonut) cls += ' stat-card-donut';
     if (s.danger) cls += ' stat-danger';
     else if (s.accent) cls += ' stat-accent';
     if (s.href) {
