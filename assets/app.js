@@ -440,6 +440,13 @@
         qa.value = '';
         flash(hero, 'Added: ' + title);
         await route(); // refresh stats inline
+        // Re-focus the new quick-add input so the user can keep
+        // brain-dumping tasks one after another without reaching
+        // for the mouse.
+        setTimeout(function () {
+          var nextQa = document.querySelector('.home-quick-add');
+          if (nextQa) nextQa.focus();
+        }, 50);
       } catch (err) {
         flash(hero, 'Add failed: ' + (err && err.message ? err.message : err), 'error');
       }
@@ -5586,6 +5593,7 @@
     var rows = [
       ['g', 'Home'],
       ['t', 'Today'],
+      ['n', 'Focus the home quick-add (jumps home if needed)'],
       ['1 – 9', 'Open the Nth section'],
       ['/', 'Quick capture'],
       ['⌘/Ctrl + K', 'Search across everything'],
@@ -5670,6 +5678,18 @@
     if (e.key === 't') { location.hash = '#/today'; return; }
     if (e.key === 's') { location.hash = '#/settings'; return; }
     if (e.key === 'q') { location.hash = '#/share'; return; }
+    if (e.key === 'n') {
+      // Jump cursor to the home quick-add (or take you home first)
+      e.preventDefault();
+      var qa = document.querySelector('.home-quick-add');
+      if (qa) { qa.focus(); return; }
+      location.hash = '#/';
+      setTimeout(function () {
+        var qa2 = document.querySelector('.home-quick-add');
+        if (qa2) qa2.focus();
+      }, 80);
+      return;
+    }
 
     // Section-row navigation when a section view is active and in list mode.
     if (sectionCtx) {
