@@ -505,11 +505,23 @@
       recent.forEach(function (r) {
         var label = r.row.title || r.row.name || r.row.id;
         var li = el('li');
-        var a = el('a', { href: '#/s/' + encodeURIComponent(r.tab), class: 'home-recent-link' });
-        a.appendChild(el('span', { class: 'home-recent-label' }, label));
-        a.appendChild(el('span', { class: 'home-recent-tab small muted' }, r.tab));
-        a.appendChild(el('span', { class: 'home-recent-when small muted' }, M.render.relativeTime(r.ts)));
-        li.appendChild(a);
+        // Detail view in-place; long-press / shift-click goes to section.
+        var btn = el('button', {
+          type: 'button',
+          class: 'home-recent-link',
+          title: 'Open detail (Shift+Click for section)',
+          onclick: function (e) {
+            if (e.shiftKey) {
+              location.hash = '#/s/' + encodeURIComponent(r.tab);
+            } else {
+              showRowDetail(r.tab, r.row.id);
+            }
+          }
+        });
+        btn.appendChild(el('span', { class: 'home-recent-label' }, label));
+        btn.appendChild(el('span', { class: 'home-recent-tab small muted' }, r.tab));
+        btn.appendChild(el('span', { class: 'home-recent-when small muted' }, M.render.relativeTime(r.ts)));
+        li.appendChild(btn);
         ul.appendChild(li);
       });
       recentEl = el('div', { class: 'home-block' },
