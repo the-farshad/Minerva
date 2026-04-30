@@ -3288,6 +3288,46 @@ i[data-lucide] svg {
   text-decoration: line-through;
 }
 
+.graph-layout-toggle {
+  display: flex;
+  flex-direction: row;
+  gap: 0.3rem;
+  padding: 0.15rem 0;
+}
+
+.graph-layout-arm {
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.2;
+}
+
+.graph-layout-arm:hover {
+  border-color: var(--accent);
+}
+
+.graph-layout-arm.is-active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+.graph-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 0.92rem;
+  padding: 1rem;
+  text-align: center;
+}
+
 /* --- print --------------------------------------------------- */
 
 @media print {
