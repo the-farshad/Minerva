@@ -315,76 +315,261 @@
     return el('div', { class: cls }, children);
   }
 
+  function timeOfDayGreeting() {
+    var h = new Date().getHours();
+    if (h < 5)  return 'Up late';
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    if (h < 22) return 'Good evening';
+    return 'Up late';
+  }
+
+  function firstNameFromEmail(email) {
+    if (!email) return '';
+    var local = String(email).split('@')[0];
+    var firstPart = local.split(/[._\-+]/)[0];
+    if (!firstPart) return '';
+    return firstPart.charAt(0).toUpperCase() + firstPart.slice(1).toLowerCase();
+  }
+
+  // Top-N most-recently-touched rows across every section tab.
+  async function recentActivity(limit) {
+    if (!M.db) return [];
+    try {
+      var allMeta = await M.db.getAllMeta();
+      var out = [];
+      for (var m of allMeta) {
+        if (!m || !m.tab || m.tab.charAt(0) === '_') continue;
+        var rows = await M.db.getAllRows(m.tab);
+        rows.forEach(function (r) {
+          if (r._deleted) return;
+          if (!r._updated) return;
+          var ts = Date.parse(r._updated);
+          if (!ts) return;
+          out.push({ tab: m.tab, row: r, ts: ts });
+        });
+      }
+      out.sort(function (a, b) { return b.ts - a.ts; });
+      return out.slice(0, limit || 5);
+    } catch (e) { return []; }
+  }
+
   async function viewHome() {
     var cfg = readConfig();
     var st = M.auth ? M.auth.getState() : { hasToken: false, email: null };
     var connected = st.hasToken && cfg.spreadsheetId;
 
-    if (connected) {
-      var stats = await buildStats();
-      var sections = sectionRows();
-      var cards = await Promise.all(sections.map(async function (r) {
-        var count = 0, lastSync = null;
-        try {
-          count = await M.db.countTab(r.tab);
-          var meta = await M.db.getMeta(r.tab);
-          if (meta) lastSync = meta.lastPulledAt || null;
-        } catch (e) { /* ignore */ }
-        var iconWrap = el('div', { class: 'section-card-icon' });
-        iconWrap.appendChild(M.render.icon(r.icon || 'circle'));
-        return el('a', { class: 'section-card', href: '#/s/' + encodeURIComponent(r.slug) },
-          iconWrap,
-          el('div', { class: 'section-card-body' },
-            el('h3', null, r.title || r.slug),
-            el('p', { class: 'small muted' },
-              count + ' row' + (count === 1 ? '' : 's'),
-              lastSync ? ' · synced ' + M.render.relativeTime(lastSync) : ''
-            )
+    if (connected) return await viewHomeConnected(cfg, st);
+    return viewHomeLanding(cfg, st);
+  }
+
+  async function viewHomeConnected(cfg, st) {
+    // Headline numbers — same data the nav badge uses, surfaced inline.
+    var today = todayStr();
+    var tasks = (await M.db.getAllRows('tasks').catch(function () { return []; }))
+      .filter(function (r) { return !r._deleted && String(r.status || '').toLowerCase() !== 'done'; });
+    var dueToday = tasks.filter(function (r) {
+      return r.due && String(r.due).slice(0, 10) === today;
+    }).length;
+    var overdue = tasks.filter(function (r) {
+      return r.due && String(r.due).slice(0, 10) < today;
+    }).length;
+
+    var todaysEventsCount = 0;
+    try {
+      var startOfTodayD = new Date(); startOfTodayD.setHours(0, 0, 0, 0);
+      var endOfTodayD = new Date(startOfTodayD.getTime() + 86400000);
+      var allMeta = await M.db.getAllMeta();
+      for (var m of allMeta) {
+        if (!m || !m.headers) continue;
+        if (m.headers.indexOf('start') < 0 || m.headers.indexOf('end') < 0) continue;
+        var rows = await M.db.getAllRows(m.tab);
+        rows.forEach(function (r) {
+          if (r._deleted || !r.start) return;
+          var s = new Date(r.start);
+          if (isNaN(s.getTime())) return;
+          if (s >= startOfTodayD && s < endOfTodayD) todaysEventsCount++;
+        });
+      }
+    } catch (e) { /* non-fatal */ }
+
+    var habitsLeft = 0;
+    try {
+      var habits = (await M.db.getAllRows('habits')).filter(function (h) { return !h._deleted; });
+      var logs = (await M.db.getAllRows('habit_log')).filter(function (l) { return !l._deleted; });
+      var done = {};
+      logs.forEach(function (l) { if (String(l.date).slice(0, 10) === today) done[l.habit_id] = true; });
+      habitsLeft = habits.filter(function (h) { return !done[h.id]; }).length;
+    } catch (e) { /* ignore */ }
+
+    // ---- hero -----------------------------------------------------------
+    var greeting = timeOfDayGreeting();
+    var name = firstNameFromEmail(st.email);
+    var greet = greeting + (name ? ', ' + name : '');
+    var dateStr = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+
+    var hero = el('header', { class: 'home-hero' },
+      el('h2', { class: 'home-hero-greet' }, greet),
+      el('p', { class: 'home-hero-date' }, dateStr)
+    );
+
+    // Quick-add: same shape as Today's, surfaced on home.
+    var qa = document.createElement('input');
+    qa.type = 'text';
+    qa.className = 'home-quick-add';
+    qa.placeholder = 'Add a task…  (Enter)';
+    qa.autocomplete = 'off';
+    qa.addEventListener('keydown', async function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      var title = qa.value.trim();
+      if (!title) return;
+      try {
+        var meta = await M.db.getMeta('tasks');
+        if (!meta || !meta.headers) {
+          flash(hero, 'No tasks tab synced yet.', 'error');
+          return;
+        }
+        var row = await addRow('tasks', meta.headers);
+        row.title = title;
+        if (meta.headers.indexOf('due') >= 0) row.due = today;
+        if (meta.headers.indexOf('status') >= 0) row.status = 'todo';
+        row._dirty = 1;
+        await M.db.upsertRow('tasks', row);
+        schedulePush();
+        qa.value = '';
+        flash(hero, 'Added: ' + title);
+        await route(); // refresh stats inline
+      } catch (err) {
+        flash(hero, 'Add failed: ' + (err && err.message ? err.message : err), 'error');
+      }
+    });
+    hero.appendChild(qa);
+
+    // Today summary pill (only when there's something to surface).
+    var todayItems = [];
+    if (overdue) todayItems.push({ icon: 'alert-triangle', text: overdue + ' overdue', cls: 'today-pill-danger' });
+    if (dueToday) todayItems.push({ icon: 'calendar', text: dueToday + ' due today' });
+    if (todaysEventsCount) todayItems.push({ icon: 'users', text: todaysEventsCount + ' event' + (todaysEventsCount === 1 ? '' : 's') });
+    if (habitsLeft) todayItems.push({ icon: 'zap', text: habitsLeft + ' habit' + (habitsLeft === 1 ? '' : 's') + ' left' });
+    if (todayItems.length) {
+      var todayCard = el('a', { class: 'home-today-card', href: '#/today' });
+      var todayHead = el('div', { class: 'home-today-head' });
+      todayHead.appendChild(M.render.icon('sun'));
+      todayHead.appendChild(el('span', { class: 'home-today-title' }, 'Today'));
+      todayHead.appendChild(el('span', { class: 'home-today-arrow' }, '→'));
+      todayCard.appendChild(todayHead);
+      var pillsWrap = el('div', { class: 'home-today-pills' });
+      todayItems.forEach(function (p) {
+        var pill = el('span', { class: 'home-today-pill ' + (p.cls || '') });
+        pill.appendChild(M.render.icon(p.icon));
+        pill.appendChild(document.createTextNode(' ' + p.text));
+        pillsWrap.appendChild(pill);
+      });
+      todayCard.appendChild(pillsWrap);
+      hero.appendChild(todayCard);
+    } else {
+      hero.appendChild(el('p', { class: 'small muted home-empty-today' },
+        'Nothing scheduled for today. ',
+        el('a', { href: '#/today' }, 'View Today →')));
+    }
+
+    // ---- section grid ---------------------------------------------------
+    var sections = sectionRows();
+    var cards = await Promise.all(sections.map(async function (r) {
+      var count = 0, lastSync = null;
+      try {
+        count = await M.db.countTab(r.tab);
+        var meta = await M.db.getMeta(r.tab);
+        if (meta) lastSync = meta.lastPulledAt || null;
+      } catch (e) { /* ignore */ }
+      var iconWrap = el('div', { class: 'section-card-icon' });
+      iconWrap.appendChild(M.render.icon(r.icon || 'circle'));
+      return el('a', { class: 'section-card', href: '#/s/' + encodeURIComponent(r.slug) },
+        iconWrap,
+        el('div', { class: 'section-card-body' },
+          el('h3', null, r.title || r.slug),
+          el('p', { class: 'small muted' },
+            count + ' row' + (count === 1 ? '' : 's'),
+            lastSync ? ' · synced ' + M.render.relativeTime(lastSync) : ''
           )
-        );
-      }));
-      return el('section', { class: 'view' },
-        el('h2', null, 'Welcome back' + (st.email ? ', ' + st.email : '')),
-        el('p', { class: 'lead' },
-          'Your sections live in ',
-          el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'your spreadsheet'),
-          '. Adding a new section is a row in ', el('code', null, '_config'), ' plus a tab — no code change.'
-        ),
-        stats.length
-          ? el('div', { class: 'stats-grid' }, stats.map(renderStatCard))
-          : null,
-        sections.length
-          ? el('div', { class: 'section-cards' }, cards)
-          : el('p', { class: 'muted' }, 'No sections yet. Open Settings and click Sync now.'),
-        el('div', { class: 'cta-row' },
-          el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Quick share & QR'),
-          el('a', { class: 'btn btn-ghost', href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Open spreadsheet ↗'),
-          el('a', { class: 'btn btn-ghost', href: '#/settings' }, 'Settings')
         )
+      );
+    }));
+
+    // ---- recent activity ------------------------------------------------
+    var recent = await recentActivity(5);
+    var recentEl = null;
+    if (recent.length) {
+      var ul = el('ul', { class: 'home-recent' });
+      recent.forEach(function (r) {
+        var label = r.row.title || r.row.name || r.row.id;
+        var li = el('li');
+        var a = el('a', { href: '#/s/' + encodeURIComponent(r.tab), class: 'home-recent-link' });
+        a.appendChild(el('span', { class: 'home-recent-label' }, label));
+        a.appendChild(el('span', { class: 'home-recent-tab small muted' }, r.tab));
+        a.appendChild(el('span', { class: 'home-recent-when small muted' }, M.render.relativeTime(r.ts)));
+        li.appendChild(a);
+        ul.appendChild(li);
+      });
+      recentEl = el('div', { class: 'home-block' },
+        el('h3', { class: 'home-block-h' }, 'Recently edited'),
+        ul
       );
     }
 
-    // Not connected — landing with a 4-step setup checklist.
-    return el('section', { class: 'view' },
-      el('h2', null, 'Welcome to Minerva'),
-      el('p', { class: 'lead' },
-        'A lightweight personal planner — goals, tasks, projects, notes — stored in a Google Sheet that ',
-        el('em', null, 'you'),
-        ' own. Static site, no servers, no accounts. Four short steps to get started:'
-      ),
-      renderOnboarding(cfg, st),
-      el('div', { class: 'callouts callouts-compact' },
-        callout('Share publicly with QR', 'Any note, question, or poll can become a public card with a stable URL and a QR code. Works without connecting.'),
-        callout('No build, no backend', 'Pure HTML/CSS/JS on GitHub Pages. Hackable. Forkable. Yours.'),
-        callout('Open source', el('span', null,
-          'Minerva is GPL-3. Source: ',
-          el('a', { href: 'https://github.com/the-farshad/Minerva', target: '_blank', rel: 'noopener' }, 'github.com/the-farshad/Minerva')
-        ))
-      ),
-      el('div', { class: 'cta-row' },
-        el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Try Quick share & QR (no login) →')
+    // ---- stats ----------------------------------------------------------
+    var stats = await buildStats();
+
+    return el('section', { class: 'view view-home-connected' },
+      hero,
+      stats.length ? el('div', { class: 'stats-grid' }, stats.map(renderStatCard)) : null,
+      sections.length
+        ? el('div', { class: 'home-block' },
+            el('h3', { class: 'home-block-h' }, 'Sections'),
+            el('div', { class: 'section-cards' }, cards))
+        : el('p', { class: 'muted' },
+            'No sections yet. ',
+            el('a', { href: '#/settings' }, 'Add one from the preset gallery →')),
+      recentEl,
+      el('div', { class: 'home-footer-cta' },
+        el('a', { href: '#/share', class: 'home-footer-link' }, 'Quick share'),
+        el('a', { href: '#/schedule', class: 'home-footer-link' }, 'Schedule'),
+        el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), class: 'home-footer-link', target: '_blank', rel: 'noopener' }, 'Spreadsheet ↗'),
+        el('a', { href: '#/settings', class: 'home-footer-link' }, 'Settings')
       )
     );
+  }
+
+  function viewHomeLanding(cfg, st) {
+    var view = el('section', { class: 'view view-home-landing' });
+    var hero = el('header', { class: 'home-hero home-hero-landing' },
+      el('h2', { class: 'home-hero-greet' }, 'Minerva'),
+      el('p', { class: 'home-hero-date' }, 'A planner backed by a Google Sheet you own.'),
+      el('p', { class: 'lead' },
+        'Goals, tasks, projects, notes, habits, papers, meetings — all in one Sheet, mirrored to your browser, sharable as URLs and QR codes. ',
+        el('strong', null, 'Static site. No servers. No accounts.'),
+        ' Open-source under GPL-3.'
+      )
+    );
+    view.appendChild(hero);
+    view.appendChild(renderOnboarding(cfg, st));
+    view.appendChild(el('div', { class: 'callouts callouts-compact' },
+      callout('Share publicly', 'Quick-share notes, questions, or polls — get a stable URL and a QR code. Works without connecting.'),
+      callout('Plan & schedule', 'Free-time view, share-availability links, and a no-backend "When to meet" group poll.'),
+      callout('Research-friendly', 'arXiv + DOI + YouTube smart-import, BibTeX export, KaTeX math, PDF preview, proposal helper.'),
+      callout('No build, no backend', 'Pure HTML/CSS/JS on GitHub Pages. Hackable. Forkable. Yours.'),
+      callout('Privacy by default', 'Minimal `drive.file` scope; no telemetry; data stays in your Google account.'),
+      callout('Open source', el('span', null,
+        'GPL-3. Source: ',
+        el('a', { href: 'https://github.com/the-farshad/Minerva', target: '_blank', rel: 'noopener' }, 'github.com/the-farshad/Minerva')
+      ))
+    ));
+    view.appendChild(el('div', { class: 'cta-row' },
+      el('a', { class: 'btn', href: '#/settings' }, 'Open Settings →'),
+      el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Try Quick share & QR (no login)')
+    ));
+    return view;
   }
 
   function renderOnboarding(cfg, st) {
