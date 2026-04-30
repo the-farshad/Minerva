@@ -613,12 +613,144 @@
     }
   }
 
+  // ---- PDF export ------------------------------------------------------
+
+  // jsPDF is lazy-loaded the first time the user clicks Export PDF so the
+  // cold-page TTI is unchanged. Subsequent exports reuse the cached promise.
+  var jsPdfLoader = null;
+  function loadJsPdf() {
+    if (jsPdfLoader) return jsPdfLoader;
+    jsPdfLoader = new Promise(function (resolve, reject) {
+      if (window.jspdf && window.jspdf.jsPDF) { resolve(window.jspdf.jsPDF); return; }
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js';
+      s.onload = function () {
+        if (window.jspdf && window.jspdf.jsPDF) resolve(window.jspdf.jsPDF);
+        else reject(new Error('jsPDF loaded but global missing'));
+      };
+      s.onerror = function () { reject(new Error('jsPDF CDN unreachable')); };
+      document.head.appendChild(s);
+    });
+    return jsPdfLoader;
+  }
+
+  function parseSvgDimensions(svg) {
+    var W = 0, H = 0;
+    var mw = svg.match(/<svg[^>]*\swidth\s*=\s*"([\d.]+)/i);
+    var mh = svg.match(/<svg[^>]*\sheight\s*=\s*"([\d.]+)/i);
+    if (mw) W = parseFloat(mw[1]);
+    if (mh) H = parseFloat(mh[1]);
+    if (!W || !H) {
+      var mv = svg.match(/<svg[^>]*\sviewBox\s*=\s*"\s*[\d.\-]+\s+[\d.\-]+\s+([\d.]+)\s+([\d.]+)/i);
+      if (mv) { W = W || parseFloat(mv[1]); H = H || parseFloat(mv[2]); }
+    }
+    if (!W) W = 800;
+    if (!H) H = 600;
+    return { width: W, height: H };
+  }
+
+  function svgToBase64(svg) {
+    // btoa needs latin-1; SVGs may contain non-ASCII. Encode UTF-8 first.
+    return btoa(unescape(encodeURIComponent(svg)));
+  }
+
+  function rasterizeSvg(svg, dims) {
+    return new Promise(function (resolve, reject) {
+      var scale = 300 / 96; // CSS px → 300 DPI
+      var W = dims.width;
+      var H = dims.height;
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.floor(W * scale));
+          canvas.height = Math.max(1, Math.floor(H * scale));
+          var ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (err) { reject(err); }
+      };
+      img.onerror = function () { reject(new Error('SVG rasterization failed')); };
+      img.src = 'data:image/svg+xml;base64,' + svgToBase64(svg);
+    });
+  }
+
+  function sanitizeFilename(title, rowId) {
+    var base = String(title || '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    if (!base) base = 'sketch-' + String(rowId || '').slice(0, 8);
+    return base + '.pdf';
+  }
+
+  function formatDate(d) {
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  async function exportPdf(tab, rowId, col) {
+    // Step 1 — resolve the SVG. Local pending blob first, then Drive.
+    var svg = null;
+    try {
+      var local = await M.db.getDrawing(tab, rowId, col);
+      if (local && local.svg) svg = local.svg;
+    } catch (e) { /* ignore */ }
+
+    var row = null;
+    try { row = await M.db.getRow(tab, rowId); } catch (e) { /* ignore */ }
+
+    if (!svg && row && row[col]) {
+      svg = await fetchSvgIfPossible(row[col]);
+    }
+
+    if (!svg) throw new Error('No sketch to export.');
+
+    // Step 2 — rasterize to PNG at 300 DPI on a white background.
+    var dims = parseSvgDimensions(svg);
+    var pngDataUrl = await rasterizeSvg(svg, dims);
+
+    // Step 3 — build the PDF.
+    var jsPDF = await loadJsPdf();
+    var orientation = dims.width > dims.height ? 'landscape' : 'portrait';
+    var doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: orientation });
+
+    var pageW = doc.internal.pageSize.getWidth();
+    var pageH = doc.internal.pageSize.getHeight();
+    var margin = 36;
+    var availW = pageW - margin * 2;
+    var availH = pageH - margin * 2 - 24; // reserve room for the footer
+    var ratio = dims.width / dims.height;
+    var drawW = availW;
+    var drawH = drawW / ratio;
+    if (drawH > availH) {
+      drawH = availH;
+      drawW = drawH * ratio;
+    }
+    var x = (pageW - drawW) / 2;
+    var y = margin;
+
+    doc.addImage(pngDataUrl, 'PNG', x, y, drawW, drawH);
+
+    // Footer: title · date.
+    var title = (row && (row.title || row.name)) ? String(row.title || row.name) : 'Untitled sketch';
+    var footer = title + ' · ' + formatDate(new Date());
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    doc.text(footer, margin, pageH - margin / 2);
+
+    doc.save(sanitizeFilename(title, rowId));
+  }
+
   // ---- public API ------------------------------------------------------
 
   M.draw = {
     openEditor: openEditor,
     upsertBlob: upsertBlob,
     flushPending: flushPending,
+    exportPdf: exportPdf,
     refreshIcons: refreshIcons
   };
 })();
