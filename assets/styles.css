@@ -2260,6 +2260,26 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   vertical-align: middle;
 }
 
+/* drawing cell — Drive fileId rendered as a thumbnail */
+.cell-drawing {
+  max-width: 120px;
+  max-height: 64px;
+  width: auto;
+  height: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  background: var(--bg-soft, transparent);
+}
+.cell-drawing-fallback {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.row-detail-value .cell-drawing,
+.row-detail-drawing {
+  max-width: 100%;
+  max-height: 360px;
+}
+
 /* --- settings layout (TOC + body) -------------------------- */
 
 .settings-layout {

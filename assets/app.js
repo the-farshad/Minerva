@@ -4969,7 +4969,26 @@
       var valueEl = el('div', { class: 'row-detail-value', tabindex: '0',
         'data-col': h, 'data-type': type
       });
-      valueEl.appendChild(M.render.renderCell(row[h], type));
+      var parsed = M.render.parseType(type);
+      if (parsed.kind === 'drawing' && row[h]) {
+        var raw = String(row[h]).trim();
+        var src = /^(https?:|data:)/i.test(raw)
+          ? raw
+          : 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(raw) + '&sz=w800';
+        var big = el('img', {
+          class: 'cell-drawing row-detail-drawing',
+          loading: 'lazy',
+          alt: '',
+          src: src
+        });
+        big.onerror = function () {
+          var fb = el('span', { class: 'muted small cell-drawing-fallback' }, '[' + raw + ']');
+          if (big.parentNode) big.parentNode.replaceChild(fb, big);
+        };
+        valueEl.appendChild(big);
+      } else {
+        valueEl.appendChild(M.render.renderCell(row[h], type));
+      }
 
       function startEditField() {
         if (valueEl.classList.contains('editing')) return;

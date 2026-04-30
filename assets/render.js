@@ -299,6 +299,33 @@
     return img;
   }
 
+  // A `drawing` cell holds either a Drive fileId (preferred) or a direct
+  // URL (http/https/data:). Slice 1 is read-only; slice 2 will add a
+  // touch editor that uploads PNGs to Drive and writes the fileId here.
+  function renderDrawing(value) {
+    if (value == null || value === '') {
+      return span('muted small', '—');
+    }
+    var raw = String(value).trim();
+    if (!raw) return span('muted small', '—');
+    var src;
+    if (/^(https?:|data:)/i.test(raw)) {
+      src = raw;
+    } else {
+      src = 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(raw) + '&sz=w200';
+    }
+    var img = document.createElement('img');
+    img.src = src;
+    img.alt = '';
+    img.className = 'cell-drawing';
+    img.loading = 'lazy';
+    img.onerror = function () {
+      var fb = span('muted small cell-drawing-fallback', '[' + truncate(raw, 24) + ']');
+      if (img.parentNode) img.parentNode.replaceChild(fb, img);
+    };
+    return img;
+  }
+
   // ---- dispatch ---------------------------------------------------------
 
   function renderCell(value, type) {
@@ -315,6 +342,7 @@
       case 'ref':         return renderRef(value, t);
       case 'color':       return renderColor(value);
       case 'image':       return renderImage(value);
+      case 'drawing':     return renderDrawing(value);
       case 'number':      return span('num', value == null ? '' : String(value));
       case 'markdown':
         return renderMarkdown(value);

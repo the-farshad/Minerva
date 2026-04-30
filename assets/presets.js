@@ -175,6 +175,17 @@
       defaultSort: 'start'
     },
     {
+      slug: 'sketches',
+      title: 'Sketches',
+      icon: 'pencil-line',
+      description: 'Quick hand-drawn sketches and diagrams. The sketch column stores a Drive fileId and renders as a thumbnail.',
+      schema: {
+        headers: ['id','title','tags','sketch','created','_updated'],
+        types:   ['text','text','multiselect()','drawing','datetime','datetime']
+      },
+      defaultSort: 'created:desc'
+    },
+    {
       slug: 'proposals',
       title: 'Proposals',
       icon: 'file-pen-line',
