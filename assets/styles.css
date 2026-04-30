@@ -3159,6 +3159,26 @@ i[data-lucide] svg {
   .help-panel { max-width: 100%; }
 }
 
+/* --- narrow-viewport (chart strips + graph) ---------------- */
+
+@media (max-width: 480px) {
+  .section-chart-strip {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+  }
+  .section-chart-strip .chart-sparkline,
+  .section-chart-strip .chart-histogram,
+  .section-chart-strip .chart-gantt {
+    width: 100%;
+    max-width: 100%;
+  }
+  .home-habit-strip .chart-heatmap-strip { width: 100%; }
+  .graph-host { height: 50vh; min-height: 280px; }
+  .graph-chip,
+  .graph-layout-arm { font-size: 0.78rem; padding: 0.25rem 0.55rem; }
+}
+
 /* --- accessibility ------------------------------------------ */
 
 @media (prefers-reduced-motion: reduce) {

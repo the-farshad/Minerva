@@ -1255,7 +1255,10 @@
 
     // Per-section chart strip — currently only the tasks section.
     // Slice B-3 will add charts for goals/projects.
-    var sectionChartStrip = el('section', { class: 'section-chart-strip', hidden: true });
+    var sectionChartStrip = el('section', {
+      class: 'section-chart-strip', hidden: true,
+      role: 'region', 'aria-label': 'Section chart'
+    });
     view.appendChild(sectionChartStrip);
 
     var bodyHost = el('div');
@@ -1576,7 +1579,10 @@
           ' shows incoming refs from other sections. Click ▸/▾ to expand.'
         );
       } else if (mode === 'graph' && canGraph) {
-        var graphHost = el('div', { class: 'graph-host' });
+        var graphHost = el('div', {
+          class: 'graph-host', role: 'region',
+          'aria-label': 'Section graph for ' + (sec.title || sec.slug || sec.tab)
+        });
         bodyHost.replaceChildren(graphHost);
         hint.replaceChildren(
           'Graph view links rows by their ', el('code', null, parentCol),
@@ -1628,6 +1634,7 @@
         var spark = M.charts.sparkline(arr, { width: 200, height: 32, fill: true });
         spark.setAttribute('aria-label',
           '14-day completion: ' + doneRecent + ' done');
+        sectionChartStrip.setAttribute('aria-label', 'Tasks completion strip');
         sectionChartStrip.appendChild(spark);
         sectionChartStrip.appendChild(el('small', { class: 'muted' },
           'Last 14 days · ' + doneRecent + ' done'));
@@ -1657,6 +1664,7 @@
           height: 36,
           ariaLabel: 'Goal progress histogram across ' + values.length + ' goals'
         });
+        sectionChartStrip.setAttribute('aria-label', 'Goals progress histogram');
         sectionChartStrip.appendChild(hist);
         sectionChartStrip.appendChild(el('small', { class: 'muted' },
           values.length + ' goal' + (values.length === 1 ? '' : 's') + ' · avg ' + avg + '%'));
@@ -1719,6 +1727,7 @@
           gap: 2,
           ariaLabel: 'Project timeline with ' + items.length + ' active projects'
         });
+        sectionChartStrip.setAttribute('aria-label', 'Projects timeline');
         sectionChartStrip.appendChild(ganttSvg);
         sectionChartStrip.appendChild(el('small', { class: 'muted' },
           items.length + ' active project' + (items.length === 1 ? '' : 's')));
@@ -4642,7 +4651,10 @@
       'Cross-tab links between rows. Each ',
       el('code', null, 'ref'), ' column becomes an edge. Drag to pan, scroll to zoom, click a node to open it.'));
 
-    var host = el('div', { class: 'graph-host-shell' });
+    var host = el('div', {
+      class: 'graph-host-shell', role: 'region',
+      'aria-label': 'Cross-tab graph'
+    });
     view.appendChild(host);
 
     if (!(M.graph && M.graph.buildGraphFromAll && M.graph.renderGraph)) {

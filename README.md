@@ -25,6 +25,9 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 - **Quick capture** — `/` opens a modal that captures a title + body to your inbox/notes section, mapped onto the most natural columns even on user-defined sections. Optional 🎤 voice capture via Web Speech API.
 - **Bookmarklet** — drag *Capture to Minerva* from Settings to your browser's bookmarks bar; clicking it on any web page opens quick-capture pre-filled with the page's title, URL, and any selected text.
 - **Tree view** for sections with a self-referential `ref` column (e.g. `goals.parent`) — collapsible nested layout with `+` to add subtasks in place.
+- **Graph view** at `#/graph` (and a `List | Tree | Graph` toggle on any section with a `ref` column). Cross-tab edges from every `ref` column; cycle-tolerant; chip filter by tab; **Layered | Force** layout toggle (force layout lazy-loads `d3-force` from a CDN). The row-detail modal includes a *Show in graph* link for any row whose section participates in graph edges.
+- **Charts on home** — donut for goal progress, sparkline for tasks-done, status mini-bar, 7-day habit heatmap strip. Per-section: tasks sparkline (last 14 days), goals histogram, projects Gantt. All hand-rolled SVG, theme-safe.
+- **Touch-canvas sketch editor** — new **Sketches** preset adds a `drawing` type-hint column. Editor opens at `#/draw/<tab>/<rowId>?col=<col>`; Pointer Events with Apple-Pencil / S-Pen pressure where supported. Drawings save as SVG to a per-row blob in your Drive; export per-row to **PDF**, **Markdown** (self-contained, base64 PNG), or **LaTeX** (`.tex` + `.png`).
 - **Today** view at `#/today`: due/overdue tasks with one-click ✓, habits not done today, recent notes — your daily landing page.
 - **Saved views** per section: capture sort + filter combos as named pills; click to recall.
 - **Bulk operations** — checkbox column + select-all; *Mark done* / *Delete* / *Copy BibTeX* / *Clear* in the bulk action bar.
@@ -58,7 +61,7 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 - **Resume state** — last view, scroll position, view modes (list/calendar/tree) per section all persist in `localStorage` so reload picks up exactly where you left off.
 - **Push indicator** — subtle bottom-right pill while a sync is in flight, flips red on error with a *Retry* button. Bottom-left red pill when offline.
 - **Pomodoro timer** — floating bottom-left widget (`⌘/Ctrl+⇧+P` to toggle). 25-min focus / 5-min break, optional logging to a `pomodoros` tab.
-- **Keyboard shortcuts** — `g` / `t` / `q` / `s` for nav, `1`–`9` for sections, `/` quick capture, `⌘/Ctrl+K` global search, `⌘/Ctrl+J` AI assistant, `⌘/Ctrl+Z` undo, `⌘/Ctrl+⇧+P` pomodoro, `j/k/e/c/x/d` for row navigation, `?` cheatsheet.
+- **Keyboard shortcuts** — `g` / `t` / `q` / `s` for nav, `1`–`9` for sections, `n` focuses the home quick-add (jumping home if needed), `/` quick capture, `⌘/Ctrl+K` global search, `⌘/Ctrl+J` AI assistant, `⌘/Ctrl+Z` undo, `⌘/Ctrl+⇧+P` pomodoro, `j/k/e/c/x/d` for row navigation, `?` cheatsheet.
 
 ### Offline / install
 - **PWA** — installable from your browser's *Install* / *Add to Home Screen*, with a service worker that caches the static shell. Read your data offline; edits queue and flush automatically when you reconnect.
@@ -99,7 +102,7 @@ Your Client ID is stored only in your browser via `localStorage`. It's not a sec
 
 ## Architecture in two paragraphs
 
-Minerva is a **schema-driven planner over Google Sheets**. The app is a static site. Per user, there is one Google spreadsheet with one tab per section (`tasks`, `goals`, `notes`, `habits`, …). A reserved `_config` tab declares which sections exist, in what order, with which icons and default sort/filter — so adding a "Papers" or "Reading list" section is a row in `_config` plus a tab, not a code change. The column schema for each section is **inferred from the tab's header row + a type-hint row**, supporting types like `text`, `longtext`, `markdown`, `date`, `select(a,b,c)`, `check`, `link`, `ref(tab)`, `progress(0..100)`, `rating(0..5)`, `color`, and `multiselect(...)`.
+Minerva is a **schema-driven planner over Google Sheets**. The app is a static site. Per user, there is one Google spreadsheet with one tab per section (`tasks`, `goals`, `notes`, `habits`, …). A reserved `_config` tab declares which sections exist, in what order, with which icons and default sort/filter — so adding a "Papers" or "Reading list" section is a row in `_config` plus a tab, not a code change. The column schema for each section is **inferred from the tab's header row + a type-hint row**, supporting types like `text`, `longtext`, `markdown`, `date`, `select(a,b,c)`, `check`, `link`, `ref(tab)`, `progress(0..100)`, `rating(0..5)`, `color`, `drawing`, and `multiselect(...)`.
 
 The browser keeps a **local IndexedDB mirror** of the spreadsheet for instant rendering and offline reads. Edits write to the local store first (UI updates with no round trip), get marked `_dirty=1`, and a single-flight, coalescing push queue flushes them back to Sheets via the regular `values.update` / `values.append` / `batchUpdate.deleteDimension` endpoints. Pulling preserves any pending local edits — sync mid-typing never destroys work in progress. The whole thing runs under the minimal `drive.file` scope (Sheets API works for app-created files), which is non-sensitive and skips the unverified-app warning.
 
@@ -152,6 +155,9 @@ assets/db.js           local IndexedDB store + ULID generator
 assets/bootstrap.js    find-or-create the user's Minerva spreadsheet
 assets/sync.js         pull/push between local store and Sheets, dirty-queue
 assets/render.js       schema parser + type-aware cell renderers
+assets/charts.js       hand-rolled SVG chart primitives (donut, sparkline, gantt, ...)
+assets/graph.js        cross-tab graph view (#/graph) — layered DAG + force layout
+assets/draw.js         touch-canvas sketch editor + PDF / Markdown / LaTeX exports
 assets/editors.js      type-aware inline editors (CRUD)
 assets/telegram.js     Telegram Bot API wrapper (sendMessage, getUpdates, ...)
 assets/ical.js         RFC-5545 .ics generator + Drive upsert + permission flip

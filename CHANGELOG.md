@@ -4,6 +4,18 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.21 — Sketches, charts, graph
+
+- **Sketches** preset and `drawing` type hint — full-screen touch-canvas editor at `#/draw/<tab>/<rowId>?col=<col>`. Pointer Events drive a single stroke at a time; pen-pressure on Apple Pencil / S-Pen yields variable-width ink. Drawings save as SVG to a per-row blob in your Drive (the row cell holds the resulting fileId; a `pending` sentinel renders a placeholder until the upload lands).
+- **Sketch exports** — per-row **PDF** (rasterized at 300 DPI on a white background, jsPDF lazy-loaded), **Markdown** (self-contained `.md` with the sketch embedded as a base64 PNG plus any markdown / longtext columns from the row), and **LaTeX** (sibling `.tex` + `.png`; markdown bodies translate to `\textbf` / `\emph` / `\texttt` / `itemize` with the sketch wrapped in `\includegraphics`).
+- **Charts on home** — hand-rolled SVG primitives (`donut`, `sparkline`, `stackedBar`, `heatmapStrip`, `histogram`, `gantt`). Goal-progress donut, tasks-done sparkline, status mini-bar, and a 7-day habit heatmap strip below the stat grid. No library, no CDN — colors come from CSS variables so theme swaps Just Work.
+- **Per-section chart strip** — tasks get a 14-day completion sparkline, goals get a progress histogram, projects get a Gantt of active timelines. Strip auto-hides when the section has nothing to chart.
+- **Graph view** — new `#/graph` cross-tab graph that unions every `ref(<tab>)` column across every section. Layered-DAG layout by default; **Layered | Force** toggle lazy-loads `d3-force` from jsDelivr for an organic layout. Tab-chip filter hides nodes by tab; cycle edges render as dashed arcs; habit-tab nodes get a self-loop badge. Drag to pan, scroll to zoom, click a node to open it.
+- **Per-section Graph mode** — `List | Tree | Graph` toggle shows up on any section that has a self-referential `ref` column.
+- **Show in graph** action in the row-detail modal — jumps to `#/graph?focus=<rowId>` and recenters the view on that node with a soft pulsing halo (respects `prefers-reduced-motion`).
+- **Lucide icon refresh** auto-schedules after every render hook so icons mounted from event handlers, async paths, and modals show up without a manual `lucide.createIcons()` call.
+- **Bug fixes** — drawing cell renders a placeholder (not a broken image) while the upload is `pending`; LaTeX backslash escaping no longer double-expands; `pending` sentinel only overwrites the cell when no fileId is already there.
+
 ## v0.20 — Home view redesign
 
 - **Home view redesign** — hero greeting (time-of-day + first name from email), inline quick-add task input, Today summary card with overdue / due / events / habits pills, recent activity list, and section grid below.
