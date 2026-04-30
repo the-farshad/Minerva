@@ -677,13 +677,13 @@
     });
   }
 
-  function sanitizeFilename(title, rowId) {
+  function sanitizeFilename(title, rowId, ext) {
     var base = String(title || '').toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '');
     if (!base) base = 'sketch-' + String(rowId || '').slice(0, 8);
-    return base + '.pdf';
+    return base + (ext || '.pdf');
   }
 
   function formatDate(d) {
@@ -691,8 +691,10 @@
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
 
-  async function exportPdf(tab, rowId, col) {
-    // Step 1 — resolve the SVG. Local pending blob first, then Drive.
+  // Shared SVG resolution: local pending blob first, then Drive (best-effort).
+  // Returns { svg, row } so callers can use the row's title for filenames /
+  // headings without a second db round-trip.
+  async function resolveSvg(tab, rowId, col) {
     var svg = null;
     try {
       var local = await M.db.getDrawing(tab, rowId, col);
@@ -705,6 +707,15 @@
     if (!svg && row && row[col]) {
       svg = await fetchSvgIfPossible(row[col]);
     }
+
+    return { svg: svg, row: row };
+  }
+
+  async function exportPdf(tab, rowId, col) {
+    // Step 1 — resolve the SVG (shared with exportMarkdown).
+    var resolved = await resolveSvg(tab, rowId, col);
+    var svg = resolved.svg;
+    var row = resolved.row;
 
     if (!svg) throw new Error('No sketch to export.');
 
@@ -744,6 +755,80 @@
     doc.save(sanitizeFilename(title, rowId));
   }
 
+  // ---- Markdown export ------------------------------------------------
+
+  // Triggers a browser download via an off-DOM <a download> + revoked blob URL.
+  function downloadBlob(filename, blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    if (a.parentNode) a.parentNode.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  // Produces a self-contained .md file: row title as H1, the sketch embedded
+  // as a base64 PNG, then any markdown / longtext columns from the row's
+  // section copied in as H2 sections. No external library — pure string
+  // assembly + the existing rasterizeSvg helper.
+  async function exportMarkdown(tab, rowId, col) {
+    var resolved = await resolveSvg(tab, rowId, col);
+    var svg = resolved.svg;
+    var row = resolved.row;
+
+    if (!svg) throw new Error('No sketch to export.');
+
+    var dims = parseSvgDimensions(svg);
+    var pngDataUrl = await rasterizeSvg(svg, dims);
+
+    var title = (row && (row.title || row.name)) ? String(row.title || row.name) : 'Untitled sketch';
+
+    var lines = [];
+    lines.push('# ' + title);
+    lines.push('');
+    lines.push('![' + escapeAltText(title) + '](' + pngDataUrl + ')');
+    lines.push('');
+
+    // Pull any markdown / longtext columns from this section's schema and
+    // append them as H2 sections. Skip internals, the drawing column itself,
+    // and empty cells.
+    var meta = null;
+    try { meta = await M.db.getMeta(tab); } catch (e) { /* ignore */ }
+    if (meta && meta.headers && row) {
+      for (var i = 0; i < meta.headers.length; i++) {
+        var h = meta.headers[i];
+        if (!h || h.charAt(0) === '_') continue;
+        if (h === col) continue;
+        var t = M.render.parseType(meta.types ? meta.types[i] : 'text');
+        if (t.kind !== 'markdown' && t.kind !== 'longtext') continue;
+        var cell = row[h];
+        if (cell == null) continue;
+        var cellStr = String(cell);
+        if (!cellStr.trim()) continue;
+        lines.push('## ' + h);
+        lines.push('');
+        lines.push(cellStr);
+        lines.push('');
+      }
+    }
+
+    lines.push('');
+    lines.push('*Exported from Minerva — ' + formatDate(new Date()) + '*');
+    lines.push('');
+
+    var md = lines.join('\n');
+    var blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    downloadBlob(sanitizeFilename(title, rowId, '.md'), blob);
+  }
+
+  // Markdown alt text: avoid unescaped `]` which would terminate the alt early.
+  function escapeAltText(s) {
+    return String(s == null ? '' : s).replace(/[\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
   // ---- public API ------------------------------------------------------
 
   M.draw = {
@@ -751,6 +836,7 @@
     upsertBlob: upsertBlob,
     flushPending: flushPending,
     exportPdf: exportPdf,
+    exportMarkdown: exportMarkdown,
     refreshIcons: refreshIcons
   };
 })();
