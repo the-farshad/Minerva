@@ -311,6 +311,10 @@
     }
     var raw = String(value).trim();
     if (!raw) return span('muted small', '—');
+    // 'pending' is the post-save / pre-upload sentinel written by draw.js.
+    // Render it as the same em-dash placeholder so list view doesn't fire a
+    // bogus Drive thumbnail request and flash `[pending]` text.
+    if (raw === 'pending') return span('muted small', '—');
     var src;
     if (/^(https?:|data:)/i.test(raw)) {
       src = raw;
