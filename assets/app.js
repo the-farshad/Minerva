@@ -5048,6 +5048,24 @@
           exportBtn.appendChild(M.render.icon('file-down'));
           exportBtn.appendChild(document.createTextNode(' Export PDF'));
           actions.appendChild(exportBtn);
+
+          var exportMdBtn = el('button', {
+            class: 'btn btn-ghost row-detail-draw-export-md',
+            type: 'button',
+            onclick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (M.draw && typeof M.draw.exportMarkdown === 'function') {
+                M.draw.exportMarkdown(tab, rowId, h).catch(function (err) {
+                  console.warn('[Minerva draw] export failed', err);
+                  flash(panel, 'Export failed: ' + (err && err.message ? err.message : err), 'error');
+                });
+              }
+            }
+          });
+          exportMdBtn.appendChild(M.render.icon('file-text'));
+          exportMdBtn.appendChild(document.createTextNode(' Export MD'));
+          actions.appendChild(exportMdBtn);
         }
 
         valueEl.appendChild(actions);
