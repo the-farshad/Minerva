@@ -829,6 +829,203 @@
     return String(s == null ? '' : s).replace(/[\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
+  // ---- LaTeX export ---------------------------------------------------
+
+  // PNG data URL → Blob, so it can be saved as a sibling file next to the
+  // .tex source. Naive split is fine — rasterizeSvg always emits a clean
+  // `data:image/png;base64,...` URL.
+  function dataUrlToBlob(dataUrl) {
+    var parts = String(dataUrl).split(',');
+    var head = parts[0] || '';
+    var body = parts[1] || '';
+    var mime = (head.match(/:(.*?);/) || [])[1] || 'application/octet-stream';
+    var bin = atob(body);
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  // Escape LaTeX special characters in a plain text run. Order matters:
+  // the backslash must be replaced first so we don't double-escape the
+  // backslashes that the later replacements introduce.
+  function escapeTex(s) {
+    return String(s == null ? '' : s)
+      .replace(/\\/g, '\\textbackslash{}')
+      .replace(/[{}]/g, '\\$&')
+      .replace(/[$&%#_]/g, '\\$&')
+      .replace(/~/g, '\\textasciitilde{}')
+      .replace(/\^/g, '\\textasciicircum{}');
+  }
+
+  // Best-effort markdown → LaTeX. Tokenization strategy: split the source
+  // into paragraphs (blank-line separated), then within each paragraph
+  // walk a regex that matches inline forms (**bold**, *em*/_em_, `code`)
+  // before they get fed through escapeTex. Plain runs go through escapeTex
+  // unchanged. Lists (lines starting with `- ` or `* `) collapse into an
+  // itemize environment per paragraph.
+  //
+  // Honest limitations (v1):
+  //  - Nested inline like `**bold *italic***` is not handled — only the
+  //    outermost match wins; the inner `*italic*` survives as literal
+  //    asterisks (which are then escaped harmlessly).
+  //  - Headings (`# foo`) inside a cell are not recognised; the section
+  //    header is already supplied by the caller's \section{} wrapper.
+  //  - Tables, blockquotes, fenced code blocks fall through as plain text.
+  //  - Links `[text](url)` are not recognised — the brackets / parens
+  //    survive as literal characters in the output.
+  //  - Single newlines inside a paragraph become `\\` line breaks.
+  function mdToLatex(md) {
+    var src = String(md == null ? '' : md).replace(/\r\n?/g, '\n');
+    var paras = src.split(/\n{2,}/);
+    var out = [];
+    for (var p = 0; p < paras.length; p++) {
+      var para = paras[p];
+      if (!para || !para.trim()) continue;
+      var lines = para.split('\n');
+      // Detect list paragraph: every non-empty line starts with `- ` or `* `.
+      var isList = true;
+      for (var li = 0; li < lines.length; li++) {
+        var ln = lines[li];
+        if (!ln.trim()) continue;
+        if (!/^\s*[-*]\s+/.test(ln)) { isList = false; break; }
+      }
+      if (isList) {
+        out.push('\\begin{itemize}');
+        for (var li2 = 0; li2 < lines.length; li2++) {
+          var lnb = lines[li2];
+          if (!lnb.trim()) continue;
+          var item = lnb.replace(/^\s*[-*]\s+/, '');
+          out.push('  \\item ' + transformInline(item));
+        }
+        out.push('\\end{itemize}');
+      } else {
+        var rendered = [];
+        for (var i = 0; i < lines.length; i++) {
+          rendered.push(transformInline(lines[i]));
+        }
+        out.push(rendered.join(' \\\\\n'));
+      }
+      out.push('');
+    }
+    return out.join('\n');
+  }
+
+  // Inline markdown → LaTeX. Walks the string left-to-right, finding the
+  // earliest inline marker; everything before it is plain text (escaped),
+  // the matched range becomes the LaTeX equivalent, then we resume after
+  // the close marker. The `code` form skips inner escaping (since
+  // \texttt{} preserves the literal text) but still escapes LaTeX specials
+  // inside the verbatim run — `\texttt{` is fragile around { } # _ etc.,
+  // so we route the inner content through escapeTex too.
+  function transformInline(line) {
+    var s = String(line == null ? '' : line);
+    var out = '';
+    // Pattern alternation order matters: try `**bold**` before `*em*` so
+    // we don't snip the bold marker mid-token.
+    var re = /(\*\*([^*\n]+?)\*\*)|(`([^`\n]+?)`)|(\*([^*\n]+?)\*)|(_([^_\n]+?)_)/;
+    var rest = s;
+    var safety = 0;
+    while (rest && safety++ < 10000) {
+      var m = re.exec(rest);
+      if (!m) { out += escapeTex(rest); break; }
+      out += escapeTex(rest.slice(0, m.index));
+      if (m[1] != null) {
+        out += '\\textbf{' + escapeTex(m[2]) + '}';
+      } else if (m[3] != null) {
+        out += '\\texttt{' + escapeTex(m[4]) + '}';
+      } else if (m[5] != null) {
+        out += '\\emph{' + escapeTex(m[6]) + '}';
+      } else if (m[7] != null) {
+        out += '\\emph{' + escapeTex(m[8]) + '}';
+      }
+      rest = rest.slice(m.index + m[0].length);
+    }
+    return out;
+  }
+
+  // Strip directories and any trailing extension so the .tex source can
+  // reference the sibling PNG safely (e.g. `\includegraphics{foo}`).
+  function pngStemFromTexName(texName) {
+    var base = String(texName).replace(/\.tex$/i, '');
+    return base;
+  }
+
+  // Produces a sibling pair: a .png of the rasterized sketch and a .tex
+  // source that embeds it via \includegraphics. The .tex compiles as-is
+  // with `pdflatex` provided the .png is in the same directory. No OCR —
+  // ink is preserved as an image.
+  async function exportLatex(tab, rowId, col) {
+    var resolved = await resolveSvg(tab, rowId, col);
+    var svg = resolved.svg;
+    var row = resolved.row;
+
+    if (!svg) throw new Error('No sketch to export.');
+
+    var dims = parseSvgDimensions(svg);
+    var pngDataUrl = await rasterizeSvg(svg, dims);
+    var pngBlob = dataUrlToBlob(pngDataUrl);
+
+    var title = (row && (row.title || row.name)) ? String(row.title || row.name) : 'Untitled sketch';
+    var texName = sanitizeFilename(title, rowId, '.tex');
+    var stem = pngStemFromTexName(texName);
+    var pngName = stem + '.png';
+
+    var lines = [];
+    lines.push('\\documentclass{article}');
+    lines.push('\\usepackage[utf8]{inputenc}');
+    lines.push('\\usepackage{graphicx}');
+    lines.push('\\usepackage[margin=1in]{geometry}');
+    lines.push('\\usepackage{hyperref}');
+    lines.push('');
+    lines.push('\\title{' + escapeTex(title) + '}');
+    lines.push('\\date{' + formatDate(new Date()) + '}');
+    lines.push('');
+    lines.push('\\begin{document}');
+    lines.push('\\maketitle');
+    lines.push('');
+    lines.push('\\begin{center}');
+    lines.push('  \\includegraphics[width=\\textwidth,keepaspectratio]{' + stem + '.png}');
+    lines.push('\\end{center}');
+    lines.push('');
+
+    var meta = null;
+    try { meta = await M.db.getMeta(tab); } catch (e) { /* ignore */ }
+    if (meta && meta.headers && row) {
+      for (var i = 0; i < meta.headers.length; i++) {
+        var h = meta.headers[i];
+        if (!h || h.charAt(0) === '_') continue;
+        if (h === col) continue;
+        var t = M.render.parseType(meta.types ? meta.types[i] : 'text');
+        if (t.kind !== 'markdown' && t.kind !== 'longtext') continue;
+        var cell = row[h];
+        if (cell == null) continue;
+        var cellStr = String(cell);
+        if (!cellStr.trim()) continue;
+        lines.push('\\section{' + escapeTex(h) + '}');
+        var body = (t.kind === 'markdown') ? mdToLatex(cellStr) : escapeTex(cellStr);
+        lines.push(body);
+        lines.push('');
+      }
+    }
+
+    lines.push('\\vfill');
+    lines.push('\\begin{center}');
+    lines.push('\\small\\emph{Exported from Minerva.}');
+    lines.push('\\end{center}');
+    lines.push('\\end{document}');
+    lines.push('');
+
+    var tex = lines.join('\n');
+
+    // Two sequential downloads — PNG first so the .tex's includegraphics
+    // target is on disk by the time the user opens the source. The
+    // <a download> pattern from slice 4 is the same one used by the
+    // PDF / MD exports; supported in Chrome, Firefox, Safari.
+    downloadBlob(pngName, pngBlob);
+    var texBlob = new Blob([tex], { type: 'application/x-tex;charset=utf-8' });
+    downloadBlob(texName, texBlob);
+  }
+
   // ---- public API ------------------------------------------------------
 
   M.draw = {
@@ -837,6 +1034,7 @@
     flushPending: flushPending,
     exportPdf: exportPdf,
     exportMarkdown: exportMarkdown,
+    exportLatex: exportLatex,
     refreshIcons: refreshIcons
   };
 })();

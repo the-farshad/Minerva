@@ -5066,6 +5066,24 @@
           exportMdBtn.appendChild(M.render.icon('file-text'));
           exportMdBtn.appendChild(document.createTextNode(' Export MD'));
           actions.appendChild(exportMdBtn);
+
+          var exportTexBtn = el('button', {
+            class: 'btn btn-ghost row-detail-draw-export-tex',
+            type: 'button',
+            onclick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (M.draw && typeof M.draw.exportLatex === 'function') {
+                M.draw.exportLatex(tab, rowId, h).catch(function (err) {
+                  console.warn('[Minerva draw] export failed', err);
+                  flash(panel, 'Export failed: ' + (err && err.message ? err.message : err), 'error');
+                });
+              }
+            }
+          });
+          exportTexBtn.appendChild(M.render.icon('file-code-2'));
+          exportTexBtn.appendChild(document.createTextNode(' Export TeX'));
+          actions.appendChild(exportTexBtn);
         }
 
         valueEl.appendChild(actions);
