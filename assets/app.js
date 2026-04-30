@@ -248,12 +248,6 @@
       var tasks = aliveOf(await M.db.getAllRows('tasks'));
       if (tasks.length) {
         var done = tasks.filter(function (r) { return statusOf(r) === 'done'; }).length;
-        var dueToday = tasks.filter(function (r) {
-          return r.due && dateOf(r.due) === today && statusOf(r) !== 'done';
-        }).length;
-        var overdue = tasks.filter(function (r) {
-          return r.due && dateOf(r.due) < today && statusOf(r) !== 'done';
-        }).length;
         var pct = tasks.length ? Math.round(100 * done / tasks.length) : 0;
 
         // 30-day completion sparkline series — bucket done tasks by
@@ -283,8 +277,47 @@
           href: '#/s/tasks',
           chart: { kind: 'sparkline', series: series, total: doneRecent }
         });
-        stats.push({ label: 'Due today',   value: String(dueToday), accent: dueToday > 0, href: '#/s/tasks' });
-        stats.push({ label: 'Overdue',     value: String(overdue),  danger: overdue > 0,  href: '#/s/tasks' });
+
+        // Status mini-bar — bucket by actual status values present in
+        // the data, with todo/doing/done preferred up front when seen.
+        // Empty/missing status falls into 'todo' so all rows are accounted
+        // for. The schema usually has todo/doing/done but other sheets
+        // may define their own values; we render whatever is there.
+        var counts = {};
+        var order = [];
+        function bumpStatus(key) {
+          if (counts[key] == null) {
+            counts[key] = 0;
+            order.push(key);
+          }
+          counts[key]++;
+        }
+        tasks.forEach(function (r) {
+          var s = statusOf(r);
+          if (!s) s = 'todo';
+          bumpStatus(s);
+        });
+        // Stable preferred order for the canonical buckets.
+        var preferred = ['todo', 'doing', 'done'];
+        var sortedKeys = [];
+        preferred.forEach(function (k) {
+          if (counts[k] != null) sortedKeys.push(k);
+        });
+        order.forEach(function (k) {
+          if (preferred.indexOf(k) < 0) sortedKeys.push(k);
+        });
+        var segments = sortedKeys.map(function (k) {
+          var accent;
+          if (k === 'done') accent = 'var(--accent)';
+          else if (k === 'doing') accent = 'var(--accent-2, var(--accent))';
+          else accent = 'var(--muted)';
+          return { label: k, value: counts[k], accent: accent };
+        });
+        stats.push({
+          label: 'Status',
+          href: '#/s/tasks',
+          chart: { kind: 'status', segments: segments, total: tasks.length }
+        });
       }
     } catch (e) { /* ignore */ }
 
@@ -328,6 +361,7 @@
     var hasChart = s.chart && M.charts;
     var isDonut = hasChart && s.chart.kind === 'donut';
     var isSpark = hasChart && s.chart.kind === 'sparkline';
+    var isStatus = hasChart && s.chart.kind === 'status';
 
     var children = [];
     children.push(el('div', { class: 'stat-label' }, s.label));
@@ -342,6 +376,23 @@
       var donutSvg = M.charts.donut(s.chart.value, s.chart.max || 100, { size: 56, thickness: 8 });
       donutSvg.setAttribute('aria-label', s.label + ': ' + s.value);
       children.push(el('div', { class: 'stat-chart stat-chart-donut' }, donutSvg));
+    } else if (isStatus) {
+      var segs = s.chart.segments || [];
+      var ariaParts = [];
+      var captionParts = [];
+      segs.forEach(function (seg) {
+        if (!seg || !seg.value) return;
+        ariaParts.push(seg.value + ' ' + (seg.label || ''));
+        captionParts.push(seg.value + ' ' + (seg.label || ''));
+      });
+      var statusAria = 'Task status: ' + (ariaParts.length ? ariaParts.join(', ') : 'no rows');
+      var barSvg = M.charts.stackedBar(segs, {
+        width: 200, height: 10,
+        ariaLabel: statusAria
+      });
+      children.push(el('div', { class: 'stat-chart stat-chart-status' }, barSvg));
+      var captionText = captionParts.length ? captionParts.join(' · ') : 'No tasks';
+      children.push(el('small', { class: 'stat-status-caption muted' }, captionText));
     } else {
       children.push(el('div', { class: 'stat-value' }, s.value));
       if (typeof s.pct === 'number') {
@@ -355,6 +406,7 @@
 
     var cls = 'stat-card';
     if (isDonut) cls += ' stat-card-donut';
+    if (isStatus) cls += ' stat-card-status';
     if (s.danger) cls += ' stat-danger';
     else if (s.accent) cls += ' stat-accent';
     if (s.href) {
@@ -592,9 +644,56 @@
     // ---- stats ----------------------------------------------------------
     var stats = await buildStats();
 
+    // ---- 7-day habit strip ---------------------------------------------
+    // Walks habit_log rows and buckets completions by day for the trailing
+    // 7 days (oldest first). Only shown when the section list includes a
+    // 'habits' tab and there is at least one (alive) habit_log row.
+    var habitStripEl = null;
+    var hasHabitsTab = sections.some(function (r) { return r.tab === 'habits' || r.slug === 'habits'; });
+    if (hasHabitsTab && M.charts && M.charts.heatmapStrip) {
+      try {
+        var habitLogs = aliveOf(await M.db.getAllRows('habit_log'));
+        if (habitLogs.length) {
+          var STRIP_DAYS = 7;
+          var stripSeries = new Array(STRIP_DAYS);
+          for (var hi = 0; hi < STRIP_DAYS; hi++) stripSeries[hi] = 0;
+          var hStart = new Date();
+          hStart.setHours(0, 0, 0, 0);
+          var hStartMs = hStart.getTime() - (STRIP_DAYS - 1) * 86400000;
+          var hTotal = 0;
+          habitLogs.forEach(function (l) {
+            var k = String(l.date || '').slice(0, 10);
+            if (!k) return;
+            var ts = Date.parse(k);
+            if (!isFinite(ts)) return;
+            var idx = Math.floor((ts - hStartMs) / 86400000);
+            if (idx < 0 || idx >= STRIP_DAYS) return;
+            var c = Number(l.count) || 1;
+            stripSeries[idx] += c;
+            hTotal += c;
+          });
+          var stripSvg = M.charts.heatmapStrip(stripSeries, {
+            cellSize: 18,
+            gap: 4,
+            ariaLabel: 'Habit completions, last 7 days: ' + hTotal + ' total'
+          });
+          var stripHead = el('div', { class: 'home-habit-strip-head' });
+          stripHead.appendChild(M.render.icon('flame'));
+          stripHead.appendChild(document.createTextNode(' Habits — last 7 days'));
+          habitStripEl = el('a', { class: 'home-habit-strip', href: '#/s/habits' },
+            stripHead,
+            stripSvg,
+            el('small', { class: 'muted' },
+              hTotal + ' completion' + (hTotal === 1 ? '' : 's'))
+          );
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     return el('section', { class: 'view view-home-connected' },
       hero,
       stats.length ? el('div', { class: 'stats-grid' }, stats.map(renderStatCard)) : null,
+      habitStripEl,
       sections.length
         ? el('div', { class: 'home-block' },
             el('h3', { class: 'home-block-h' }, 'Sections'),
@@ -1153,6 +1252,12 @@
 
     var bulkBar = el('div', { class: 'bulk-bar', hidden: true });
     view.appendChild(bulkBar);
+
+    // Per-section chart strip — currently only the tasks section.
+    // Slice B-3 will add charts for goals/projects.
+    var sectionChartStrip = el('section', { class: 'section-chart-strip', hidden: true });
+    view.appendChild(sectionChartStrip);
+
     var bodyHost = el('div');
     view.appendChild(bodyHost);
     var hint = el('p', { class: 'small muted' });
@@ -1493,6 +1598,39 @@
 
       paintBacklinksFooter(backlinks);
       paintBulkBar();
+      paintSectionChartStrip(visible);
+    }
+
+    function paintSectionChartStrip(rows) {
+      sectionChartStrip.replaceChildren();
+      if (sec.tab !== 'tasks' || !rows || !rows.length || !M.charts || !M.charts.sparkline) {
+        sectionChartStrip.hidden = true;
+        return;
+      }
+      var DAYS14 = 14;
+      var arr = new Array(DAYS14);
+      for (var si = 0; si < DAYS14; si++) arr[si] = 0;
+      var startD = new Date();
+      startD.setHours(0, 0, 0, 0);
+      var startMs = startD.getTime() - (DAYS14 - 1) * 86400000;
+      var doneRecent = 0;
+      rows.forEach(function (r) {
+        if (String(r.status || '').toLowerCase() !== 'done') return;
+        var ts = r._updated ? Date.parse(r._updated) : NaN;
+        if (!isFinite(ts)) return;
+        var idx = Math.floor((ts - startMs) / 86400000);
+        if (idx >= 0 && idx < DAYS14) {
+          arr[idx]++;
+          doneRecent++;
+        }
+      });
+      var spark = M.charts.sparkline(arr, { width: 200, height: 32, fill: true });
+      spark.setAttribute('aria-label',
+        '14-day completion: ' + doneRecent + ' done');
+      sectionChartStrip.appendChild(spark);
+      sectionChartStrip.appendChild(el('small', { class: 'muted' },
+        'Last 14 days · ' + doneRecent + ' done'));
+      sectionChartStrip.hidden = false;
     }
 
     var backlinksFooter = el('div', { class: 'backlinks-footer' });

@@ -10,7 +10,7 @@
 
 'use strict';
 
-var CACHE_VERSION = 'minerva-v17';
+var CACHE_VERSION = 'minerva-v18';
 var SHELL = [
   './',
   './index.html',
