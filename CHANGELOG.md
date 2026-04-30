@@ -4,6 +4,16 @@ Notable changes to Minerva, grouped by phase. Most recent first.
 
 ---
 
+## v0.20 — Home view redesign
+
+- **Home view redesign** — hero greeting (time-of-day + first name from email), inline quick-add task input, Today summary card with overdue / due / events / habits pills, recent activity list, and section grid below.
+- **Quick-add** keeps focus after submit so you can brain-dump several tasks in a row; global `n` shortcut focuses it from anywhere.
+- **Recently edited** rows on home are clickable: plain click opens the row detail modal in place; shift-click jumps to the section.
+- **Lucide icons** replace the remaining UI emojis — rating stars, check/uncheck, eye preview, and the inline action affordances now match the rest of the app.
+- **Recently edited** filter — skip `*_log` tabs (habit ticks no longer dominate the list) and require a `title` or `name`, so raw-ULID rows stop surfacing.
+- **Quick-add** drops a never-visible success toast on the happy path; the cleared input + retained focus is the success signal. Error toast unchanged.
+- **vt323 theme** — `--muted` now uses the theme's near-black accent so muted text on the saturated yellow background is actually readable on the redesigned home.
+
 ## v0.19 — Schedule polish + meet polish + diagnostics
 
 - **Schedule range** — 7 / 14 / 30 day toggle, persisted per-user. Summary header line shows free percentage, scheduled hours, free hours, open-slot count for the visible window.
