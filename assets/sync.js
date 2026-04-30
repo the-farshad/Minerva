@@ -142,6 +142,21 @@
     });
   }
 
+  // The drawing editor writes the literal string 'pending' into a row's
+  // drawing cell after save and before the upload completes. flushPending
+  // normally replaces it with the Drive fileId. If the local drawing
+  // record is gone before flushPending runs, the sentinel survives — and
+  // we must not push 'pending' to Sheets as a real value.
+  function hasPendingSketch(row) {
+    if (!row) return false;
+    for (var k in row) {
+      if (!row.hasOwnProperty(k)) continue;
+      if (k.charAt(0) === '_') continue;
+      if (row[k] === 'pending') return true;
+    }
+    return false;
+  }
+
   async function pushTab(token, ssId, tab) {
     var dirty = await Minerva.db.getDirtyRows(tab);
     if (!dirty.length) return { tab: tab, pushed: 0 };
@@ -168,6 +183,16 @@
           console.warn('[Minerva draw] flushPending', tab, row.id, (e && e.message) || e);
           continue;
         }
+      }
+
+      // Guard against the 'pending' sentinel landing in the spreadsheet.
+      // If a drawing record was wiped locally (cleared cache, restored on
+      // a different device) the cell still reads 'pending' but flushPending
+      // had nothing to upload. Skip the row rather than committing the bad
+      // sentinel — user can re-edit the sketch to recover.
+      if (!row._deleted && hasPendingSketch(row)) {
+        console.warn('[Minerva draw] row carries pending sentinel with no local drawing; skipping push', tab, row.id);
+        continue;
       }
 
       if (row._deleted) {

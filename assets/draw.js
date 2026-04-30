@@ -845,16 +845,19 @@
     return new Blob([arr], { type: mime });
   }
 
-  // Escape LaTeX special characters in a plain text run. Order matters:
-  // the backslash must be replaced first so we don't double-escape the
-  // backslashes that the later replacements introduce.
+  // Escape LaTeX special characters in a plain text run. The naive
+  // "backslash-first" order was wrong: `\textbackslash{}` introduces
+  // `{` and `}` that the next pass then re-escapes, so a literal
+  // `C:\Users\foo` compiled to `\textbackslash\{\}Users…`. Use a
+  // placeholder for `\` and substitute the macro last.
   function escapeTex(s) {
     return String(s == null ? '' : s)
-      .replace(/\\/g, '\\textbackslash{}')
+      .replace(/\\/g, ' ')
       .replace(/[{}]/g, '\\$&')
       .replace(/[$&%#_]/g, '\\$&')
       .replace(/~/g, '\\textasciitilde{}')
-      .replace(/\^/g, '\\textasciicircum{}');
+      .replace(/\^/g, '\\textasciicircum{}')
+      .replace(/ /g, '\\textbackslash{}');
   }
 
   // Best-effort markdown → LaTeX. Tokenization strategy: split the source
