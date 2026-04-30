@@ -1,11 +1,12 @@
-/* Minerva — section graph view (slices A-1, A-2).
+/* Minerva — section graph view (slices A-1, A-2, A-3).
  *
  * Hand-rolled SVG graph for sections that have a self-referential
  * ref(<self>) column (today: goals.parent), and a top-level cross-tab
  * graph that unions every ref column across every section. Builds a
- * {nodes, edges} graph, computes a layered-DAG layout via longest-path
- * layering, and renders straight/curved edges with cycle-tolerant DFS
- * coloring. No library, no force layout — those arrive in slice A-3.
+ * {nodes, edges} graph and renders with one of two layouts:
+ *  - Layered DAG (default): synchronous, longest-path layering.
+ *  - Force-directed: lazy-loads d3-force from jsDelivr on first use,
+ *    runs a tick-bounded simulation, mutates node x/y in place.
  *
  * Public surface:
  *   M.graph.buildGraphFromTab(tab)    -> Promise<{nodes, edges, cycleEdges}>
@@ -24,6 +25,60 @@
   var NODE_R = 7;         // node circle radius
   var LABEL_MAX = 24;     // truncated label length
   var COMP_GAP = 60;      // horizontal gap between disconnected components
+
+  var D3_FORCE_URL = 'https://cdn.jsdelivr.net/npm/d3-force@3.0.0/dist/d3-force.min.js';
+  var LAYOUT_PREF_KEY = 'minerva.graph.layout';
+
+  // Tick-bounded force simulation parameters (per planner). 150 ticks at
+  // alpha decay 0.05 converges in well under 2s for ~200 nodes.
+  var FORCE_MAX_TICKS = 150;
+  var FORCE_TICKS_PER_FRAME = 5;
+  var FORCE_ALPHA_DECAY = 0.05;
+  var FORCE_ALPHA_MIN = 0.01;
+  var FORCE_LINK_DISTANCE = 80;
+  var FORCE_CHARGE = -260;
+  var FORCE_COLLIDE_R = NODE_R + 8;
+  var FORCE_COLLIDE_DROP_THRESHOLD = 200; // skip collide above this node count
+
+  // ---- lazy-loaded d3-force --------------------------------------------
+  var d3ForceLoader = null;
+  function loadD3Force() {
+    if (d3ForceLoader) return d3ForceLoader;
+    d3ForceLoader = new Promise(function (resolve, reject) {
+      if (window.d3 && window.d3.forceSimulation) { resolve(window.d3); return; }
+      var s = document.createElement('script');
+      s.src = D3_FORCE_URL;
+      s.onload = function () {
+        if (window.d3 && window.d3.forceSimulation) resolve(window.d3);
+        else reject(new Error('d3-force loaded but global missing'));
+      };
+      s.onerror = function () {
+        d3ForceLoader = null; // allow retry after a transient failure
+        reject(new Error('d3-force CDN unreachable'));
+      };
+      document.head.appendChild(s);
+    });
+    return d3ForceLoader;
+  }
+
+  function readLayoutPref() {
+    try {
+      var v = localStorage.getItem(LAYOUT_PREF_KEY);
+      if (v === 'force' || v === 'layered') return v;
+    } catch (e) { /* ignore */ }
+    return 'layered';
+  }
+  function writeLayoutPref(v) {
+    try { localStorage.setItem(LAYOUT_PREF_KEY, v); }
+    catch (e) { /* ignore */ }
+  }
+
+  function prefersReducedMotion() {
+    try {
+      return !!(window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { return false; }
+  }
 
   // ---- helpers ----------------------------------------------------------
 
@@ -449,6 +504,104 @@
     return { positions: positions, width: width, height: height };
   }
 
+  // ---- force-directed layout (d3-force) --------------------------------
+  // Mutates a copy of `nodes` with x/y attributes and returns
+  // { positions, width, height } in the same shape as layoutGraph.
+  // Tick-bounded so we never freeze the UI.
+
+  function runSimulationTicks(simulation, totalTicks, perFrame, useAnimation) {
+    return new Promise(function (resolve) {
+      var ticked = 0;
+
+      if (!useAnimation) {
+        // Reduced-motion path: run synchronously, but yield once via
+        // setTimeout so the host can paint a "loading" state first.
+        setTimeout(function () {
+          while (ticked < totalTicks && simulation.alpha() >= FORCE_ALPHA_MIN) {
+            simulation.tick();
+            ticked++;
+          }
+          simulation.stop();
+          resolve();
+        }, 0);
+        return;
+      }
+
+      function step() {
+        var budget = perFrame;
+        while (budget-- > 0 && ticked < totalTicks &&
+               simulation.alpha() >= FORCE_ALPHA_MIN) {
+          simulation.tick();
+          ticked++;
+        }
+        if (ticked >= totalTicks || simulation.alpha() < FORCE_ALPHA_MIN) {
+          simulation.stop();
+          resolve();
+          return;
+        }
+        requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  async function applyForceLayout(nodes, edges, cycleEdges) {
+    var d3 = await loadD3Force();
+    if (!nodes.length) return { positions: {}, width: 320, height: 200 };
+
+    // d3-force mutates the input objects, so copy the bare positional
+    // shells to keep the source data structures clean.
+    var simNodes = nodes.map(function (n) {
+      return { id: n.id };
+    });
+    var byId = {};
+    simNodes.forEach(function (n) { byId[n.id] = n; });
+
+    var allEdges = (edges || []).concat(cycleEdges || []);
+    var simLinks = [];
+    allEdges.forEach(function (e) {
+      if (e.from === e.to) return; // self-loops don't participate in layout
+      if (!byId[e.from] || !byId[e.to]) return;
+      simLinks.push({ source: e.from, target: e.to });
+    });
+
+    var sim = d3.forceSimulation(simNodes)
+      .alphaDecay(FORCE_ALPHA_DECAY)
+      .force('link', d3.forceLink(simLinks)
+        .id(function (d) { return d.id; })
+        .distance(FORCE_LINK_DISTANCE))
+      .force('charge', d3.forceManyBody().strength(FORCE_CHARGE))
+      .force('center', d3.forceCenter(0, 0));
+
+    if (simNodes.length <= FORCE_COLLIDE_DROP_THRESHOLD) {
+      sim.force('collide', d3.forceCollide(FORCE_COLLIDE_R));
+    }
+
+    // Halt the auto-running simulation; we'll drive it ourselves.
+    sim.stop();
+
+    var useAnimation = !prefersReducedMotion();
+    await runSimulationTicks(sim, FORCE_MAX_TICKS, FORCE_TICKS_PER_FRAME, useAnimation);
+
+    // Translate so the bounding box starts at (PAD, PAD).
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    simNodes.forEach(function (n) {
+      if (n.x < minX) minX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.x > maxX) maxX = n.x;
+      if (n.y > maxY) maxY = n.y;
+    });
+    if (!isFinite(minX)) { minX = 0; minY = 0; maxX = 320; maxY = 200; }
+
+    var positions = {};
+    simNodes.forEach(function (n) {
+      positions[n.id] = { x: n.x - minX + PAD, y: n.y - minY + PAD };
+    });
+    var width = Math.max(320, (maxX - minX) + PAD * 2);
+    var height = Math.max(200, (maxY - minY) + PAD * 2);
+    return { positions: positions, width: width, height: height };
+  }
+
   // ---- SVG rendering ----------------------------------------------------
 
   function buildEdgePath(p1, p2) {
@@ -487,27 +640,41 @@
     var emptyMsg = (data && data.emptyMessage) ||
       'No nodes — create some rows in this section to see the graph.';
 
-    // When a chip filter is requested, wrap the SVG in a container so
-    // chips sit above the graph host without leaking out of overflow.
-    var graphHost = host;
+    // ---- chrome (toggle row + chip filter row + canvas host) -----------
+    host.classList.remove('graph-host');
+    host.classList.add('graph-wrap');
+
+    var toggleRow = document.createElement('div');
+    toggleRow.className = 'graph-layout-toggle';
+    var armLayered = document.createElement('button');
+    armLayered.type = 'button';
+    armLayered.className = 'graph-layout-arm';
+    armLayered.setAttribute('data-mode', 'layered');
+    armLayered.textContent = 'Layered';
+    var armForce = document.createElement('button');
+    armForce.type = 'button';
+    armForce.className = 'graph-layout-arm';
+    armForce.setAttribute('data-mode', 'force');
+    armForce.textContent = 'Force';
+    toggleRow.appendChild(armLayered);
+    toggleRow.appendChild(armForce);
+    host.appendChild(toggleRow);
+
     var chipsRow = null;
     if (tabsList && tabsList.length) {
-      // Caller's host may already carry .graph-host (legacy) — strip it
-      // since the inner canvas is the actual scroll/pan target.
-      host.classList.remove('graph-host');
       chipsRow = document.createElement('div');
       chipsRow.className = 'graph-chips';
-      var canvasHost = document.createElement('div');
-      canvasHost.className = 'graph-host';
-      host.classList.add('graph-wrap');
       host.appendChild(chipsRow);
-      host.appendChild(canvasHost);
-      graphHost = canvasHost;
-    } else {
-      host.classList.add('graph-host');
     }
 
+    var canvasHost = document.createElement('div');
+    canvasHost.className = 'graph-host';
+    host.appendChild(canvasHost);
+
+    var graphHost = canvasHost;
+
     if (!nodes.length) {
+      armLayered.classList.add('is-active');
       var empty = document.createElement('div');
       empty.className = 'graph-empty';
       empty.textContent = emptyMsg;
@@ -515,7 +682,84 @@
       return;
     }
 
-    var layout = layoutGraph(nodes, edges, cycleEdges);
+    // ---- layout-mode wiring --------------------------------------------
+    var mode = readLayoutPref();
+
+    function paintArms() {
+      if (mode === 'force') {
+        armForce.classList.add('is-active');
+        armLayered.classList.remove('is-active');
+      } else {
+        armLayered.classList.add('is-active');
+        armForce.classList.remove('is-active');
+      }
+    }
+
+    function showLoading() {
+      graphHost.innerHTML = '';
+      var msg = document.createElement('div');
+      msg.className = 'graph-loading';
+      msg.textContent = 'Loading force layout…';
+      graphHost.appendChild(msg);
+    }
+
+    function showFlash(text, kind) {
+      var f = document.createElement('div');
+      f.className = 'flash';
+      f.setAttribute('role', 'status');
+      if (kind === 'error') f.style.color = 'var(--error)';
+      f.textContent = text;
+      host.appendChild(f);
+      setTimeout(function () {
+        if (f.parentNode) f.parentNode.removeChild(f);
+      }, 3500);
+    }
+
+    function paintLayout(layout) {
+      // Replace canvasHost with a fresh node so per-render listeners
+      // (wheel, pointer*) don't stack across mode toggles.
+      var fresh = document.createElement('div');
+      fresh.className = 'graph-host';
+      host.replaceChild(fresh, canvasHost);
+      canvasHost = fresh;
+      graphHost = fresh;
+      paintCanvas(layout);
+    }
+
+    function renderForMode() {
+      paintArms();
+      if (mode === 'force') {
+        showLoading();
+        applyForceLayout(nodes, edges, cycleEdges).then(function (layout) {
+          paintLayout(layout);
+        }).catch(function (err) {
+          console.warn('graph: force layout unavailable —', err && err.message ? err.message : err);
+          showFlash('Force layout unavailable — falling back to layered.', 'error');
+          mode = 'layered';
+          writeLayoutPref('layered');
+          paintArms();
+          paintLayout(layoutGraph(nodes, edges, cycleEdges));
+        });
+      } else {
+        paintLayout(layoutGraph(nodes, edges, cycleEdges));
+      }
+    }
+
+    function onArm(target) {
+      var nextMode = target.getAttribute('data-mode');
+      if (nextMode !== 'layered' && nextMode !== 'force') return;
+      if (nextMode === mode) return;
+      mode = nextMode;
+      writeLayoutPref(mode);
+      renderForMode();
+    }
+    armLayered.addEventListener('click', function () { onArm(armLayered); });
+    armForce.addEventListener('click', function () { onArm(armForce); });
+
+    // ---- canvas painter (ran after each layout decision) ---------------
+    function paintCanvas(layout) {
+    if (chipsRow) chipsRow.innerHTML = ''; // chips re-bind to fresh SVG groups
+
     var W = layout.width;
     var H = layout.height;
     var positions = layout.positions;
@@ -759,6 +1003,9 @@
     graphHost.addEventListener('pointerup', endDrag);
     graphHost.addEventListener('pointercancel', endDrag);
     graphHost.addEventListener('pointerleave', function (ev) { if (dragging) endDrag(ev); });
+    } // end paintCanvas
+
+    renderForMode();
   }
 
   M.graph = {
