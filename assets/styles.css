@@ -3160,6 +3160,59 @@ i[data-lucide] svg {
   text-align: center;
 }
 
+/* --- cross-tab graph (#/graph) ------------------------------ */
+
+.view-graph .graph-host-shell {
+  display: block;
+  width: 100%;
+}
+
+.view-graph .graph-empty-msg {
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.graph-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.graph-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.25rem 0;
+}
+
+.graph-chip {
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.2;
+}
+
+.graph-chip:hover {
+  border-color: var(--accent);
+}
+
+.graph-chip.is-active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+.graph-chip.is-hidden {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
 /* --- print --------------------------------------------------- */
 
 @media print {
