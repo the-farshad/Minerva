@@ -1598,39 +1598,134 @@
 
       paintBacklinksFooter(backlinks);
       paintBulkBar();
-      paintSectionChartStrip(visible);
+      paintSectionChartStrip(visible, meta);
     }
 
-    function paintSectionChartStrip(rows) {
+    function paintSectionChartStrip(rows, meta) {
       sectionChartStrip.replaceChildren();
-      if (sec.tab !== 'tasks' || !rows || !rows.length || !M.charts || !M.charts.sparkline) {
+      if (!rows || !rows.length || !M.charts) {
         sectionChartStrip.hidden = true;
         return;
       }
-      var DAYS14 = 14;
-      var arr = new Array(DAYS14);
-      for (var si = 0; si < DAYS14; si++) arr[si] = 0;
-      var startD = new Date();
-      startD.setHours(0, 0, 0, 0);
-      var startMs = startD.getTime() - (DAYS14 - 1) * 86400000;
-      var doneRecent = 0;
-      rows.forEach(function (r) {
-        if (String(r.status || '').toLowerCase() !== 'done') return;
-        var ts = r._updated ? Date.parse(r._updated) : NaN;
-        if (!isFinite(ts)) return;
-        var idx = Math.floor((ts - startMs) / 86400000);
-        if (idx >= 0 && idx < DAYS14) {
-          arr[idx]++;
-          doneRecent++;
+      if (sec.tab === 'tasks' && M.charts.sparkline) {
+        var DAYS14 = 14;
+        var arr = new Array(DAYS14);
+        for (var si = 0; si < DAYS14; si++) arr[si] = 0;
+        var startD = new Date();
+        startD.setHours(0, 0, 0, 0);
+        var startMs = startD.getTime() - (DAYS14 - 1) * 86400000;
+        var doneRecent = 0;
+        rows.forEach(function (r) {
+          if (String(r.status || '').toLowerCase() !== 'done') return;
+          var ts = r._updated ? Date.parse(r._updated) : NaN;
+          if (!isFinite(ts)) return;
+          var idx = Math.floor((ts - startMs) / 86400000);
+          if (idx >= 0 && idx < DAYS14) {
+            arr[idx]++;
+            doneRecent++;
+          }
+        });
+        var spark = M.charts.sparkline(arr, { width: 200, height: 32, fill: true });
+        spark.setAttribute('aria-label',
+          '14-day completion: ' + doneRecent + ' done');
+        sectionChartStrip.appendChild(spark);
+        sectionChartStrip.appendChild(el('small', { class: 'muted' },
+          'Last 14 days · ' + doneRecent + ' done'));
+        sectionChartStrip.hidden = false;
+        return;
+      }
+      if (sec.tab === 'goals' && M.charts.histogram) {
+        var values = [];
+        var sum = 0;
+        rows.forEach(function (r) {
+          var v = Number(r.progress);
+          if (!isFinite(v)) return;
+          if (v < 0) v = 0;
+          if (v > 100) v = 100;
+          values.push(v);
+          sum += v;
+        });
+        if (!values.length) {
+          sectionChartStrip.hidden = true;
+          return;
         }
-      });
-      var spark = M.charts.sparkline(arr, { width: 200, height: 32, fill: true });
-      spark.setAttribute('aria-label',
-        '14-day completion: ' + doneRecent + ' done');
-      sectionChartStrip.appendChild(spark);
-      sectionChartStrip.appendChild(el('small', { class: 'muted' },
-        'Last 14 days · ' + doneRecent + ' done'));
-      sectionChartStrip.hidden = false;
+        var avg = Math.round(sum / values.length);
+        var hist = M.charts.histogram(values, {
+          bins: 10,
+          max: 100,
+          width: 240,
+          height: 36,
+          ariaLabel: 'Goal progress histogram across ' + values.length + ' goals'
+        });
+        sectionChartStrip.appendChild(hist);
+        sectionChartStrip.appendChild(el('small', { class: 'muted' },
+          values.length + ' goal' + (values.length === 1 ? '' : 's') + ' · avg ' + avg + '%'));
+        sectionChartStrip.hidden = false;
+        return;
+      }
+      if (sec.tab === 'projects' && M.charts.gantt) {
+        // Resolve start/end column names from cached meta. Default to
+        // start/end (bootstrap shape) and fall back to startDate/endDate
+        // or the first two date/datetime columns.
+        var startCol = null;
+        var endCol = null;
+        if (meta && meta.headers) {
+          var H = meta.headers;
+          var T = meta.types || [];
+          var hasH = function (c) { return H.indexOf(c) >= 0; };
+          if (hasH('start') && hasH('end')) {
+            startCol = 'start'; endCol = 'end';
+          } else if (hasH('startDate') && hasH('endDate')) {
+            startCol = 'startDate'; endCol = 'endDate';
+          } else {
+            var dateCols = [];
+            for (var di = 0; di < H.length; di++) {
+              if (M.render.isInternal(H[di])) continue;
+              var pt = M.render.parseType(T[di] || 'text');
+              if (pt.kind === 'date' || pt.kind === 'datetime') dateCols.push(H[di]);
+              if (dateCols.length >= 2) break;
+            }
+            if (dateCols.length >= 2) {
+              startCol = dateCols[0];
+              endCol = dateCols[1];
+            }
+          }
+        }
+        if (!startCol || !endCol) {
+          sectionChartStrip.hidden = true;
+          return;
+        }
+        var items = [];
+        rows.forEach(function (r) {
+          var s = r[startCol];
+          var e = r[endCol];
+          if (!s || !e) return;
+          var ts = Date.parse(s);
+          var te = Date.parse(e);
+          if (!isFinite(ts) || !isFinite(te)) return;
+          items.push({
+            label: r.name || r.title || r.id,
+            start: ts,
+            end: te
+          });
+        });
+        if (!items.length) {
+          sectionChartStrip.hidden = true;
+          return;
+        }
+        var ganttSvg = M.charts.gantt(items, {
+          width: 320,
+          rowHeight: 8,
+          gap: 2,
+          ariaLabel: 'Project timeline with ' + items.length + ' active projects'
+        });
+        sectionChartStrip.appendChild(ganttSvg);
+        sectionChartStrip.appendChild(el('small', { class: 'muted' },
+          items.length + ' active project' + (items.length === 1 ? '' : 's')));
+        sectionChartStrip.hidden = false;
+        return;
+      }
+      sectionChartStrip.hidden = true;
     }
 
     var backlinksFooter = el('div', { class: 'backlinks-footer' });
@@ -4537,7 +4632,7 @@
     );
   }
 
-  async function viewGraph() {
+  async function viewGraph(hash) {
     var view = el('section', { class: 'view view-graph' });
     var h2 = el('h2');
     h2.appendChild(M.render.icon('network'));
@@ -4555,6 +4650,19 @@
       return view;
     }
 
+    // Parse #/graph?focus=<rowId>
+    var focusId = '';
+    var qIdx = (hash || '').indexOf('?');
+    if (qIdx >= 0) {
+      var qs = (hash || '').slice(qIdx + 1).split('&');
+      for (var qi = 0; qi < qs.length; qi++) {
+        var pair = qs[qi].split('=');
+        if (pair[0] === 'focus' && pair[1]) {
+          try { focusId = decodeURIComponent(pair[1]); } catch (e) { focusId = pair[1]; }
+        }
+      }
+    }
+
     try {
       var data = await M.graph.buildGraphFromAll();
       // Empty state: no section has a ref column at all.
@@ -4563,6 +4671,7 @@
           'No connections — add a ref column to a section to see the cross-tab graph.'));
         return view;
       }
+      if (focusId) data.focus = focusId;
       M.graph.renderGraph(host, data);
     } catch (e) {
       console.warn('viewGraph: build failed', e);
@@ -4592,8 +4701,8 @@
         view = viewPublic(hash.replace(/^#\/p\//, ''));
       } else if (hash === '#/today') {
         view = await viewToday(); active = '#/today';
-      } else if (hash === '#/graph') {
-        view = await viewGraph(); active = '#/graph';
+      } else if (hash === '#/graph' || hash.indexOf('#/graph?') === 0) {
+        view = await viewGraph(hash); active = '#/graph';
       } else if (hash === '#/schedule') {
         view = await viewSchedule(); active = '#/schedule';
       } else if ((sectionMatch = hash.match(/^#\/avail\/(.+)$/))) {
@@ -5197,6 +5306,15 @@
 
   // ---- row detail modal (double-click row or `d`) ----
 
+  function tabHasRefColumn(meta) {
+    if (!meta || !meta.types) return false;
+    for (var i = 0; i < meta.types.length; i++) {
+      var t = M.render.parseType(meta.types[i]);
+      if (t && t.kind === 'ref') return true;
+    }
+    return false;
+  }
+
   async function showRowDetail(tab, rowId) {
     if (document.querySelector('.row-detail-overlay')) return;
     var row = await M.db.getRow(tab, rowId);
@@ -5408,6 +5526,21 @@
           } }, 'Copy BibTeX')
       : null;
 
+    // "Show in graph" — only when this section participates in the cross-tab
+    // graph (i.e. has at least one ref column). Sits with primary actions
+    // so it's the obvious next move after viewing a row's fields.
+    var graphBtn = null;
+    if (tabHasRefColumn(meta)) {
+      graphBtn = el('button', { class: 'btn btn-ghost row-detail-graph-link', type: 'button',
+        onclick: function () {
+          overlay.remove();
+          location.hash = '#/graph?focus=' + encodeURIComponent(rowId);
+        }
+      });
+      graphBtn.appendChild(M.render.icon('network'));
+      graphBtn.appendChild(document.createTextNode(' Show in graph'));
+    }
+
     panel.appendChild(el('div', { class: 'form-actions' },
       el('button', { class: 'btn btn-ghost', type: 'button',
         onclick: function () { overlay.remove(); } }, 'Close'),
@@ -5418,6 +5551,7 @@
           overlay.remove();
           if (location.hash !== '#/settings') await route();
         } }, 'Delete row'),
+      graphBtn,
       bibtexBtn,
       readConfig().spreadsheetId
         ? el('a', { class: 'btn btn-ghost',
