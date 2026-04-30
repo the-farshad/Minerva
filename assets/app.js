@@ -1347,9 +1347,9 @@
     }
     paintViewsBar();
 
-    function paintModeToggle(hasDate, hasTree) {
+    function paintModeToggle(hasDate, hasTree, hasGraph) {
       modeToggle.innerHTML = '';
-      if (!hasDate && !hasTree) return;
+      if (!hasDate && !hasTree && !hasGraph) return;
       var listBtn = el('button', { type: 'button', 'data-value': 'list',
         class: mode === 'list' ? 'active' : '' }, 'List');
       listBtn.addEventListener('click', function () { switchMode('list'); });
@@ -1359,6 +1359,12 @@
           class: mode === 'tree' ? 'active' : '' }, 'Tree');
         treeBtn.addEventListener('click', function () { switchMode('tree'); });
         modeToggle.appendChild(treeBtn);
+      }
+      if (hasGraph) {
+        var graphBtn = el('button', { type: 'button', 'data-value': 'graph',
+          class: mode === 'graph' ? 'active' : '' }, 'Graph');
+        graphBtn.addEventListener('click', function () { switchMode('graph'); });
+        modeToggle.appendChild(graphBtn);
       }
       if (hasDate) {
         var calBtn = el('button', { type: 'button', 'data-value': 'cal',
@@ -1430,10 +1436,12 @@
       var parentCol = findSelfRefCol(meta, sec.tab);
       var canCal = !!dateCol;
       var canTree = !!parentCol;
+      var canGraph = !!parentCol && !!(M.graph && M.graph.renderGraph);
       if (mode === 'cal' && !canCal) mode = 'list';
       if (mode === 'tree' && !canTree) mode = 'list';
+      if (mode === 'graph' && !canGraph) mode = 'list';
 
-      paintModeToggle(canCal, canTree);
+      paintModeToggle(canCal, canTree, canGraph);
       paintCalNav(mode === 'cal');
 
       var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
@@ -1461,6 +1469,18 @@
           el('strong', null, '↺'),
           ' shows incoming refs from other sections. Click ▸/▾ to expand.'
         );
+      } else if (mode === 'graph' && canGraph) {
+        var graphHost = el('div', { class: 'graph-host' });
+        bodyHost.replaceChildren(graphHost);
+        hint.replaceChildren(
+          'Graph view links rows by their ', el('code', null, parentCol),
+          ' field. Drag to pan, scroll to zoom, click a node to open it. ',
+          'Cycles render as dashed arcs.'
+        );
+        M.graph.buildGraphFromTab(sec.tab).then(function (data) {
+          data.tab = sec.tab;
+          M.graph.renderGraph(graphHost, data);
+        });
       } else {
         bodyHost.replaceChildren(renderSectionTable(meta, filtered, sec.tab, refresh, userSort, onSortChange, backlinks, selectedIds, paintBulkBar));
         hint.replaceChildren(
@@ -6018,6 +6038,11 @@
     ensureOfflineIndicator();
     offlineIndicator.hidden = navigator.onLine !== false;
   }
+
+  // Public surface for sibling modules (graph view, etc.) that want to
+  // hand off into existing app flows.
+  M.app = M.app || {};
+  M.app.showRowDetail = showRowDetail;
 
   async function boot() {
     bindPicker();
