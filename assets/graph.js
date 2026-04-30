@@ -637,6 +637,7 @@
     var cycleEdges = (data && data.cycleEdges) || [];
     var tab = data && data.tab;
     var tabsList = (data && data.tabs) || null;
+    var focusId = data && data.focus ? String(data.focus) : '';
     var emptyMsg = (data && data.emptyMessage) ||
       'No nodes — create some rows in this section to see the graph.';
 
@@ -838,8 +839,10 @@
       var p = positions[n.id];
       if (!p) return;
       var nodeTab = n.tab || tab || '';
+      var nodeClass = 'graph-node';
+      if (focusId && String(n.id) === focusId) nodeClass += ' is-focused';
       var g = svgEl('g', {
-        class: 'graph-node',
+        class: nodeClass,
         tabindex: '0',
         'data-row-id': n.id,
         'data-tab': nodeTab,
@@ -943,6 +946,17 @@
     var view = { x: 0, y: 0, w: W, h: H };
     function applyView() {
       svg.setAttribute('viewBox', view.x + ' ' + view.y + ' ' + view.w + ' ' + view.h);
+    }
+
+    // If we were asked to focus a node, slight zoom-in and recenter on it.
+    if (focusId && positions[focusId]) {
+      var fp = positions[focusId];
+      var zoom = 0.6; // 0.6x of natural extent — i.e. zoomed in
+      view.w = W * zoom;
+      view.h = H * zoom;
+      view.x = fp.x - view.w / 2;
+      view.y = fp.y - view.h / 2;
+      applyView();
     }
 
     var dragging = false;

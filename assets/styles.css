@@ -973,6 +973,17 @@ a.home-habit-strip:hover { border-color: var(--accent); }
   width: 200px;
   height: 32px;
 }
+.section-chart-strip .chart-histogram {
+  display: block;
+  width: 240px;
+  height: 36px;
+}
+.section-chart-strip .chart-gantt {
+  display: block;
+  width: 320px;
+  height: auto;
+  max-height: 80px;
+}
 .section-chart-strip small {
   font-variant-numeric: tabular-nums;
 }
@@ -3207,6 +3218,25 @@ i[data-lucide] svg {
 .graph-node .graph-self-loop {
   stroke: var(--accent);
   stroke-width: 1.5;
+}
+
+.graph-node.is-focused circle:first-child {
+  stroke: var(--accent);
+  stroke-width: 3;
+  r: 9;
+  animation: graph-focus-halo 1.6s ease-out infinite;
+}
+.graph-node.is-focused text {
+  font-weight: 600;
+  fill: var(--accent);
+}
+@keyframes graph-focus-halo {
+  0%   { filter: drop-shadow(0 0 0   color-mix(in srgb, var(--accent) 70%, transparent)); }
+  60%  { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 70%, transparent)); }
+  100% { filter: drop-shadow(0 0 0   color-mix(in srgb, var(--accent) 0%,  transparent)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .graph-node.is-focused circle:first-child { animation: none; }
 }
 
 .graph-edge {
