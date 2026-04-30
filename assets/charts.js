@@ -6,8 +6,10 @@
  * variables so theme swaps Just Work.
  *
  * Public surface:
- *   M.charts.donut(value, max, opts)     -> <svg>
- *   M.charts.sparkline(values, opts)     -> <svg>
+ *   M.charts.donut(value, max, opts)         -> <svg>
+ *   M.charts.sparkline(values, opts)         -> <svg>
+ *   M.charts.stackedBar(segments, opts)      -> <svg>
+ *   M.charts.heatmapStrip(daily, opts)       -> <svg>
  */
 (function () {
   'use strict';
@@ -191,5 +193,152 @@
     return svg;
   }
 
-  M.charts = { donut: donut, sparkline: sparkline };
+  // ---- stackedBar -------------------------------------------------------
+
+  function stackedBar(segments, opts) {
+    opts = opts || {};
+    var width = num(opts.width) || 200;
+    var height = num(opts.height) || 14;
+    var trackColor = opts.track || 'var(--surface-2)';
+    var defaultAccent = opts.accent || 'var(--accent)';
+    var radius = num(opts.radius);
+    if (!isFinite(radius) || radius < 0) radius = Math.min(height / 2, 4);
+
+    var segs = (segments || []).map(function (s) {
+      return {
+        label: s && s.label ? String(s.label) : '',
+        value: Math.max(0, num(s && s.value)),
+        accent: s && s.accent ? s.accent : defaultAccent
+      };
+    });
+
+    var total = 0;
+    for (var i = 0; i < segs.length; i++) total += segs[i].value;
+
+    var aria = opts.ariaLabel;
+    if (!aria) {
+      if (total > 0) {
+        var parts = [];
+        for (var ai = 0; ai < segs.length; ai++) {
+          if (segs[ai].value > 0) {
+            parts.push(segs[ai].value + ' ' + (segs[ai].label || 'segment'));
+          }
+        }
+        aria = 'Stacked bar: ' + parts.join(', ');
+      } else {
+        aria = 'Stacked bar: empty';
+      }
+    }
+
+    var svg = svgEl('svg', {
+      class: 'chart-stacked-bar',
+      width: width,
+      height: height,
+      viewBox: '0 0 ' + width + ' ' + height,
+      preserveAspectRatio: 'none',
+      role: 'img',
+      'aria-label': aria
+    });
+
+    // Always render a track rect for shape consistency.
+    svg.appendChild(svgEl('rect', {
+      x: 0, y: 0, width: width, height: height,
+      rx: radius, ry: radius,
+      fill: trackColor
+    }));
+
+    if (total <= 0) return svg;
+
+    var x = 0;
+    for (var k = 0; k < segs.length; k++) {
+      var s = segs[k];
+      if (s.value <= 0) continue;
+      var w = (s.value / total) * width;
+      // Last visible segment: snap to the right edge to avoid sub-pixel gap.
+      var isLast = true;
+      for (var n = k + 1; n < segs.length; n++) {
+        if (segs[n].value > 0) { isLast = false; break; }
+      }
+      if (isLast) w = width - x;
+      svg.appendChild(svgEl('rect', {
+        x: x.toFixed(2),
+        y: 0,
+        width: w.toFixed(2),
+        height: height,
+        fill: s.accent
+      }));
+      x += w;
+    }
+
+    return svg;
+  }
+
+  // ---- heatmapStrip -----------------------------------------------------
+
+  function heatmapStrip(daily, opts) {
+    opts = opts || {};
+    var cellSize = num(opts.cellSize) || 14;
+    var gap = num(opts.gap);
+    if (!isFinite(gap) || gap < 0) gap = 2;
+    var accent = opts.accent || 'var(--accent)';
+    var trackColor = opts.track || 'var(--surface-2)';
+    var radius = num(opts.radius);
+    if (!isFinite(radius) || radius < 0) radius = 2;
+
+    var arr = (daily || []).map(num);
+    var n = arr.length;
+    var width = n > 0 ? (cellSize * n + gap * Math.max(0, n - 1)) : cellSize;
+    var height = cellSize;
+
+    var max = 0;
+    var total = 0;
+    for (var i = 0; i < n; i++) {
+      if (arr[i] > max) max = arr[i];
+      total += arr[i];
+    }
+
+    var aria = opts.ariaLabel;
+    if (!aria) aria = n + '-day heatmap, ' + total + ' total';
+
+    var svg = svgEl('svg', {
+      class: 'chart-heatmap-strip',
+      width: width,
+      height: height,
+      viewBox: '0 0 ' + width + ' ' + height,
+      role: 'img',
+      'aria-label': aria
+    });
+
+    for (var k = 0; k < n; k++) {
+      var x = k * (cellSize + gap);
+      var v = arr[k];
+      var attrs = {
+        x: x,
+        y: 0,
+        width: cellSize,
+        height: cellSize,
+        rx: radius,
+        ry: radius
+      };
+      if (v <= 0 || max <= 0) {
+        attrs.fill = trackColor;
+      } else {
+        // Scale opacity 0.3 → 1.0 so even small values are visible.
+        var op = 0.3 + (v / max) * 0.7;
+        if (op > 1) op = 1;
+        attrs.fill = accent;
+        attrs['fill-opacity'] = op.toFixed(3);
+      }
+      svg.appendChild(svgEl('rect', attrs));
+    }
+
+    return svg;
+  }
+
+  M.charts = {
+    donut: donut,
+    sparkline: sparkline,
+    stackedBar: stackedBar,
+    heatmapStrip: heatmapStrip
+  };
 })();
