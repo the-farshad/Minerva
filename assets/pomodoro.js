@@ -201,12 +201,21 @@
     return b;
   }
 
+  // Action buttons during running/paused/break: icon + accessible label.
+  // The label is set as aria-label and as fallback text inside the button so
+  // screen readers and "icon-didn't-load" cases both end up with something
+  // readable.
   function iconButton(name, title, onclick) {
     var b = document.createElement('button');
     b.type = 'button';
-    b.className = 'pomo-btn';
+    b.className = 'pomo-btn pomo-icon-btn';
     b.title = title;
+    b.setAttribute('aria-label', title);
     b.appendChild(lucide(name));
+    var fallback = document.createElement('span');
+    fallback.className = 'pomo-btn-fallback';
+    fallback.textContent = title;
+    b.appendChild(fallback);
     b.addEventListener('click', onclick);
     return b;
   }

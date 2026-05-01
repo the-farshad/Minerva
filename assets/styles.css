@@ -3133,6 +3133,36 @@ svg[data-lucide] {
   gap: 0.4em;
   font-weight: 500;
 }
+/* Icon-action buttons (Pause/Resume/Stop) carry a screen-reader-only
+   text fallback that becomes visible when the icon SVG fails to render
+   (e.g. if a user's network blocked Lucide before vendoring). */
+.pomo-btn-fallback {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.pomo-icon-btn {
+  position: relative;
+}
+/* When the Lucide swap didn't happen the inner <i data-lucide> stays as
+   a 0×0 element; promote the text fallback into view so the button is
+   still labeled and clickable. */
+.pomo-icon-btn:not(:has(svg)) .pomo-btn-fallback {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  font-size: 0.78rem;
+  padding: 0 0.3rem;
+}
+.pomo-icon-btn:not(:has(svg)) {
+  width: auto;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
 
 @media (max-width: 600px) {
   .pomo-widget { bottom: 4rem; left: 0.6rem; font-size: 0.78rem; }
