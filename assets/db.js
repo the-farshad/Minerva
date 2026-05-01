@@ -18,7 +18,7 @@
   'use strict';
 
   var DB_NAME = 'minerva';
-  var DB_VERSION = 2;
+  var DB_VERSION = 3;
   var _db = null;
   var _opening = null;
 
@@ -33,21 +33,62 @@
       var req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = function (e) {
         var db = e.target.result;
-        // v1 → rows + meta. Guarded with `contains` so re-running on a
-        // fresh DB and on an existing DB are both safe.
-        if (!db.objectStoreNames.contains('rows')) {
-          var rows = db.createObjectStore('rows', { keyPath: ['tab', 'id'] });
-          rows.createIndex('byTab', 'tab', { unique: false });
-          rows.createIndex('byTabUpdated', ['tab', '_updated'], { unique: false });
-          rows.createIndex('byTabDirty', ['tab', '_dirty'], { unique: false });
+        var ux = req.transaction;
+
+        // v3 fixes a long-standing data-corruption bug: the rows store
+        // used keyPath ['tab','id'], so every upsert overwrote the row's
+        // own `tab` field with the storage tab name. _config has a column
+        // literally named `tab` — that user data was being clobbered on
+        // every pull, breaking section navigation. v3 renames the
+        // storage-internal field to `_t` so the user's column survives.
+
+        // Fresh DB: create v3 stores directly.
+        if (e.oldVersion < 1) {
+          var rows = db.createObjectStore('rows', { keyPath: ['_t', 'id'] });
+          rows.createIndex('by_t', '_t', { unique: false });
+          rows.createIndex('by_t_updated', ['_t', '_updated'], { unique: false });
+          rows.createIndex('by_t_dirty', ['_t', '_dirty'], { unique: false });
         }
         if (!db.objectStoreNames.contains('meta')) {
           db.createObjectStore('meta', { keyPath: 'tab' });
         }
-        // v2 → drawings store for the sketch editor. Existing rows/meta
-        // are untouched on upgrade — only the new store is created.
         if (!db.objectStoreNames.contains('drawings')) {
           db.createObjectStore('drawings', { keyPath: ['tab', 'rowId', 'col'] });
+        }
+
+        // Existing v1/v2 user: migrate the rows store. Read all rows,
+        // delete the old store, recreate with new keyPath, write rows
+        // back with _t = old tab field. The user's `tab` column value
+        // is gone (it was being overwritten anyway), so for _config
+        // rows specifically, fall back to slug as the recovered tab —
+        // slug == tab in every bundled preset and in the bootstrap
+        // seed, so this matches the user's intent. Next pull from
+        // Sheets will repopulate the actual column value.
+        if (e.oldVersion >= 1 && e.oldVersion < 3 && db.objectStoreNames.contains('rows')) {
+          var oldStore = ux.objectStore('rows');
+          var keyPath = oldStore.keyPath;
+          // Already on the new keyPath? (e.g. someone bumped DB_VERSION
+          // manually without touching schema.) Skip the migration.
+          var alreadyMigrated = (Array.isArray(keyPath) && keyPath[0] === '_t');
+          if (!alreadyMigrated) {
+            var getReq = oldStore.getAll();
+            getReq.onsuccess = function () {
+              var allRows = getReq.result || [];
+              db.deleteObjectStore('rows');
+              var newStore = db.createObjectStore('rows', { keyPath: ['_t', 'id'] });
+              newStore.createIndex('by_t', '_t', { unique: false });
+              newStore.createIndex('by_t_updated', ['_t', '_updated'], { unique: false });
+              newStore.createIndex('by_t_dirty', ['_t', '_dirty'], { unique: false });
+              for (var i = 0; i < allRows.length; i++) {
+                var row = allRows[i];
+                var t = row.tab;
+                delete row.tab;
+                row._t = t;
+                if (t === '_config' && row.slug) row.tab = row.slug;
+                newStore.put(row);
+              }
+            };
+          }
         }
       };
       req.onsuccess = function () {
@@ -84,7 +125,7 @@
 
   async function upsertRow(tab, row) {
     var db = await open();
-    var rec = Object.assign({}, row, { tab: tab });
+    var rec = Object.assign({}, row, { _t: tab });
     return reqP(tx(db, 'rows', 'readwrite').put(rec));
   }
 
@@ -93,7 +134,7 @@
     var db = await open();
     var store = tx(db, 'rows', 'readwrite');
     return Promise.all(rows.map(function (r) {
-      return reqP(store.put(Object.assign({}, r, { tab: tab })));
+      return reqP(store.put(Object.assign({}, r, { _t: tab })));
     }));
   }
 
@@ -104,13 +145,13 @@
 
   async function getAllRows(tab) {
     var db = await open();
-    var idx = tx(db, 'rows').index('byTab');
+    var idx = tx(db, 'rows').index('by_t');
     return reqP(idx.getAll(IDBKeyRange.only(tab)));
   }
 
   async function countTab(tab) {
     var db = await open();
-    var idx = tx(db, 'rows').index('byTab');
+    var idx = tx(db, 'rows').index('by_t');
     return reqP(idx.count(IDBKeyRange.only(tab)));
   }
 
@@ -122,7 +163,7 @@
   async function clearTab(tab) {
     var db = await open();
     var store = tx(db, 'rows', 'readwrite');
-    var idx = store.index('byTab');
+    var idx = store.index('by_t');
     return new Promise(function (resolve, reject) {
       var c = idx.openCursor(IDBKeyRange.only(tab));
       c.onsuccess = function () {
@@ -137,7 +178,7 @@
   async function getDirtyRows(tab) {
     // _dirty stored as 1/0 so it can be indexed.
     var db = await open();
-    var idx = tx(db, 'rows').index('byTabDirty');
+    var idx = tx(db, 'rows').index('by_t_dirty');
     return reqP(idx.getAll(IDBKeyRange.only([tab, 1])));
   }
 
