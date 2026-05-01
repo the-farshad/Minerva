@@ -229,7 +229,8 @@
     a.className = 'cell-link';
     var host = '';
     try { host = new URL(raw).hostname.replace(/^www\./, ''); } catch (e) { host = raw; }
-    a.textContent = '↗ ' + host;
+    a.appendChild(renderIcon('external-link'));
+    a.appendChild(document.createTextNode(' ' + host));
     a.title = raw;
     wrap.appendChild(a);
 

@@ -568,7 +568,6 @@
       var todayHead = el('div', { class: 'home-today-head' });
       todayHead.appendChild(M.render.icon('sun'));
       todayHead.appendChild(el('span', { class: 'home-today-title' }, 'Today'));
-      todayHead.appendChild(el('span', { class: 'home-today-arrow' }, '→'));
       todayCard.appendChild(todayHead);
       var pillsWrap = el('div', { class: 'home-today-pills' });
       todayItems.forEach(function (p) {
@@ -582,7 +581,7 @@
     } else {
       hero.appendChild(el('p', { class: 'small muted home-empty-today' },
         'Nothing scheduled for today. ',
-        el('a', { href: '#/today' }, 'View Today →')));
+        el('a', { href: '#/today' }, 'View Today')));
     }
 
     // ---- section grid ---------------------------------------------------
@@ -700,13 +699,13 @@
             el('div', { class: 'section-cards' }, cards))
         : el('p', { class: 'muted' },
             'No sections yet. ',
-            el('a', { href: '#/settings' }, 'Add one from the preset gallery →')),
+            el('a', { href: '#/settings' }, 'Add one from the preset gallery')),
       recentEl,
       el('div', { class: 'home-footer-cta' },
         el('a', { href: '#/share', class: 'home-footer-link' }, 'Quick share'),
         el('a', { href: '#/schedule', class: 'home-footer-link' }, 'Schedule'),
         el('a', { href: '#/graph', class: 'home-footer-link' }, 'Graph'),
-        el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), class: 'home-footer-link', target: '_blank', rel: 'noopener' }, 'Spreadsheet ↗'),
+        el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), class: 'home-footer-link', target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Spreadsheet'),
         el('a', { href: '#/settings', class: 'home-footer-link' }, 'Settings')
       )
     );
@@ -737,7 +736,7 @@
       ))
     ));
     view.appendChild(el('div', { class: 'cta-row' },
-      el('a', { class: 'btn', href: '#/settings' }, 'Open Settings →'),
+      el('a', { class: 'btn', href: '#/settings' }, 'Open Settings'),
       el('a', { class: 'btn btn-ghost', href: '#/share' }, 'Try Quick share & QR (no login)')
     ));
     return view;
@@ -815,9 +814,9 @@
       ),
       el('div', { class: 'onboarding-cta' },
         firstUndone === 3
-          ? el('a', { class: 'btn', href: '#/settings' }, 'Open Settings →')
+          ? el('a', { class: 'btn', href: '#/settings' }, 'Open Settings')
           : firstUndone === 4
-            ? el('a', { class: 'btn', href: '#/settings' }, 'Connect Google →')
+            ? el('a', { class: 'btn', href: '#/settings' }, 'Connect Google')
             : null
       )
     );
@@ -1177,7 +1176,7 @@
       return el('section', { class: 'view' },
         el('h2', null, 'Section not found'),
         el('p', null, 'No section with slug ', el('code', null, slug), ' in `_config`.'),
-        el('p', null, el('a', { href: '#/' }, 'Go home →'), ' · ',
+        el('p', null, el('a', { href: '#/' }, 'Go home'), ' · ',
                        el('a', { href: '#/settings' }, 'Sync now'))
       );
     }
@@ -1185,7 +1184,7 @@
     // The habits section gets a custom heatmap-first view.
     if (slug === 'habits') return await viewHabits(sec, cfg);
     var sheetLink = cfg.spreadsheetId
-      ? el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Edit in Sheets ↗')
+      ? el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Edit in Sheets')
       : null;
 
     var view = el('section', { class: 'view view-section' });
@@ -1929,7 +1928,7 @@
                 if (navigator.clipboard) navigator.clipboard.writeText(url);
                 flash(output, 'Link copied');
               } }, 'Copy link'),
-            el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, 'Preview ↗')
+            el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Preview')
           ),
           el('div', { class: 'qr-wrap' },
             qr,
@@ -2106,7 +2105,7 @@
       return el('section', { class: 'view' },
         el('h2', null, 'Invalid meeting link'),
         el('p', null, 'This poll URL is malformed or truncated.'),
-        el('p', null, el('a', { href: '#/meet/new' }, 'Create a new poll →'))
+        el('p', null, el('a', { href: '#/meet/new' }, 'Create a new poll'))
       );
     }
     var view = el('section', { class: 'view view-meet' });
@@ -2375,7 +2374,7 @@
     var pageUrl = location.origin + location.pathname + location.hash;
     view.appendChild(el('div', { class: 'form-actions' },
       el('label', { class: 'small' }, 'Add response: ', addInput),
-      el('a', { class: 'btn btn-ghost', href: '#/meet/' + pollToken, target: '_blank', rel: 'noopener' }, 'Open participant view ↗'),
+      el('a', { class: 'btn btn-ghost', href: '#/meet/' + pollToken, target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Open participant view'),
       el('button', { class: 'btn btn-ghost', type: 'button',
         onclick: function () {
           if (navigator.clipboard) navigator.clipboard.writeText(pageUrl);
@@ -2441,7 +2440,7 @@
       return el('section', { class: 'view' },
         el('h2', null, 'Schedule'),
         el('p', null, 'Connect first.'),
-        el('p', null, el('a', { href: '#/settings' }, 'Open Settings →'))
+        el('p', null, el('a', { href: '#/settings' }, 'Open Settings'))
       );
     }
 
@@ -2470,8 +2469,8 @@
       el('button', { class: 'btn', type: 'button',
         onclick: function () { showAvailabilityShare(); }
       }, 'Share my availability'),
-      el('a', { class: 'btn btn-ghost', href: '#/meet/new' }, 'When to meet — group poll →'),
-      el('a', { class: 'btn btn-ghost', href: '#/today' }, 'Today →')
+      el('a', { class: 'btn btn-ghost', href: '#/meet/new' }, 'When to meet — group poll'),
+      el('a', { class: 'btn btn-ghost', href: '#/today' }, 'Today')
     );
     view.appendChild(actionRow);
 
@@ -2663,7 +2662,7 @@
             el('button', { class: 'btn btn-ghost', type: 'button',
               onclick: function () { M.downloadPng(qr, 'minerva-availability.png'); }
             }, 'Download PNG'),
-            el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, 'Open public view ↗')
+            el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Open public view')
           )
         );
       } catch (e) { /* QR opt-in only when generator is loaded */ }
@@ -2799,7 +2798,7 @@
       return el('section', { class: 'view' },
         el('h2', null, 'Today'),
         el('p', null, 'Connect first.'),
-        el('p', null, el('a', { href: '#/settings' }, 'Open Settings →'))
+        el('p', null, el('a', { href: '#/settings' }, 'Open Settings'))
       );
     }
 
@@ -2969,7 +2968,7 @@
       el('span', { class: 'small muted' }, '(' + habitsDone.length + ' / ' + habits.length + ' done)')));
     if (!habits.length) {
       view.appendChild(el('p', { class: 'muted' },
-        'No habits yet — ', el('a', { href: '#/s/habits' }, 'add one →')));
+        'No habits yet — ', el('a', { href: '#/s/habits' }, 'add one')));
     } else if (!habitsLeft.length) {
       var allDone = el('p', { class: 'muted' });
       allDone.appendChild(document.createTextNode('All done for today. '));
@@ -3012,11 +3011,11 @@
     }
 
     view.appendChild(el('p', { class: 'small muted' },
-      el('a', { href: '#/s/tasks' }, 'All tasks →'),
+      el('a', { href: '#/s/tasks' }, 'All tasks'),
       ' · ',
-      el('a', { href: '#/s/habits' }, 'All habits →'),
+      el('a', { href: '#/s/habits' }, 'All habits'),
       ' · ',
-      el('a', { href: '#/s/notes' }, 'All notes →')
+      el('a', { href: '#/s/notes' }, 'All notes')
     ));
 
     return view;
@@ -3194,7 +3193,7 @@
         card.appendChild(el('div', { class: 'habit-actions' },
           habitDoneBtn2,
           el('a', { class: 'btn btn-ghost',
-            href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Edit in Sheets ↗')
+            href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Edit in Sheets')
         ));
         grid.appendChild(card);
       });
@@ -3610,7 +3609,7 @@
         ok
           ? el('p', null,
               'Connected as ', el('em', null, state.email || 'your Google account'), '. ',
-              el('a', { href: M.sheets.spreadsheetUrl(c.spreadsheetId), target: '_blank', rel: 'noopener' }, 'Open spreadsheet ↗')
+              el('a', { href: M.sheets.spreadsheetUrl(c.spreadsheetId), target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Open spreadsheet')
             )
           : el('p', { class: 'muted' },
               c.clientId
@@ -4267,7 +4266,7 @@
               ' Enable desktop reminders for due tasks'),
             el('button', { class: 'btn btn-ghost', type: 'button',
               onclick: function () {
-                desktopNotify('Minerva', 'Test notification — looks good ✓');
+                desktopNotify('Minerva', 'Test notification — looks good');
               } }, 'Send test notification')
           )
         );
@@ -4355,7 +4354,7 @@
             onclick: async function () {
               var t = readTg();
               try {
-                await M.telegram.sendMessage(t.token, t.chatId, '*Minerva connected* ✅');
+                await M.telegram.sendMessage(t.token, t.chatId, '*Minerva connected*');
                 flash(tgPanel, 'Test message sent.');
               } catch (err) {
                 flash(tgPanel, 'sendMessage failed: ' + err.message, 'error');
@@ -4398,7 +4397,7 @@
         el('h3', null, 'Telegram bot'),
         el('p', { class: 'small muted' }, note,
           el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-telegram.md',
-                    target: '_blank', rel: 'noopener' }, 'Setup walkthrough →')
+                    target: '_blank', rel: 'noopener' }, 'Setup walkthrough')
         ),
         tgForm
       );
@@ -4455,7 +4454,7 @@
       el('h2', null, 'Settings'),
       el('p', { class: 'lead' },
         'Minerva keeps no secrets in its repo. You bring your own Google OAuth client; Minerva remembers it locally. ',
-        el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough →')
+        el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough')
       ),
       el('div', { class: 'settings-layout' },
         toc,
@@ -4545,7 +4544,7 @@
           el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () {
             M.downloadPng(qr, 'minerva-' + (payload.kind || 'share') + '.png');
           } }, 'Download PNG'),
-          el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, 'Open public view ↗')
+          el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Open public view')
         )
       );
 
@@ -4601,7 +4600,7 @@
       return el('section', { class: 'view' },
         el('h2', null, 'Invalid share link'),
         el('p', null, 'This link is malformed or truncated.'),
-        el('p', null, el('a', { href: '#/share' }, 'Create a new one →'))
+        el('p', null, el('a', { href: '#/share' }, 'Create a new one'))
       );
     }
 
@@ -4637,7 +4636,7 @@
     return el('section', { class: 'view' },
       el('h2', null, 'Not found'),
       el('p', null, 'No view at ', el('code', null, hash || '#/'), '.'),
-      el('p', null, el('a', { href: '#/' }, 'Go home →'))
+      el('p', null, el('a', { href: '#/' }, 'Go home'))
     );
   }
 
@@ -4779,7 +4778,7 @@
       view = el('section', { class: 'view' },
         el('h2', null, 'Something went wrong'),
         el('p', null, 'Render error: ', el('code', null, String(err && err.message || err))),
-        el('p', null, el('a', { href: '#/' }, 'Go home →'))
+        el('p', null, el('a', { href: '#/' }, 'Go home'))
       );
     }
 
@@ -5568,7 +5567,7 @@
       readConfig().spreadsheetId
         ? el('a', { class: 'btn btn-ghost',
             href: M.sheets.spreadsheetUrl(readConfig().spreadsheetId),
-            target: '_blank', rel: 'noopener' }, 'Open in Sheets ↗')
+            target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Open in Sheets')
         : null
     ));
 
@@ -5715,7 +5714,7 @@
       if (!c.provider) {
         statusLine.replaceChildren(
           el('span', null, 'No provider configured. ',
-            el('a', { href: '#/settings', onclick: function () { overlay.remove(); } }, 'Open Settings →')
+            el('a', { href: '#/settings', onclick: function () { overlay.remove(); } }, 'Open Settings')
           )
         );
       } else {
