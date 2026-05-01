@@ -4258,8 +4258,16 @@
       }
 
       // 2. Either re-enable an existing row or append a new one.
+      // Auto-pull _config if it isn't cached locally yet — most likely
+      // path on a fresh device or after the v3 IDB upgrade.
       var configMeta = await M.db.getMeta('_config');
-      if (!configMeta || !configMeta.headers) throw new Error('Sync first — _config schema not cached.');
+      if (!configMeta || !configMeta.headers) {
+        try {
+          await M.sync.pullTab(token, c.spreadsheetId, '_config');
+          configMeta = await M.db.getMeta('_config');
+        } catch (e) { /* fall through to error */ }
+      }
+      if (!configMeta || !configMeta.headers) throw new Error('Could not read _config schema. Click Sync in Settings, then try again.');
       var allRows = await M.db.getAllRows('_config');
       var existingRow = (allRows || []).find(function (r) { return r.slug === p.slug && !r._deleted; });
       if (existingRow) {

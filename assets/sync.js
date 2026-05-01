@@ -64,6 +64,17 @@
       var id = idField ? obj[idField] : (tab + ':' + (i + 3));
       if (!id) continue;
       obj.id = id;
+      // Self-heal long-standing _config corruption: a previous version of
+      // upsertRow overwrote each row's `tab` column with the storage tab
+      // name, then push wrote that bad value up to the user's sheet. So
+      // many users now have rows in `_config` where the `tab` column
+      // literally reads "_config" instead of the slug. If we see that
+      // pattern, restore tab=slug and mark the row dirty so the next
+      // push repairs the sheet permanently.
+      if (tab === '_config' && obj.tab === '_config' && obj.slug && obj.slug !== '_config') {
+        obj.tab = obj.slug;
+        obj._dirty = 1;
+      }
       if (dirtyById[id]) continue;   // skip; local dirty wins
       serverRows.push(obj);
     }
