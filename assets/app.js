@@ -1073,9 +1073,17 @@
     var startIdx = 0;
     if (sourceRow) {
       var first = items[0];
+      // The user pasted a playlist URL into this row, so the URL cell
+      // currently holds the *playlist* link (which won't render as a
+      // YouTube thumbnail and breaks the play button). Replace it with
+      // item 0's actual video URL so the row becomes a real video row.
       Object.keys(first).forEach(function (k) {
         if (k === 'videoId') return;
         if (meta.headers.indexOf(k) < 0) return;
+        if (k === 'url') {
+          sourceRow.url = first.url;
+          return;
+        }
         if (sourceRow[k] && String(sourceRow[k]).trim()) return;
         sourceRow[k] = first[k];
       });
@@ -2188,9 +2196,9 @@
   // Flip watched=TRUE and watched_at=now() if not already set. Pushes
   // the change to the user's sheet via the dirty queue.
   async function markRowWatchedByUrl(url) {
-    if (!url) return;
+    if (!url) return false;
     var sections = sectionRows();
-    if (!sections.length) return;
+    if (!sections.length) return false;
     var changedAny = false;
     for (var s = 0; s < sections.length; s++) {
       var sec = sections[s];
@@ -2234,6 +2242,7 @@
       }
     }
     if (changedAny) schedulePush();
+    return changedAny;
   }
 
   // ---- preset add / remove (module scope) ---------------------------
@@ -4014,7 +4023,7 @@
         el('input', { name: 'youtubeApiKey', type: 'password',
           placeholder: 'AIza…',
           value: cfg.youtubeApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
-        'Optional — only needed for playlist imports. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Paste here. Stored locally; never leaves your browser except in calls to googleapis.com.'
+        'Only needed for playlist imports. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.'
       ),
       el('div', { class: 'form-actions' },
         el('button', { class: 'btn', type: 'submit' }, 'Save'),
@@ -4623,10 +4632,10 @@
       presetsPanel.replaceChildren.apply(presetsPanel, children);
     }
 
-    // addPreset / removePreset live at module scope (see below) so that
-    // saveMeetPoll and any other module-level callers can use them too.
-    // Earlier they were nested inside viewSettings, which is why
-    // saveMeetPoll throws "addPreset is not defined".
+    // addPreset / removePreset live at module scope (defined above) so
+    // that saveMeetPoll and any other module-level callers can use them
+    // too. Earlier they were nested inside viewSettings, which was why
+    // saveMeetPoll threw "addPreset is not defined".
 
     function paintIcal() {
       var c = readConfig();
@@ -6913,7 +6922,14 @@
     window.addEventListener('minerva:videoplay', function (ev) {
       var url = ev && ev.detail && ev.detail.url;
       if (!url) return;
-      markRowWatchedByUrl(url).catch(function (e) {
+      markRowWatchedByUrl(url).then(function (changed) {
+        // Refresh the section view so the row's `watched` cell visibly
+        // flips and the unwatched-only filter (if engaged) drops the row
+        // from sight without the user having to navigate away first.
+        if (changed && typeof route === 'function') {
+          try { route(); } catch (e) { /* ignore */ }
+        }
+      }).catch(function (e) {
         console.warn('[Minerva markWatched]', e);
       });
     });
