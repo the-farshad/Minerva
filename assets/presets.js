@@ -175,6 +175,17 @@
       defaultSort: 'start'
     },
     {
+      slug: 'meets',
+      title: 'Meeting polls',
+      icon: 'users',
+      description: 'When-to-meet group polls. The "When to meet" form on the Schedule page saves each poll here so you can find it later, see the response link, and copy/share again.',
+      schema: {
+        headers: ['id','title','url','days','slots','responses','status','note','created','_updated'],
+        types:   ['text','text','link','text','text','number','select(open,closed)','markdown','datetime','datetime']
+      },
+      defaultSort: 'created:desc'
+    },
+    {
       slug: 'sketches',
       title: 'Sketches',
       icon: 'pencil-line',
