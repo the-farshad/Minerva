@@ -233,36 +233,43 @@ header h1 a { color: var(--fg); text-decoration: none; }
   box-shadow: 0 0 0 1px var(--border) inset;
 }
 
-/* primary nav */
+/* primary nav — wraps onto multiple lines so a long section list never
+   forces a horizontal scroll. The container takes the full content
+   width on desktop and shrinks gracefully on mobile. */
 nav#nav {
-  display: inline-flex;
-  gap: 0.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
   margin-top: 0.6rem;
   padding: 0.25rem;
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: var(--radius);
+  max-width: 100%;
 }
 .nav-link {
   display: inline-flex;
   align-items: center;
-  gap: 0.4em;
-  padding: 0.4rem 0.85rem;
-  font-size: 0.88rem;
+  gap: 0.35em;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.86rem;
   color: var(--muted);
   text-decoration: none;
   border-radius: 7px;
   transition: color .12s, background .12s;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 .nav-link .icon { margin: 0; flex-shrink: 0; }
 .nav-sep {
   display: inline-block;
   width: 1px;
-  height: 1.4em;
-  margin: 0 0.4rem;
+  height: 1.2em;
+  margin: 0.2rem 0.25rem;
   background: var(--border);
   vertical-align: middle;
   flex-shrink: 0;
+  align-self: center;
 }
 .preset-actions {
   display: flex;
@@ -1755,8 +1762,15 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   border-radius: 7px;
   padding: 0.35rem 0.6rem;
   outline: none;
-  min-width: 180px;
+  min-width: 160px;
+  max-width: 260px;
+  flex: 1 1 160px;
   transition: border-color .12s, background .12s;
+}
+@media (max-width: 600px) {
+  .section-filter { width: 100%; max-width: none; }
+  .view-section-head h2 { font-size: 1.15rem; }
+  .view-section-head-right { width: 100%; }
 }
 .section-filter:focus { border-color: var(--accent); background: var(--bg); }
 .section-filter::-webkit-search-cancel-button { cursor: pointer; }
@@ -2080,7 +2094,14 @@ table.rows tr.row-dirty td:first-child {
 .editor.editor-select { padding: 0.32rem 0.4rem; }
 textarea.editor { resize: vertical; min-height: 4rem; }
 
-.col-actions { width: 2.5rem; padding: 0; text-align: center; }
+.col-actions {
+  width: auto;
+  min-width: 2.5rem;
+  padding: 0 0.4rem;
+  text-align: right;
+  white-space: nowrap;
+}
+.col-actions > * { vertical-align: middle; }
 .col-bulk {
   width: 2rem;
   padding: 0.4rem 0.4rem 0.4rem 0.7rem;
@@ -3337,12 +3358,19 @@ svg[data-lucide] {
   .seg button { padding: 0.3rem 0.5rem; min-width: 1.8rem; }
   nav#nav {
     display: flex;
-    overflow-x: auto;
+    flex-wrap: wrap;
     max-width: 100%;
-    scrollbar-width: thin;
-    -webkit-overflow-scrolling: touch;
+    gap: 0.15rem;
   }
-  nav#nav .nav-link { white-space: nowrap; flex: 0 0 auto; }
+  nav#nav .nav-link {
+    white-space: nowrap;
+    flex: 0 0 auto;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.82rem;
+  }
+  /* Hide separators on narrow viewports — they're decorative and waste
+     horizontal space when the nav already wraps. */
+  nav#nav .nav-sep { display: none; }
   main { padding: 1rem 1rem 5rem; }
   .table-wrap { font-size: 0.86rem; }
   .help-panel { max-width: 100%; }
@@ -3565,6 +3593,126 @@ svg[data-lucide] {
   font-size: 0.92rem;
   padding: 1rem;
   text-align: center;
+}
+
+/* --- bulk-bar refinements --------------------------------------- */
+.bulk-scope {
+  font-weight: 400;
+  opacity: 0.85;
+}
+.bulk-bar .btn.btn-danger {
+  border-color: rgba(255, 220, 220, 0.85);
+  color: rgba(255, 220, 220, 0.95);
+  margin-left: auto;
+}
+.bulk-bar .btn.btn-danger:hover {
+  background: rgba(255, 80, 80, 0.18);
+  border-color: rgba(255, 200, 200, 1);
+  color: #fff;
+}
+
+/* --- playlist (row group) headers ------------------------------- */
+table.rows.rows-grouped tr.row-group-head td {
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  padding: 0.55rem 0.85rem;
+  font-size: 0.92rem;
+  position: sticky;
+  z-index: 1;
+}
+.row-group-head-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+.row-group-head .bulk-cb-group {
+  cursor: pointer;
+  accent-color: var(--accent);
+  margin: 0;
+}
+.row-group-title {
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+.row-group-count {
+  margin-left: 0.15rem;
+}
+
+/* --- inline rating (one-click stars) ---------------------------- */
+.stars-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+.star-btn-inline {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0.1rem;
+  margin: 0;
+  cursor: pointer;
+  color: var(--muted);
+  line-height: 0;
+  border-radius: 4px;
+  transition: color .12s, transform .08s;
+}
+.star-btn-inline svg { width: 1em; height: 1em; }
+.star-btn-inline:hover { color: var(--accent); }
+.star-btn-inline.on { color: var(--accent); }
+.star-btn-inline.on svg { fill: currentColor; }
+.star-btn-inline:hover svg { fill: currentColor; }
+.star-btn-inline:active { transform: scale(0.92); }
+
+/* --- offline (per-row Save / Watch) ----------------------------- */
+.offline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-right: 0.25rem;
+}
+.btn.offline-save,
+.btn.offline-watch {
+  padding: 0.18rem 0.55rem;
+  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+.btn.offline-save svg,
+.btn.offline-watch svg {
+  width: 0.95em;
+  height: 0.95em;
+}
+.btn.offline-watch {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn.offline-watch:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.icon-btn.offline-remove {
+  width: 1.7rem;
+  height: 1.7rem;
+  font-size: 1rem;
+}
+.icon-btn.offline-remove svg { width: 0.95em; height: 0.95em; }
+
+/* --- offline preview (native <video>) --------------------------- */
+.preview-panel-video .preview-frame-host {
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.preview-video {
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+  outline: none;
 }
 
 /* --- print --------------------------------------------------- */

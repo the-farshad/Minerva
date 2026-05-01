@@ -223,6 +223,91 @@
     openModal(clean, startIndex || 0);
   }
 
+  // Open a locally-stored video blob in its own modal — bypasses iframe
+  // (blob URLs in iframes hit cross-origin guards) by mounting a native
+  // <video> element. Cleans up the object URL when the modal closes.
+  function showVideoBlob(opts) {
+    opts = opts || {};
+    if (!opts.url) return;
+    if (document.querySelector('.preview-overlay')) return;
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay preview-overlay';
+    overlay.addEventListener('click', function () { close(); });
+
+    var panel = document.createElement('div');
+    panel.className = 'modal-panel preview-panel preview-panel-video';
+    panel.addEventListener('click', function (e) { e.stopPropagation(); });
+
+    var head = document.createElement('div');
+    head.className = 'preview-head';
+    var titleEl = document.createElement('span');
+    titleEl.className = 'preview-title';
+    titleEl.textContent = opts.title || 'Offline video';
+    head.appendChild(titleEl);
+
+    var openA = document.createElement('a');
+    openA.target = '_blank';
+    openA.rel = 'noopener';
+    openA.className = 'btn';
+    openA.href = opts.sourceUrl || opts.url;
+    if (window.Minerva && Minerva.render && Minerva.render.icon) {
+      openA.appendChild(Minerva.render.icon('external-link'));
+      openA.appendChild(document.createTextNode(opts.sourceUrl ? ' Watch on YouTube' : ' Open file'));
+    } else {
+      openA.textContent = opts.sourceUrl ? 'Watch on YouTube' : 'Open file';
+    }
+    head.appendChild(openA);
+
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'icon-btn';
+    closeBtn.type = 'button';
+    closeBtn.title = 'Close';
+    closeBtn.setAttribute('aria-label', 'Close');
+    if (window.Minerva && Minerva.render && Minerva.render.icon) {
+      closeBtn.appendChild(Minerva.render.icon('x'));
+    } else { closeBtn.textContent = 'Close'; }
+    closeBtn.addEventListener('click', function () { close(); });
+    head.appendChild(closeBtn);
+    panel.appendChild(head);
+
+    var frameHost = document.createElement('div');
+    frameHost.className = 'preview-frame-host';
+    var video = document.createElement('video');
+    video.className = 'preview-video';
+    video.src = opts.url;
+    video.controls = true;
+    video.autoplay = true;
+    video.style.width = '100%';
+    video.style.height = '100%';
+    frameHost.appendChild(video);
+    panel.appendChild(frameHost);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    // Surface the same auto-watch event so the section view can flip
+    // watched=TRUE the same way as embedded YouTube playback.
+    try {
+      window.dispatchEvent(new CustomEvent('minerva:videoplay', {
+        detail: { url: opts.sourceUrl || opts.url, isYouTube: !!(opts.sourceUrl && /youtube\.com|youtu\.be/i.test(opts.sourceUrl)), offline: true }
+      }));
+    } catch (e) { /* ignore */ }
+
+    function close() {
+      try { video.pause(); } catch (e) { /* ignore */ }
+      try { URL.revokeObjectURL(opts.url); } catch (e) { /* ignore */ }
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+    var onKey = function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    };
+    document.addEventListener('keydown', onKey);
+    if (window.Minerva && Minerva.render && Minerva.render.refreshIcons) {
+      Minerva.render.refreshIcons();
+    }
+  }
+
   // Optional context provider, set by callers (e.g. the section view) so
   // a click on the eye-icon next to a YouTube URL can pull in sibling
   // videos from the same context. Default is unset → single-URL preview.
@@ -239,6 +324,7 @@
   window.Minerva.preview = {
     show: show,
     showPlaylist: showPlaylist,
+    showVideoBlob: showVideoBlob,
     isPdf: isPdf,
     ytId: ytId,
     setPlaylistContext: setPlaylistContext,

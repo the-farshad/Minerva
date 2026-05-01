@@ -60,6 +60,14 @@
     };
   }
 
+  // Pull the videoId from a watch / youtu.be / shorts URL. Mirrors the
+  // regex preview.js / render.js use; kept local so import.js doesn't
+  // depend on either.
+  function videoIdOf(s) {
+    var m = String(s || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/);
+    return m ? m[1] : null;
+  }
+
   async function youtubeLookup(input) {
     var s = String(input || '');
     if (!/youtube\.com|youtu\.be/i.test(s)) return null;
@@ -67,7 +75,7 @@
     if (!resp.ok) throw new Error('YouTube ' + resp.status);
     var data = await resp.json();
     var author = clean(data.author_name || '');
-    return {
+    var out = {
       kind: 'video',
       title: clean(data.title || ''),
       // `authors` for the library preset (back-compat); `channel` for the
@@ -77,6 +85,18 @@
       url: s,
       thumbnail: data.thumbnail_url || ''
     };
+    // If the user has set an API key, fetch the duration too. Free, one
+    // unit; oEmbed alone doesn't return duration so this is the cheapest
+    // way to populate the column.
+    var apiKey = ytApiKey();
+    var vid = videoIdOf(s);
+    if (apiKey && vid) {
+      try {
+        var durs = await fetchDurationsByIds([vid], apiKey);
+        if (durs[vid]) out.duration = durs[vid];
+      } catch (e) { /* non-fatal */ }
+    }
+    return out;
   }
 
   // Read the user's YouTube Data API key from localStorage. Returns ''
@@ -105,8 +125,59 @@
   // shot is rarely what the user wants.
   var MAX_PLAYLIST_ITEMS = 200;
 
+  // Convert an ISO 8601 duration ("PT1H2M3S") to mm:ss / h:mm:ss text.
+  // Empty input → ''. Used for both single-video and playlist imports.
+  function isoToDuration(iso) {
+    if (!iso) return '';
+    var m = String(iso).match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+    if (!m) return '';
+    var h = +(m[1] || 0), mn = +(m[2] || 0), s = +(m[3] || 0);
+    if (h) return h + ':' + String(mn).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    return mn + ':' + String(s).padStart(2, '0');
+  }
+
+  // videos.list?part=contentDetails for up to 50 ids per call. Returns a
+  // map { videoId: 'mm:ss' }. Costs 1 quota unit per call.
+  async function fetchDurationsByIds(ids, apiKey) {
+    var out = {};
+    if (!apiKey) return out;
+    for (var off = 0; off < ids.length; off += 50) {
+      var batch = ids.slice(off, off + 50);
+      var url = 'https://www.googleapis.com/youtube/v3/videos'
+        + '?part=contentDetails&id=' + encodeURIComponent(batch.join(','))
+        + '&key=' + encodeURIComponent(apiKey);
+      var resp = await fetch(url);
+      if (!resp.ok) {
+        // Non-fatal — durations are nice-to-have. Bail this batch only.
+        continue;
+      }
+      var json = await resp.json();
+      (json.items || []).forEach(function (it) {
+        var d = isoToDuration(it.contentDetails && it.contentDetails.duration);
+        if (d) out[it.id] = d;
+      });
+    }
+    return out;
+  }
+
+  // playlists.list?part=snippet — one quota unit. Returns the playlist's
+  // human title (used for grouping) or '' on failure.
+  async function fetchPlaylistTitle(listId, apiKey) {
+    if (!apiKey || !listId) return '';
+    try {
+      var url = 'https://www.googleapis.com/youtube/v3/playlists'
+        + '?part=snippet&id=' + encodeURIComponent(listId)
+        + '&key=' + encodeURIComponent(apiKey);
+      var resp = await fetch(url);
+      if (!resp.ok) return '';
+      var json = await resp.json();
+      var first = (json.items || [])[0];
+      return clean((first && first.snippet && first.snippet.title) || '');
+    } catch (e) { return ''; }
+  }
+
   // Enumerate videos in a YouTube playlist via the Data API. Returns
-  //   { kind:'playlist', playlistId, items:[{title,channel,url,thumbnail,videoId}], truncated }
+  //   { kind:'playlist', playlistId, playlistTitle, items:[{title,channel,url,thumbnail,videoId,duration}], truncated }
   // Returns null when the input isn't a playlist URL or no API key is set.
   // Throws on API error so the caller can surface a readable message.
   async function youtubePlaylistLookup(input, opts) {
@@ -167,9 +238,25 @@
       }
       pageToken = json.nextPageToken;
     }
+
+    // Fan-out fetches for the playlist's title (used as a subcategory) and
+    // every video's duration. Both run in parallel; failure is non-fatal.
+    var ids = out.map(function (x) { return x.videoId; }).filter(Boolean);
+    var titlePromise = fetchPlaylistTitle(listId, apiKey);
+    var durPromise  = fetchDurationsByIds(ids, apiKey);
+    var playlistTitle = '';
+    try { playlistTitle = await titlePromise; } catch (e) { /* ignore */ }
+    var durations = {};
+    try { durations = await durPromise; } catch (e) { /* ignore */ }
+    out.forEach(function (it) {
+      it.duration = durations[it.videoId] || '';
+      if (playlistTitle) it.playlist = playlistTitle;
+    });
+
     return {
       kind: 'playlist',
       playlistId: listId,
+      playlistTitle: playlistTitle,
       items: out,
       truncated: truncated,
       max: MAX_PLAYLIST_ITEMS
@@ -284,6 +371,11 @@
     youtube: youtubeLookup,
     youtubePlaylist: youtubePlaylistLookup,
     youtubePlaylistId: youtubePlaylistId,
+    youtubeVideoId: videoIdOf,
+    fetchDurationsByIds: fetchDurationsByIds,
+    fetchPlaylistTitle: fetchPlaylistTitle,
+    isoToDuration: isoToDuration,
+    ytApiKey: ytApiKey,
     doi: doiLookup,
     generic: genericLookup,
     MAX_PLAYLIST_ITEMS: MAX_PLAYLIST_ITEMS
