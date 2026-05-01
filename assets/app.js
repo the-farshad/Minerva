@@ -1599,6 +1599,11 @@
           el('kbd', null, 'Enter'), ' to save, ',
           el('kbd', null, 'Esc'), ' to cancel.'
         );
+        // Register a YouTube playlist context for the preview modal so the
+        // eye-icon next to a video URL can walk forward/back through the
+        // sibling videos in this section. Recomputed on every refresh so
+        // sort/filter changes are reflected.
+        registerYouTubePlaylistContext(meta, filtered);
       }
 
       paintBacklinksFooter(backlinks);
@@ -3379,6 +3384,54 @@
     return el('div', { class: 'calendar' }, headRow, el('div', { class: 'cal-grid' }, cells));
   }
 
+  // Build a list of {title,url} entries from the given rows for every
+  // link-typed column whose value is a YouTube URL, then register it
+  // as the active playlist context on M.preview. The context provider
+  // returns the slice of items + the start index that matches the URL
+  // the user clicked. Cleared when the next section view (or any other
+  // route) overwrites it via setPlaylistContext / clearPlaylistContext.
+  function registerYouTubePlaylistContext(meta, rows) {
+    if (!M.preview || typeof M.preview.setPlaylistContext !== 'function') return;
+    var ytRe = /youtube\.com\/watch|youtu\.be\//i;
+    var titleCol = (meta.headers || []).indexOf('title') >= 0 ? 'title'
+      : (meta.headers || []).indexOf('name') >= 0 ? 'name'
+      : null;
+    var linkCols = [];
+    for (var i = 0; i < (meta.headers || []).length; i++) {
+      var h = meta.headers[i];
+      if (M.render.isInternal(h)) continue;
+      var t = M.render.parseType(meta.types[i] || 'text');
+      if (t.kind === 'link') linkCols.push(h);
+    }
+    if (!linkCols.length) {
+      M.preview.clearPlaylistContext();
+      return;
+    }
+    var items = [];
+    rows.forEach(function (r) {
+      for (var j = 0; j < linkCols.length; j++) {
+        var raw = r[linkCols[j]];
+        if (raw == null || raw === '') continue;
+        var s = String(raw).trim();
+        if (!ytRe.test(s)) continue;
+        var label = titleCol && r[titleCol] ? String(r[titleCol]) : s;
+        items.push({ title: label, url: s });
+        break; // one video per row keeps the playlist 1:1 with rows
+      }
+    });
+    if (items.length < 2) {
+      M.preview.clearPlaylistContext();
+      return;
+    }
+    M.preview.setPlaylistContext(function (clickedUrl) {
+      var idx = 0;
+      for (var k = 0; k < items.length; k++) {
+        if (items[k].url === clickedUrl) { idx = k; break; }
+      }
+      return { items: items, startIndex: idx };
+    });
+  }
+
   function renderSectionTable(meta, rows, tab, refresh, userSort, onSortChange, backlinks, selectedIds, onBulkChange) {
     if (!meta || !meta.headers || !meta.headers.length) {
       return el('p', { class: 'muted' }, 'No schema cached yet — open Settings and click Sync now.');
@@ -4107,8 +4160,10 @@
         var grid = el('div', { class: 'preset-grid' });
         (M.presets || []).forEach(function (p) {
           var taken = existingSlugs.indexOf(p.slug) >= 0;
+          var presetIconEl = el('div', { class: 'preset-icon' });
+          if (p.icon) presetIconEl.appendChild(M.render.icon(p.icon));
           var card = el('div', { class: 'preset-card' + (taken ? ' preset-taken' : '') },
-            el('div', { class: 'preset-icon' }, p.icon || '○'),
+            presetIconEl,
             el('div', { class: 'preset-body' },
               el('h4', null, p.title),
               el('p', { class: 'small muted' }, p.description),
@@ -4700,6 +4755,10 @@
     var sectionMatch;
     // Clear keyboard context every navigation; viewSection re-installs.
     sectionCtx = null;
+    // Same for the YouTube playlist context registered on M.preview.
+    if (M.preview && typeof M.preview.clearPlaylistContext === 'function') {
+      M.preview.clearPlaylistContext();
+    }
 
     try {
       if (hash === '#/' || hash === '' || hash === '#') {

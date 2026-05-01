@@ -216,22 +216,48 @@
     return /youtube\.com\/watch|youtu\.be\//i.test(String(s || ''));
   }
 
+  // Mirrors preview.js's ytId — copied locally so render.js doesn't need
+  // preview.js loaded to extract the id.
+  function ytIdOf(s) {
+    var m = String(s || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/);
+    return m ? m[1] : null;
+  }
+
   function renderLink(value) {
     if (!value) return document.createTextNode('');
     var raw = String(value);
     var wrap = document.createElement('span');
     wrap.className = 'cell-link-wrap';
 
+    var host = '';
+    try { host = new URL(raw).hostname.replace(/^www\./, ''); } catch (e) { host = raw; }
+
     var a = document.createElement('a');
     a.href = raw;
     a.target = '_blank';
     a.rel = 'noopener';
-    a.className = 'cell-link';
-    var host = '';
-    try { host = new URL(raw).hostname.replace(/^www\./, ''); } catch (e) { host = raw; }
-    a.appendChild(renderIcon('external-link'));
-    a.appendChild(document.createTextNode(' ' + host));
     a.title = raw;
+
+    var ytId = isYouTubeUrl(raw) ? ytIdOf(raw) : null;
+    if (ytId) {
+      a.className = 'cell-yt-link';
+      var thumb = document.createElement('img');
+      thumb.className = 'cell-yt-thumb';
+      thumb.loading = 'lazy';
+      thumb.alt = '';
+      thumb.src = 'https://img.youtube.com/vi/' + encodeURIComponent(ytId) + '/mqdefault.jpg';
+      thumb.onerror = function () {
+        var fb = renderIcon('youtube');
+        if (fb && fb.classList) fb.classList.add('cell-yt-thumb-fallback');
+        if (thumb.parentNode) thumb.parentNode.replaceChild(fb, thumb);
+      };
+      a.appendChild(thumb);
+      a.appendChild(document.createTextNode(host));
+    } else {
+      a.className = 'cell-link';
+      a.appendChild(renderIcon('external-link'));
+      a.appendChild(document.createTextNode(' ' + host));
+    }
     wrap.appendChild(a);
 
     var canPreview = isPdfUrl(raw) || isYouTubeUrl(raw);
@@ -249,7 +275,18 @@
       btn.addEventListener('click', function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        window.Minerva.preview.show(raw);
+        var preview = window.Minerva.preview;
+        // If a playlist provider is registered (set by the section view) and
+        // this is a YouTube link, prefer the playlist UI. Falls back to the
+        // single-URL show() for PDFs or when no provider is wired.
+        if (ytId && preview.showPlaylist && typeof preview.getPlaylistContext === 'function') {
+          var ctx = preview.getPlaylistContext(raw);
+          if (ctx && ctx.items && ctx.items.length > 1) {
+            preview.showPlaylist(ctx.items, ctx.startIndex || 0);
+            return;
+          }
+        }
+        preview.show(raw);
       });
       wrap.appendChild(btn);
     }
