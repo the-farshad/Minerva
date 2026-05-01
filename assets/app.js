@@ -2064,6 +2064,133 @@
     return view;
   }
 
+  // Auto-mark-watched: given a URL that just started playing, find any
+  // row in any enabled section whose link cell matches and whose schema
+  // has both `watched` (check) and `watched_at` (datetime) columns.
+  // Flip watched=TRUE and watched_at=now() if not already set. Pushes
+  // the change to the user's sheet via the dirty queue.
+  async function markRowWatchedByUrl(url) {
+    if (!url) return;
+    var sections = sectionRows();
+    if (!sections.length) return;
+    var changedAny = false;
+    for (var s = 0; s < sections.length; s++) {
+      var sec = sections[s];
+      if (!sec || !sec.tab) continue;
+      var meta = await M.db.getMeta(sec.tab);
+      if (!meta || !meta.headers) continue;
+      var hasWatched = meta.headers.indexOf('watched') >= 0;
+      var hasWatchedAt = meta.headers.indexOf('watched_at') >= 0;
+      if (!hasWatched && !hasWatchedAt) continue;
+      // Find a link-typed column whose value matches the URL.
+      var linkCols = [];
+      for (var i = 0; i < meta.headers.length; i++) {
+        var t = M.render.parseType(meta.types[i] || 'text');
+        if (t.kind === 'link') linkCols.push(meta.headers[i]);
+      }
+      if (!linkCols.length) continue;
+      var rows = await M.db.getAllRows(sec.tab);
+      for (var r = 0; r < rows.length; r++) {
+        var row = rows[r];
+        if (row._deleted) continue;
+        var match = false;
+        for (var k = 0; k < linkCols.length; k++) {
+          if (String(row[linkCols[k]] || '').trim() === String(url).trim()) { match = true; break; }
+        }
+        if (!match) continue;
+        var changed = false;
+        if (hasWatched && String(row.watched || '').toUpperCase() !== 'TRUE') {
+          row.watched = 'TRUE';
+          changed = true;
+        }
+        if (hasWatchedAt && !row.watched_at) {
+          row.watched_at = new Date().toISOString();
+          changed = true;
+        }
+        if (changed) {
+          row._dirty = 1;
+          row._updated = new Date().toISOString();
+          await M.db.upsertRow(sec.tab, row);
+          changedAny = true;
+        }
+      }
+    }
+    if (changedAny) schedulePush();
+  }
+
+  // ---- preset add / remove (module scope) ---------------------------
+  // Adds a section to the user's sheet + _config row, OR re-enables an
+  // existing disabled row of the same slug. Auto-pulls _config schema
+  // when missing. Throws on connect / schema problems.
+  async function addPreset(p) {
+    var c = readConfig();
+    if (!c.clientId || !c.spreadsheetId) throw new Error('Connect first.');
+    var token = await M.auth.getToken(c.clientId);
+
+    // 1. Ensure the tab exists; create + seed if not.
+    var ss = await M.sheets.getSpreadsheet(token, c.spreadsheetId);
+    var existing = (ss.sheets || []).map(function (s) { return s.properties.title; });
+    if (existing.indexOf(p.slug) < 0) {
+      await M.sheets.batchUpdate(token, c.spreadsheetId, [{
+        addSheet: { properties: { title: p.slug } }
+      }]);
+      var values = [p.schema.headers.slice(), p.schema.types.slice()];
+      await M.sheets.updateValues(token, c.spreadsheetId, p.slug + '!A1', values);
+    }
+
+    // 2. Either re-enable an existing row or append a new one.
+    var configMeta = await M.db.getMeta('_config');
+    if (!configMeta || !configMeta.headers) {
+      try {
+        await M.sync.pullTab(token, c.spreadsheetId, '_config');
+        configMeta = await M.db.getMeta('_config');
+      } catch (e) { /* fall through to error */ }
+    }
+    if (!configMeta || !configMeta.headers) throw new Error('Could not read _config schema. Click Sync in Settings, then try again.');
+    var allRows = await M.db.getAllRows('_config');
+    var existingRow = (allRows || []).find(function (r) { return r.slug === p.slug && !r._deleted; });
+    if (existingRow) {
+      existingRow.enabled = 'TRUE';
+      existingRow._dirty = 1;
+      existingRow._updated = new Date().toISOString();
+      await M.db.upsertRow('_config', existingRow);
+    } else {
+      var maxOrder = (configCache || []).reduce(function (m, r) {
+        var n = Number(r.order) || 0;
+        return n > m ? n : m;
+      }, 0);
+      var row = await addRow('_config', configMeta.headers);
+      row.slug = p.slug;
+      row.title = p.title;
+      row.icon = p.icon;
+      row.tab = p.slug;
+      row.order = maxOrder + 1;
+      row.enabled = 'TRUE';
+      row.defaultSort = p.defaultSort || '';
+      row.defaultFilter = p.defaultFilter || '';
+      row._dirty = 1;
+      await M.db.upsertRow('_config', row);
+    }
+    schedulePush();
+
+    // 3. Pull the new tab into the local store so the section is immediately viewable.
+    try { await M.sync.pullTab(token, c.spreadsheetId, p.slug); } catch (e) { /* non-fatal */ }
+    try { await M.sync.pullTab(token, c.spreadsheetId, '_config'); } catch (e) { /* non-fatal */ }
+  }
+
+  async function removePreset(slug) {
+    var c = readConfig();
+    if (!c.clientId || !c.spreadsheetId) throw new Error('Connect first.');
+    var rows = await M.db.getAllRows('_config');
+    var row = (rows || []).find(function (r) { return r.slug === slug && !r._deleted; });
+    if (!row) throw new Error('Section "' + slug + '" not found in _config.');
+    row.enabled = 'FALSE';
+    row._dirty = 1;
+    row._updated = new Date().toISOString();
+    await M.db.upsertRow('_config', row);
+    schedulePush();
+  }
+
   // Save a "When to meet" poll into a `meets` section in the user's sheet
   // so the link doesn't only live in the URL hash. Auto-creates the section
   // (via the meets preset) on first save.
@@ -4371,80 +4498,10 @@
       presetsPanel.replaceChildren.apply(presetsPanel, children);
     }
 
-    async function addPreset(p) {
-      var c = readConfig();
-      if (!c.clientId || !c.spreadsheetId) throw new Error('Connect first.');
-      var token = await M.auth.getToken(c.clientId);
-
-      // 1. Ensure the tab exists; create + seed if not.
-      var ss = await M.sheets.getSpreadsheet(token, c.spreadsheetId);
-      var existing = (ss.sheets || []).map(function (s) { return s.properties.title; });
-      if (existing.indexOf(p.slug) < 0) {
-        await M.sheets.batchUpdate(token, c.spreadsheetId, [{
-          addSheet: { properties: { title: p.slug } }
-        }]);
-        var values = [p.schema.headers.slice(), p.schema.types.slice()];
-        await M.sheets.updateValues(token, c.spreadsheetId, p.slug + '!A1', values);
-      }
-
-      // 2. Either re-enable an existing row or append a new one.
-      // Auto-pull _config if it isn't cached locally yet — most likely
-      // path on a fresh device or after the v3 IDB upgrade.
-      var configMeta = await M.db.getMeta('_config');
-      if (!configMeta || !configMeta.headers) {
-        try {
-          await M.sync.pullTab(token, c.spreadsheetId, '_config');
-          configMeta = await M.db.getMeta('_config');
-        } catch (e) { /* fall through to error */ }
-      }
-      if (!configMeta || !configMeta.headers) throw new Error('Could not read _config schema. Click Sync in Settings, then try again.');
-      var allRows = await M.db.getAllRows('_config');
-      var existingRow = (allRows || []).find(function (r) { return r.slug === p.slug && !r._deleted; });
-      if (existingRow) {
-        existingRow.enabled = 'TRUE';
-        existingRow._dirty = 1;
-        existingRow._updated = new Date().toISOString();
-        await M.db.upsertRow('_config', existingRow);
-      } else {
-        var maxOrder = (configCache || []).reduce(function (m, r) {
-          var n = Number(r.order) || 0;
-          return n > m ? n : m;
-        }, 0);
-        var row = await addRow('_config', configMeta.headers);
-        row.slug = p.slug;
-        row.title = p.title;
-        row.icon = p.icon;
-        row.tab = p.slug;
-        row.order = maxOrder + 1;
-        row.enabled = 'TRUE';
-        row.defaultSort = p.defaultSort || '';
-        row.defaultFilter = p.defaultFilter || '';
-        row._dirty = 1;
-        await M.db.upsertRow('_config', row);
-      }
-      schedulePush();
-
-      // 3. Pull the new tab into the local store so the section is immediately viewable.
-      try { await M.sync.pullTab(token, c.spreadsheetId, p.slug); } catch (e) { /* non-fatal */ }
-      try { await M.sync.pullTab(token, c.spreadsheetId, '_config'); } catch (e) { /* non-fatal */ }
-    }
-
-    // Hide a section: flips its _config.enabled to FALSE and queues a push.
-    // Preserves the section's data tab in Sheets — re-adding from the gallery
-    // restores it. To delete the data permanently, the user has to remove the
-    // tab in Sheets directly.
-    async function removePreset(slug) {
-      var c = readConfig();
-      if (!c.clientId || !c.spreadsheetId) throw new Error('Connect first.');
-      var rows = await M.db.getAllRows('_config');
-      var row = (rows || []).find(function (r) { return r.slug === slug && !r._deleted; });
-      if (!row) throw new Error('Section "' + slug + '" not found in _config.');
-      row.enabled = 'FALSE';
-      row._dirty = 1;
-      row._updated = new Date().toISOString();
-      await M.db.upsertRow('_config', row);
-      schedulePush();
-    }
+    // addPreset / removePreset live at module scope (see below) so that
+    // saveMeetPoll and any other module-level callers can use them too.
+    // Earlier they were nested inside viewSettings, which is why
+    // saveMeetPoll throws "addPreset is not defined".
 
     function paintIcal() {
       var c = readConfig();
@@ -6653,6 +6710,18 @@
       if (pushPending || (!pushInFlight)) schedulePush();
     });
     window.addEventListener('offline', paintOnlineState);
+
+    // Auto-mark watched: when a YouTube URL plays in the preview modal,
+    // scan rows across all sections for one whose link cell matches and
+    // whose section has watched + watched_at columns; flip them.
+    window.addEventListener('minerva:videoplay', function (ev) {
+      var url = ev && ev.detail && ev.detail.url;
+      if (!url) return;
+      markRowWatchedByUrl(url).catch(function (e) {
+        console.warn('[Minerva markWatched]', e);
+      });
+    });
+
     registerServiceWorker();
     await refreshConfig();
 

@@ -2078,6 +2078,10 @@ table.rows tr.is-bulk-selected td:first-child {
   box-shadow: var(--shadow);
   flex-wrap: wrap;
 }
+/* Honor the HTML5 [hidden] attribute. Without this, the display:flex above
+   beats the user-agent default [hidden] { display: none } and the bar
+   stays in the layout (empty pill) when no rows are selected. */
+.bulk-bar[hidden] { display: none; }
 .bulk-bar .btn {
   background: rgba(255,255,255,0.95);
   color: var(--accent);
