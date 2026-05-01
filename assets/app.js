@@ -39,7 +39,14 @@
   function appendKid(parent, k) {
     if (k == null || k === false) return;
     if (Array.isArray(k)) { k.forEach(function (kk) { appendKid(parent, kk); }); return; }
-    parent.appendChild(typeof k === 'string' ? document.createTextNode(k) : k);
+    // Real DOM nodes pass through; everything else gets stringified so a
+    // stray number / boolean(true) / object literal doesn't blow up
+    // appendChild with "Argument 1 is not an object".
+    if (k && typeof k === 'object' && k.nodeType) {
+      parent.appendChild(k);
+      return;
+    }
+    parent.appendChild(document.createTextNode(String(k)));
   }
 
   // ---- config ----
