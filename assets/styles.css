@@ -2810,6 +2810,39 @@ table.kv tbody tr:hover { background: var(--surface); }
   border-radius: 6px;
   align-self: flex-start;
 }
+.url-import-playlist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  background: var(--surface);
+}
+.url-import-playlist-row {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 0.6rem;
+  align-items: center;
+}
+.url-import-playlist-thumb {
+  width: 88px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--bg);
+}
+.url-import-playlist-meta {
+  min-width: 0;
+}
+.url-import-playlist-title {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* CSV import */
 .csv-panel { max-width: 720px; }
