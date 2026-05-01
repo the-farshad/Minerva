@@ -2043,7 +2043,9 @@
     if (meta.headers.indexOf('created') >= 0) row.created = new Date().toISOString();
     row._dirty = 1;
     await M.db.upsertRow('meets', row);
-    schedulePush();
+    // Await the push so "Saved" actually means it's in the sheet, not
+    // just queued — the user has been burned by optimistic flashes.
+    await schedulePush();
   }
 
   function buildSlotGrid(poll, opts) {
