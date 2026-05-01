@@ -1761,6 +1761,39 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 .section-filter:focus { border-color: var(--accent); background: var(--bg); }
 .section-filter::-webkit-search-cancel-button { cursor: pointer; }
 
+/* "Unwatched only" toggle pill — sits in the section header next to the
+   live filter input. Hidden when the section's meta has no `watched`
+   column. The .is-active modifier flips the pill into the on state. */
+.unwatched-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: inherit;
+  font-size: 0.82rem;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.unwatched-toggle svg { width: 0.95em; height: 0.95em; }
+.unwatched-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.unwatched-toggle.is-active {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.unwatched-toggle.is-active:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
 /* saved views */
 .saved-views {
   display: flex;
@@ -2346,7 +2379,8 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   height: 1.1em;
   color: var(--muted);
 }
-.cell-preview {
+.cell-preview,
+.cell-yt-play {
   appearance: none;
   border: 1px solid var(--border);
   background: transparent;
@@ -2360,8 +2394,10 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   justify-content: center;
   transition: color .12s, border-color .12s, background .12s;
 }
-.cell-preview svg { width: 0.95em; height: 0.95em; }
-.cell-preview:hover {
+.cell-preview svg,
+.cell-yt-play svg { width: 0.95em; height: 0.95em; }
+.cell-preview:hover,
+.cell-yt-play:hover {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--surface);

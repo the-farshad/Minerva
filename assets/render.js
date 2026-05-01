@@ -279,17 +279,7 @@
 
     var canPreview = isPdfUrl(raw) || isYouTubeUrl(raw);
     if (canPreview && window.Minerva && window.Minerva.preview) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'cell-preview';
-      btn.title = 'Preview ' + (isPdfUrl(raw) ? 'PDF' : 'video');
-      // Eye icon as a Lucide placeholder; lucide.createIcons() runs at the
-      // end of every route() and route() runs after every cell render.
-      var ei = document.createElement('i');
-      ei.setAttribute('data-lucide', 'eye');
-      btn.appendChild(ei);
-      scheduleRefresh();
-      btn.addEventListener('click', function (ev) {
+      var openPreview = function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
         var preview = window.Minerva.preview;
@@ -304,8 +294,33 @@
           }
         }
         preview.show(raw);
-      });
+      };
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cell-preview';
+      btn.title = 'Preview ' + (isPdfUrl(raw) ? 'PDF' : 'video');
+      // Eye icon as a Lucide placeholder; lucide.createIcons() runs at the
+      // end of every route() and route() runs after every cell render.
+      var ei = document.createElement('i');
+      ei.setAttribute('data-lucide', 'eye');
+      btn.appendChild(ei);
+      btn.addEventListener('click', openPreview);
       wrap.appendChild(btn);
+      // For YouTube links, surface a more discoverable play affordance
+      // alongside the eye preview button. Same handler — the existing
+      // minerva:videoplay listener flips watched=TRUE either way.
+      if (ytId) {
+        var playBtn = document.createElement('button');
+        playBtn.type = 'button';
+        playBtn.className = 'cell-yt-play';
+        playBtn.title = 'Watch video';
+        var pi = document.createElement('i');
+        pi.setAttribute('data-lucide', 'play');
+        playBtn.appendChild(pi);
+        playBtn.addEventListener('click', openPreview);
+        wrap.appendChild(playBtn);
+      }
+      scheduleRefresh();
     }
     return wrap;
   }

@@ -1223,6 +1223,20 @@
     } catch (e) { /* ignore */ }
   }
 
+  function readUnwatchedFilter(slug) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.unwatched') || '{}');
+      return !!raw[slug];
+    } catch (e) { return false; }
+  }
+  function writeUnwatchedFilter(slug, on) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.unwatched') || '{}');
+      if (on) raw[slug] = 1; else delete raw[slug];
+      localStorage.setItem('minerva.section.unwatched', JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+
   function readSort(slug) {
     try {
       var raw = JSON.parse(localStorage.getItem('minerva.section.sort') || '{}');
@@ -1322,11 +1336,32 @@
     });
     var viewsBar = el('div', { class: 'saved-views' });
 
+    // "Unwatched only" pill — shown only when the section has a `watched`
+    // column. Visibility flipped inside refresh() once meta is known.
+    var unwatchedOn = readUnwatchedFilter(slug);
+    var unwatchedPill = el('button', {
+      type: 'button',
+      class: 'unwatched-toggle' + (unwatchedOn ? ' is-active' : ''),
+      title: 'Show unwatched only',
+      'aria-pressed': unwatchedOn ? 'true' : 'false',
+      hidden: true
+    },
+      M.render.icon('eye-off'),
+      el('span', { class: 'unwatched-toggle-label' }, 'Unwatched only')
+    );
+    unwatchedPill.addEventListener('click', function () {
+      unwatchedOn = !unwatchedOn;
+      writeUnwatchedFilter(slug, unwatchedOn);
+      unwatchedPill.classList.toggle('is-active', unwatchedOn);
+      unwatchedPill.setAttribute('aria-pressed', unwatchedOn ? 'true' : 'false');
+      refresh();
+    });
+
     var titleH2 = el('h2');
     if (sec.icon) titleH2.appendChild(M.render.icon(sec.icon));
     titleH2.appendChild(document.createTextNode(sec.title || sec.slug));
     header.appendChild(titleH2);
-    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, modeToggle, calNav, importWrap, addBtn);
+    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, unwatchedPill, modeToggle, calNav, importWrap, addBtn);
     header.appendChild(headerRight);
     view.appendChild(header);
     view.appendChild(viewsBar);
@@ -1620,6 +1655,16 @@
             .map(function (h) { return r[h] != null ? String(r[h]) : ''; })
             .join('  ').toLowerCase();
           return qterms.every(function (t) { return hay.indexOf(t) >= 0; });
+        });
+      }
+
+      // "Unwatched only" pill — show pill when the section has a `watched`
+      // column, and apply the filter when toggled on.
+      var hasWatchedCol = !!(meta && meta.headers && meta.headers.indexOf('watched') >= 0);
+      unwatchedPill.hidden = !hasWatchedCol;
+      if (hasWatchedCol && unwatchedOn) {
+        filtered = filtered.filter(function (r) {
+          return String(r.watched || '').toUpperCase() !== 'TRUE';
         });
       }
 
