@@ -97,10 +97,11 @@
     var openA = document.createElement('a');
     openA.target = '_blank';
     openA.rel = 'noopener';
-    openA.className = 'btn btn-ghost';
+    openA.className = 'btn';
+    var openLabel = document.createTextNode(' Open');
     if (window.Minerva && Minerva.render && Minerva.render.icon) {
       openA.appendChild(Minerva.render.icon('external-link'));
-      openA.appendChild(document.createTextNode(' Open'));
+      openA.appendChild(openLabel);
     } else {
       openA.textContent = 'Open';
     }
@@ -146,9 +147,22 @@
       titleEl.title = url;
 
       openA.href = url;
+      // Relabel for YouTube so users have a clear escape hatch when the
+      // embedded player throws "Error 153 — video player configuration"
+      // (the video owner disabled embeds on other sites).
+      var isYt = !!ytId(url);
+      while (openLabel.parentNode) { openLabel.parentNode.removeChild(openLabel); }
+      openLabel = document.createTextNode(isYt ? ' Watch on YouTube' : ' Open');
+      openA.appendChild(openLabel);
 
       while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
       frameHost.appendChild(buildIframeForUrl(url));
+      if (isYt) {
+        var note = document.createElement('p');
+        note.className = 'small muted preview-yt-note';
+        note.textContent = 'Player shows "Error 153"? The video owner blocked embedding. Click "Watch on YouTube" above.';
+        frameHost.appendChild(note);
+      }
 
       if (prevBtn) prevBtn.disabled = idx <= 0;
       if (nextBtn) nextBtn.disabled = idx >= items.length - 1;

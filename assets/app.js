@@ -1957,6 +1957,16 @@
                 if (navigator.clipboard) navigator.clipboard.writeText(url);
                 flash(output, 'Link copied');
               } }, 'Copy link'),
+            el('button', { class: 'btn btn-ghost', type: 'button',
+              title: 'Save the poll URL into a "meets" section so you can find it later',
+              onclick: async function () {
+                try {
+                  await saveMeetPoll(poll, url);
+                  flash(output, 'Poll saved to your sheet (meets section).');
+                } catch (err) {
+                  flash(output, 'Save failed: ' + (err && err.message || err), 'error');
+                }
+              } }, M.render.icon('save'), ' Save'),
             el('a', { class: 'btn btn-ghost', href: url, target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Preview')
           ),
           el('div', { class: 'qr-wrap' },
@@ -1993,6 +2003,47 @@
     view.appendChild(output);
     buildLink();
     return view;
+  }
+
+  // Save a "When to meet" poll into a `meets` section in the user's sheet
+  // so the link doesn't only live in the URL hash. Auto-creates the section
+  // (via the meets preset) on first save.
+  async function saveMeetPoll(poll, url) {
+    var c = readConfig();
+    if (!c.clientId || !c.spreadsheetId) throw new Error('Connect first.');
+    var token = await M.auth.getToken(c.clientId);
+
+    // Ensure the `meets` section exists. If not, add the preset.
+    var hasMeets = (configCache || []).some(function (r) {
+      return r.slug === 'meets' && isEnabled(r);
+    });
+    if (!hasMeets) {
+      var preset = (M.presets || []).find(function (p) { return p.slug === 'meets'; });
+      if (!preset) throw new Error('Meets preset not bundled in this build.');
+      await addPreset(preset);
+      await refreshConfig();
+      renderNav(navActive());
+    }
+
+    var meta = await M.db.getMeta('meets');
+    if (!meta || !meta.headers) {
+      try { await M.sync.pullTab(token, c.spreadsheetId, 'meets'); meta = await M.db.getMeta('meets'); }
+      catch (e) { /* fall through */ }
+    }
+    if (!meta || !meta.headers) throw new Error('Meets schema not cached. Sync and try again.');
+
+    var row = await addRow('meets', meta.headers);
+    if (meta.headers.indexOf('title') >= 0) row.title = poll.t || 'Untitled poll';
+    if (meta.headers.indexOf('url') >= 0) row.url = url;
+    if (meta.headers.indexOf('days') >= 0) row.days = (poll.days || []).join(', ');
+    if (meta.headers.indexOf('slots') >= 0) row.slots = (poll.slots || []).join(', ');
+    if (meta.headers.indexOf('responses') >= 0) row.responses = '0';
+    if (meta.headers.indexOf('status') >= 0) row.status = 'open';
+    if (meta.headers.indexOf('note') >= 0) row.note = poll.n || '';
+    if (meta.headers.indexOf('created') >= 0) row.created = new Date().toISOString();
+    row._dirty = 1;
+    await M.db.upsertRow('meets', row);
+    schedulePush();
   }
 
   function buildSlotGrid(poll, opts) {
