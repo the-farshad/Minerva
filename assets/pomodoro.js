@@ -162,8 +162,7 @@
       widget.classList.remove('pomo-running', 'pomo-break', 'pomo-paused');
       widget.replaceChildren(
         startButton('Pomodoro', 'Start a 25-minute focus session', function () {
-          var note = (prompt('What are you focusing on? (optional)') || '').trim();
-          start({ note: note });
+          start({ note: '' });
         })
       );
     } else if (state.phase === 'paused') {

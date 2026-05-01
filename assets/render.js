@@ -453,12 +453,45 @@
   // text node — this is what lets _config.icon fields hold either a
   // Lucide name or a legacy emoji and have both render correctly.
   var LUCIDE_NAME = /^[a-z][a-z0-9-]*$/i;
+
+  // Older Minerva sheets stored emoji glyphs in _config.icon and other
+  // icon-typed cells. Map the common ones to a Lucide name so the nav
+  // and section headers render real icons instead of literal glyphs.
+  // Anything not in this map falls through to the icon-emoji span.
+  var EMOJI_TO_LUCIDE = {
+    '✓': 'check', '✔': 'check', '✅': 'check-square',
+    '☑': 'check-square', '☐': 'square', '✗': 'x', '×': 'x',
+    '📁': 'folder', '📂': 'folder-open', '🗂': 'folders', '📋': 'clipboard',
+    '📝': 'pencil-line', '✏': 'pencil', '✏️': 'pencil', '🖊': 'pen',
+    '📄': 'file-text', '📃': 'file-text', '📑': 'files', '📰': 'newspaper',
+    '⚡': 'zap', '🔥': 'flame', '🍅': 'timer', '☕': 'coffee',
+    '📅': 'calendar', '📆': 'calendar-days', '⏰': 'alarm-clock', '⏳': 'hourglass', '⌛': 'hourglass',
+    '📊': 'bar-chart-3', '📈': 'trending-up', '📉': 'trending-down',
+    '📚': 'library', '📖': 'book-open', '📕': 'book', '📗': 'book',
+    '🎯': 'target', '🏷': 'tag', '🏷️': 'tag', '⭐': 'star', '🌟': 'star',
+    '🔍': 'search', '🔎': 'search', '🔔': 'bell', '🔇': 'bell-off',
+    '👁': 'eye', '👁️': 'eye', '🎨': 'palette', '🎬': 'film', '📺': 'tv',
+    '▶': 'play', '▶️': 'play', '⏸': 'pause', '⏸️': 'pause', '⏹': 'square',
+    '⚙': 'settings', '⚙️': 'settings', '🔗': 'link', '🔒': 'lock', '🔓': 'unlock',
+    '👤': 'user', '👥': 'users', '🏠': 'home', '🌞': 'sun', '🌙': 'moon',
+    '✉': 'mail', '✉️': 'mail', '📤': 'send', '📥': 'inbox',
+    '🎤': 'mic', '🎧': 'headphones', '📷': 'camera',
+    '➕': 'plus', '➖': 'minus', '❌': 'x', '⚠': 'alert-triangle', '⚠️': 'alert-triangle',
+    'ℹ': 'info', 'ℹ️': 'info', '❓': 'help-circle', '❔': 'help-circle',
+    '💼': 'briefcase', '✈': 'plane', '✈️': 'plane', '🍳': 'chef-hat',
+    '🏋': 'dumbbell', '🏋️': 'dumbbell', '⚖': 'scale', '⚖️': 'scale'
+  };
+
   function renderIcon(name, opts) {
     opts = opts || {};
     var s = String(name == null ? '' : name).trim();
     if (!s) return document.createTextNode('');
+    // Existing sheets may carry emoji glyphs in icon-typed cells. Translate
+    // common ones to Lucide names so the nav and section heads render real
+    // icons without the user having to edit their _config.
+    if (EMOJI_TO_LUCIDE[s]) s = EMOJI_TO_LUCIDE[s];
     if (!LUCIDE_NAME.test(s)) {
-      // Treat as text/emoji: render inside a span for predictable spacing.
+      // Truly unknown glyph — render as a text span so it doesn't disappear.
       var t = document.createElement('span');
       t.className = 'icon icon-emoji';
       t.textContent = s;
