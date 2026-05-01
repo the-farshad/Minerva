@@ -163,6 +163,13 @@
         note.textContent = 'Player shows "Error 153"? The video owner blocked embedding. Click "Watch on YouTube" above.';
         frameHost.appendChild(note);
       }
+      // Notify any listener that a URL is being played — the section view
+      // uses this to auto-mark a matching row as watched.
+      try {
+        window.dispatchEvent(new CustomEvent('minerva:videoplay', {
+          detail: { url: url, isYouTube: isYt }
+        }));
+      } catch (e) { /* ignore */ }
 
       if (prevBtn) prevBtn.disabled = idx <= 0;
       if (nextBtn) nextBtn.disabled = idx >= items.length - 1;
