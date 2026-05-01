@@ -1013,11 +1013,33 @@
     if (!/link|url/i.test(t) && columnName !== 'url') return;
 
     var data;
-    try { data = await M.import.lookup(s); } catch (e) { return; }
+    try { data = await M.import.lookup(s); }
+    catch (e) {
+      // Surface a flash for playlist-paste errors so the user knows why
+      // their playlist URL didn't expand. Other lookup errors stay quiet
+      // (existing behavior).
+      if (/[?&]list=[\w-]+/.test(s)) {
+        flash(document.body, 'YouTube playlist: ' + ((e && e.message) || e), 'error');
+      }
+      return;
+    }
     if (!data) return;
 
     var row = await M.db.getRow(tab, rowId);
     if (!row) return;
+
+    // Playlist branch: enumerate every video and add a row per video.
+    // The pasted-into row receives item 0 (so the user keeps the row they
+    // were editing); items 1..N-1 become new rows.
+    if (data.kind === 'playlist') {
+      try {
+        await importYoutubePlaylist(tab, data, row);
+      } catch (e) {
+        flash(document.body, 'Playlist import failed: ' + ((e && e.message) || e), 'error');
+      }
+      return;
+    }
+
     var changed = false;
     Object.keys(data).forEach(function (k) {
       if (k === 'kind') return;
@@ -1035,6 +1057,57 @@
     await M.db.upsertRow(tab, row);
     schedulePush();
     // Re-render so the auto-filled cells appear immediately.
+    try { if (typeof route === 'function') await route(); } catch (e) { /* ignore */ }
+  }
+
+  // Add a row per item in a YouTube playlist enumeration. When sourceRow
+  // is given (paste into an existing row), item 0 fills that row's empty
+  // fields and items 1..N become new rows; when null (URL-import modal),
+  // every item becomes a new row.
+  async function importYoutubePlaylist(tab, data, sourceRow) {
+    var items = (data && data.items) || [];
+    if (!items.length) return;
+    var meta = await M.db.getMeta(tab);
+    if (!meta || !meta.headers) return;
+
+    var startIdx = 0;
+    if (sourceRow) {
+      var first = items[0];
+      Object.keys(first).forEach(function (k) {
+        if (k === 'videoId') return;
+        if (meta.headers.indexOf(k) < 0) return;
+        if (sourceRow[k] && String(sourceRow[k]).trim()) return;
+        sourceRow[k] = first[k];
+      });
+      sourceRow._updated = new Date().toISOString();
+      sourceRow._dirty = 1;
+      await M.db.upsertRow(tab, sourceRow);
+      startIdx = 1;
+    }
+
+    for (var i = startIdx; i < items.length; i++) {
+      var item = items[i];
+      var newRow = await addRow(tab, meta.headers);
+      Object.keys(item).forEach(function (k) {
+        if (k === 'videoId') return;
+        if (meta.headers.indexOf(k) < 0) return;
+        var v = item[k];
+        if (v == null || v === '') return;
+        newRow[k] = v;
+      });
+      // YouTube tracker preset has a `read` column that serves as
+      // watched/unwatched; default to FALSE so freshly-imported videos
+      // start as unwatched (consistent with single-URL import).
+      if (meta.headers.indexOf('read') >= 0 && !newRow.read) newRow.read = 'FALSE';
+      newRow._updated = new Date().toISOString();
+      newRow._dirty = 1;
+      await M.db.upsertRow(tab, newRow);
+    }
+    schedulePush();
+    var added = items.length - startIdx;
+    flash(document.body, 'Imported ' + items.length + ' video' + (items.length === 1 ? '' : 's')
+      + ' from playlist' + (data.truncated ? ' (capped at ' + data.max + ')' : '')
+      + (sourceRow ? ' — ' + added + ' new row' + (added === 1 ? '' : 's') : ''));
     try { if (typeof route === 'function') await route(); } catch (e) { /* ignore */ }
   }
 
@@ -3920,7 +3993,8 @@
       var f = new FormData(form);
       writeConfig({
         clientId:      String(f.get('clientId') || '').trim(),
-        spreadsheetId: String(f.get('spreadsheetId') || '').trim()
+        spreadsheetId: String(f.get('spreadsheetId') || '').trim(),
+        youtubeApiKey: String(f.get('youtubeApiKey') || '').trim()
       });
       flash(form, 'Saved locally.');
     } },
@@ -3935,6 +4009,12 @@
           placeholder: 'leave blank — Minerva creates one for you on first connect',
           value: cfg.spreadsheetId || '', autocomplete: 'off', spellcheck: 'false' }),
         'Found in your Sheet URL: docs.google.com/spreadsheets/d/<this-part>/edit'
+      ),
+      field('YouTube API key (optional)',
+        el('input', { name: 'youtubeApiKey', type: 'password',
+          placeholder: 'AIza…',
+          value: cfg.youtubeApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
+        'Optional — only needed for playlist imports. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Paste here. Stored locally; never leaves your browser except in calls to googleapis.com.'
       ),
       el('div', { class: 'form-actions' },
         el('button', { class: 'btn', type: 'submit' }, 'Save'),
@@ -5335,10 +5415,13 @@
       );
     }
 
+    function setBtnLabel(s) { addBtn.textContent = s; }
+
     async function lookup() {
       var raw = input.value.trim();
       fetched = null;
       addBtn.disabled = true;
+      setBtnLabel('Add to ' + tab);
       if (!raw) { preview.replaceChildren(); return; }
       preview.replaceChildren(el('p', { class: 'small muted' }, 'Looking up…'));
       try {
@@ -5350,6 +5433,52 @@
           return;
         }
         fetched = data;
+
+        // Playlist branch — preview N items, "Import N videos" button.
+        if (data.kind === 'playlist') {
+          var n = (data.items || []).length;
+          if (!n) {
+            preview.replaceChildren(el('p', { class: 'error small' },
+              'Playlist enumerated, but contained no playable videos.'));
+            return;
+          }
+          var plNodes = [];
+          plNodes.push(el('p', { class: 'small' },
+            'Will import ', el('strong', null, n + ' video' + (n === 1 ? '' : 's')),
+            ' from playlist ', el('code', null, data.playlistId),
+            data.truncated ? ' (capped at ' + data.max + ' — playlist has more)' : '',
+            ' to ', el('code', null, tab), '.'
+          ));
+          var listNode = el('div', { class: 'url-import-playlist' });
+          var SHOW = 10;
+          var preview_n = Math.min(n, SHOW);
+          for (var pi = 0; pi < preview_n; pi++) {
+            var pit = data.items[pi];
+            var rowNode = el('div', { class: 'url-import-playlist-row' });
+            if (pit.thumbnail) {
+              var pimg = document.createElement('img');
+              pimg.src = pit.thumbnail;
+              pimg.className = 'url-import-playlist-thumb';
+              pimg.alt = '';
+              rowNode.appendChild(pimg);
+            }
+            rowNode.appendChild(el('div', { class: 'url-import-playlist-meta' },
+              el('div', { class: 'url-import-playlist-title' }, pit.title || '(no title)'),
+              el('div', { class: 'small muted' }, pit.channel || '')
+            ));
+            listNode.appendChild(rowNode);
+          }
+          if (n > SHOW) {
+            listNode.appendChild(el('p', { class: 'small muted' },
+              '+ ' + (n - SHOW) + ' more video' + (n - SHOW === 1 ? '' : 's') + '…'));
+          }
+          plNodes.push(listNode);
+          preview.replaceChildren.apply(preview, plNodes);
+          setBtnLabel('Import ' + n + ' video' + (n === 1 ? '' : 's') + ' to ' + tab);
+          addBtn.disabled = false;
+          return;
+        }
+
         var matches = Object.keys(data).filter(function (k) {
           return meta.headers.indexOf(k) >= 0 && data[k];
         });
@@ -5385,6 +5514,8 @@
         preview.replaceChildren.apply(preview, nodes);
         addBtn.disabled = matches.length === 0;
       } catch (err) {
+        fetched = null;
+        addBtn.disabled = true;
         preview.replaceChildren(el('p', { class: 'error small' },
           'Lookup failed: ' + (err && err.message ? err.message : err)));
       }
@@ -5398,7 +5529,21 @@
     addBtn.addEventListener('click', async function () {
       if (!fetched) return;
       addBtn.disabled = true;
-      addBtn.textContent = 'Adding…';
+      var prevLabel = addBtn.textContent;
+      // Playlist branch — fan out into N rows.
+      if (fetched.kind === 'playlist') {
+        setBtnLabel('Importing…');
+        try {
+          await importYoutubePlaylist(tab, fetched, null);
+          overlay.remove();
+        } catch (err) {
+          flash(preview, 'Import failed: ' + (err && err.message ? err.message : err), 'error');
+          addBtn.disabled = false;
+          setBtnLabel(prevLabel);
+        }
+        return;
+      }
+      setBtnLabel('Adding…');
       try {
         var row = await addRow(tab, meta.headers);
         Object.keys(fetched).forEach(function (k) {
@@ -5414,10 +5559,11 @@
       } catch (err) {
         flash(preview, 'Add failed: ' + (err && err.message ? err.message : err), 'error');
         addBtn.disabled = false;
-        addBtn.textContent = 'Add to ' + tab;
+        setBtnLabel('Add to ' + tab);
       }
     });
 
+    var hasYtKey = !!(readConfig().youtubeApiKey || '').trim();
     var panel = el('div', { class: 'modal-panel url-import-panel',
       onclick: function (e) { e.stopPropagation(); }
     },
@@ -5427,6 +5573,11 @@
         el('strong', null, 'arXiv'), ' (paste 2401.12345 or any arxiv URL), ',
         el('strong', null, 'DOI'), ' (10.xxxx/yyy or doi.org URL — uses CrossRef), and ',
         el('strong', null, 'YouTube'), ' (any watch / youtu.be URL). Other URLs are added with title-only when CORS allows, or just the URL otherwise.'
+      ),
+      el('p', { class: 'small muted' },
+        hasYtKey
+          ? 'YouTube playlist URLs (anything with ?list=…) enumerate every video — capped at 200 per import.'
+          : 'Paste a YouTube playlist URL to add every video — requires a free YouTube Data API key in Settings.'
       ),
       input,
       preview,
