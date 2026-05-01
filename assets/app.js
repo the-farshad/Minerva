@@ -973,6 +973,15 @@
     await M.db.upsertRow(tab, row);
     schedulePush();
 
+    // Auto-fill sibling fields on URL paste: when the user drops a YouTube
+    // URL (or arXiv id, or DOI) into a link-typed cell, fetch metadata via
+    // M.import.lookup and populate any empty columns in the same row that
+    // match the lookup keys (title, channel, authors, year, thumbnail, ...).
+    // Existing non-empty cells are never overwritten.
+    autoFillFromUrl(tab, rowId, columnName, newValue).catch(function (err) {
+      console.warn('[Minerva autoFill]', err);
+    });
+
     // Recurring tasks: status -> done transition spawns the next occurrence
     // for any row that has a `recurrence` column populated. The recurrence
     // is parsed from a small text vocab (daily, weekly, every N days,
@@ -985,6 +994,48 @@
         console.warn('[Minerva recurrence]', e);
       });
     }
+  }
+
+  async function autoFillFromUrl(tab, rowId, columnName, value) {
+    if (!value || !M.import || !M.import.lookup) return;
+    var s = String(value).trim();
+    // Cheap pre-filter — only run lookup for URLs we know how to handle.
+    var match = /youtube\.com|youtu\.be/i.test(s)
+             || /arxiv\.org|^\d{4}\.\d{4,5}/i.test(s)
+             || /(?:doi\.org\/|^)10\.\d{4,9}\//i.test(s);
+    if (!match) return;
+    var meta = await M.db.getMeta(tab);
+    if (!meta || !meta.headers) return;
+    var idx = meta.headers.indexOf(columnName);
+    if (idx < 0) return;
+    var t = (meta.types && meta.types[idx]) || '';
+    // Only auto-fill when the user pasted into a link- or url-typed cell.
+    if (!/link|url/i.test(t) && columnName !== 'url') return;
+
+    var data;
+    try { data = await M.import.lookup(s); } catch (e) { return; }
+    if (!data) return;
+
+    var row = await M.db.getRow(tab, rowId);
+    if (!row) return;
+    var changed = false;
+    Object.keys(data).forEach(function (k) {
+      if (k === 'kind') return;
+      if (meta.headers.indexOf(k) < 0) return;
+      var existing = row[k];
+      if (existing && String(existing).trim()) return;  // never overwrite
+      var v = data[k];
+      if (v == null || v === '') return;
+      row[k] = v;
+      changed = true;
+    });
+    if (!changed) return;
+    row._updated = new Date().toISOString();
+    row._dirty = 1;
+    await M.db.upsertRow(tab, row);
+    schedulePush();
+    // Re-render so the auto-filled cells appear immediately.
+    try { if (typeof route === 'function') await route(); } catch (e) { /* ignore */ }
   }
 
   // ---- recurring tasks ----------------------------------------------
@@ -1078,11 +1129,19 @@
 
   function findDateCol(meta) {
     if (!meta || !meta.headers || !meta.types) return null;
+    // Calendar view only earns its place when there's a column whose name
+    // implies *scheduling* (when something is supposed to happen), not just
+    // any datetime column. A YouTube tracker's `watched_at` is a record of
+    // when you watched, not a plan for when to watch — calendar view of
+    // that is noise. Same for `created`, `_updated`, `published`, etc.
+    var SCHEDULE_NAMES = ['start','due','date','when','on','at','scheduled','deadline','from','begin'];
     for (var i = 0; i < meta.headers.length; i++) {
       var h = meta.headers[i];
       if (M.render.isInternal(h)) continue;
       var t = M.render.parseType(meta.types[i]);
-      if (t.kind === 'date' || t.kind === 'datetime') return h;
+      if (t.kind !== 'date' && t.kind !== 'datetime') continue;
+      var lh = String(h).toLowerCase();
+      if (SCHEDULE_NAMES.indexOf(lh) >= 0) return h;
     }
     return null;
   }
