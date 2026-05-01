@@ -147,7 +147,11 @@
   }
 
   function lucide(name) {
+    if (window.Minerva && Minerva.render && Minerva.render.icon) {
+      return Minerva.render.icon(name);
+    }
     var i = document.createElement('i');
+    i.className = 'icon icon-lucide';
     i.setAttribute('data-lucide', name);
     return i;
   }

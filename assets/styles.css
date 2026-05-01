@@ -832,7 +832,9 @@ code {
   margin: 0.5rem 0 1.25rem;
 }
 .stat-card {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2282,12 +2284,44 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   gap: 0.3rem;
 }
 .cell-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
   color: var(--accent);
   text-decoration: none;
   font-size: 0.85rem;
   white-space: nowrap;
 }
 .cell-link:hover { text-decoration: underline; }
+
+/* youtube link cell — thumbnail + host. The anchor is inline-flex so the
+   thumbnail and the trailing host text share a vertical center. */
+.cell-yt-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.cell-yt-link:hover { text-decoration: underline; }
+.cell-yt-thumb {
+  display: block;
+  max-width: 80px;
+  max-height: 45px;
+  width: auto;
+  height: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  flex: 0 0 auto;
+}
+.cell-yt-thumb-fallback {
+  width: 1.1em;
+  height: 1.1em;
+  color: var(--muted);
+}
 .cell-preview {
   appearance: none;
   border: 1px solid var(--border);
@@ -2337,11 +2371,32 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.preview-frame-host {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
 .preview-frame {
   flex: 1;
   border: 0;
   width: 100%;
-  background: #fff;
+  background: var(--surface);
+}
+.preview-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+}
+.preview-nav[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.preview-pos {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  font-weight: 500;
 }
 
 /* ref cell */
@@ -2972,7 +3027,9 @@ table.kv tbody tr:hover { background: var(--surface); }
   line-height: 1;
 }
 .icon-lucide svg,
-i[data-lucide] svg {
+i[data-lucide] svg,
+svg.icon-lucide,
+svg[data-lucide] {
   width: 1em;
   height: 1em;
   stroke-width: 1.75;
