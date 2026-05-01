@@ -20,10 +20,16 @@
   var DB_NAME = 'minerva';
   var DB_VERSION = 2;
   var _db = null;
+  var _opening = null;
 
   function open() {
     if (_db) return Promise.resolve(_db);
-    return new Promise(function (resolve, reject) {
+    // Single-flight: many async ops fire `open()` in parallel on first
+    // load. Without this, each would issue its own `indexedDB.open()` and
+    // overwrite `onversionchange` last-wins. Returning the same Promise
+    // lets every caller share one upgrade-aware handle.
+    if (_opening) return _opening;
+    _opening = new Promise(function (resolve, reject) {
       var req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = function (e) {
         var db = e.target.result;
@@ -46,12 +52,21 @@
       };
       req.onsuccess = function () {
         _db = req.result;
-        _db.onversionchange = function () { _db.close(); _db = null; };
+        _db.onversionchange = function () {
+          // Another tab is upgrading — drop our handle so the next op
+          // re-opens against the new schema. In-flight transactions
+          // complete before close() takes effect.
+          try { _db.close(); } catch (e) { /* ignore */ }
+          _db = null;
+          _opening = null;
+        };
+        _opening = null;
         resolve(_db);
       };
-      req.onerror = function () { reject(req.error); };
-      req.onblocked = function () { reject(new Error('IndexedDB upgrade blocked — close other Minerva tabs.')); };
+      req.onerror = function () { _opening = null; reject(req.error); };
+      req.onblocked = function () { _opening = null; reject(new Error('IndexedDB upgrade blocked — close other Minerva tabs.')); };
     });
+    return _opening;
   }
 
   function tx(db, store, mode) {
@@ -199,6 +214,7 @@
 
   async function close() {
     if (_db) { _db.close(); _db = null; }
+    _opening = null;
   }
 
   // Crockford base32 ULID — 10 chars timestamp (sortable) + 16 chars random.

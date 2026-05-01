@@ -47,7 +47,12 @@
     openA.target = '_blank';
     openA.rel = 'noopener';
     openA.className = 'btn btn-ghost';
-    openA.textContent = 'Open ↗';
+    if (window.Minerva && Minerva.render && Minerva.render.icon) {
+      openA.appendChild(Minerva.render.icon('external-link'));
+      openA.appendChild(document.createTextNode(' Open'));
+    } else {
+      openA.textContent = 'Open';
+    }
 
     var closeBtn = document.createElement('button');
     closeBtn.className = 'icon-btn';

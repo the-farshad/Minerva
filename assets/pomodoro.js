@@ -76,9 +76,9 @@
         breakMin: state.breakMin,
         note: state.note
       });
-      desktopNotify('☕ Break time', 'Step away for ' + (state.breakMin || 5) + ' minutes.');
+      desktopNotify('Break time', 'Step away for ' + (state.breakMin || 5) + ' minutes.');
     } else if (state.phase === 'break' && nowMs() >= state.endsAt) {
-      desktopNotify('🍅 Break over', 'Ready for another focus session?');
+      desktopNotify('Break over', 'Ready for another focus session?');
       writeState({ phase: 'idle' });
     }
   }
@@ -86,7 +86,7 @@
   function finalizePhase(phase) {
     if (phase === 'focus') {
       // Browser notification for the immediate completion.
-      desktopNotify('🍅 Focus complete', state.note ? 'Done: ' + state.note : 'Time for a break.');
+      desktopNotify('Focus complete', state.note ? 'Done: ' + state.note : 'Time for a break.');
       // Append a row to a 'pomodoros' tab if it exists in the local store.
       logSession({
         started: new Date(state.startedAt).toISOString(),
