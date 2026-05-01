@@ -120,34 +120,51 @@
   }
 
   function renderNav(active) {
-    var items = [{ hash: '#/', label: 'Home', icon: 'home' }];
+    var groups = [];
     var cfg = readConfig();
     var hasSheet = !!cfg.spreadsheetId;
+
+    // Group 1: home + the always-on action views.
+    var primary = [{ hash: '#/', label: 'Home', icon: 'home' }];
     if (hasSheet) {
-      items.push({ hash: '#/today', label: 'Today', icon: 'sun', badge: 'today' });
-      items.push({ hash: '#/schedule', label: 'Schedule', icon: 'calendar-clock' });
-      sectionRows().forEach(function (r) {
-        items.push({
+      primary.push({ hash: '#/today', label: 'Today', icon: 'sun', badge: 'today' });
+      primary.push({ hash: '#/schedule', label: 'Schedule', icon: 'calendar-clock' });
+    }
+    groups.push(primary);
+
+    // Group 2: user-defined sections.
+    if (hasSheet) {
+      var sections = sectionRows().map(function (r) {
+        return {
           hash: '#/s/' + encodeURIComponent(r.slug),
           label: r.title || r.slug,
           icon: r.icon,
           badge: r.tab === 'tasks' ? 'tasks' : null
-        });
+        };
       });
+      if (sections.length) groups.push(sections);
     }
-    items.push({ hash: '#/share', label: 'Quick share', icon: 'qr-code' });
-    items.push({ hash: '#/settings', label: 'Settings', icon: 'settings' });
+
+    // Group 3: utility.
+    var utility = [
+      { hash: '#/share', label: 'Quick share', icon: 'qr-code' },
+      { hash: '#/settings', label: 'Settings', icon: 'settings' }
+    ];
+    groups.push(utility);
 
     navEl.innerHTML = '';
-    items.forEach(function (it) {
-      var a = el('a', {
-        href: it.hash,
-        class: 'nav-link' + (it.hash === active ? ' active' : ''),
-        'data-badge': it.badge || ''
+    groups.forEach(function (items, gi) {
+      if (gi > 0) navEl.appendChild(el('span', { class: 'nav-sep', 'aria-hidden': 'true' }));
+      items.forEach(function (it) {
+        var a = el('a', {
+          href: it.hash,
+          class: 'nav-link' + (it.hash === active ? ' active' : ''),
+          'data-badge': it.badge || ''
+        });
+        if (it.icon) a.appendChild(M.render.icon(it.icon));
+        a.appendChild(document.createTextNode(it.label));
+        navEl.appendChild(a);
       });
-      if (it.icon) a.appendChild(M.render.icon(it.icon));
-      a.appendChild(document.createTextNode(it.label));
-      navEl.appendChild(a);
     });
     M.render.refreshIcons();
     if (hasSheet) paintNavBadges();
@@ -4156,10 +4173,16 @@
       ];
 
       if (connected) {
-        var existingSlugs = (configCache || []).map(function (r) { return r.slug; });
+        // A preset is "taken" when its _config row exists AND is enabled.
+        // A row that exists but is disabled (the user hit Remove) shows the
+        // Add button — addPreset re-uses the existing row by flipping
+        // enabled back to TRUE rather than creating a duplicate.
+        var enabledSlugs = (configCache || [])
+          .filter(function (r) { return isEnabled(r); })
+          .map(function (r) { return r.slug; });
         var grid = el('div', { class: 'preset-grid' });
         (M.presets || []).forEach(function (p) {
-          var taken = existingSlugs.indexOf(p.slug) >= 0;
+          var taken = enabledSlugs.indexOf(p.slug) >= 0;
           var presetIconEl = el('div', { class: 'preset-icon' });
           if (p.icon) presetIconEl.appendChild(M.render.icon(p.icon));
           var card = el('div', { class: 'preset-card' + (taken ? ' preset-taken' : '') },
@@ -4169,10 +4192,31 @@
               el('p', { class: 'small muted' }, p.description),
               taken
                 ? (function () {
-                    var tag = el('span', { class: 'small muted' });
+                    var actions = el('div', { class: 'preset-actions' });
+                    var tag = el('span', { class: 'small muted preset-status' });
                     tag.appendChild(M.render.icon('check'));
                     tag.appendChild(document.createTextNode(' already added'));
-                    return tag;
+                    actions.appendChild(tag);
+                    var rmBtn = el('button', { class: 'btn btn-ghost preset-remove', type: 'button',
+                      title: 'Hide this section from the nav (data is preserved in your sheet)',
+                      onclick: async function () {
+                        if (!confirm('Hide "' + p.title + '" from the nav? Your data stays in your sheet — you can re-add it later from this gallery.')) return;
+                        try {
+                          flash(presetsPanel, 'Hiding ' + p.title + '…');
+                          await removePreset(p.slug);
+                          await refreshConfig();
+                          renderNav(navActive());
+                          paintPresets();
+                          flash(presetsPanel, 'Hid ' + p.title + '.');
+                        } catch (err) {
+                          flash(presetsPanel, 'Failed: ' + (err && err.message || err), 'error');
+                        }
+                      }
+                    });
+                    rmBtn.appendChild(M.render.icon('eye-off'));
+                    rmBtn.appendChild(document.createTextNode(' Remove'));
+                    actions.appendChild(rmBtn);
+                    return actions;
                   })()
                 : el('button', { class: 'btn btn-ghost', type: 'button',
                     onclick: async function () {
@@ -4213,29 +4257,55 @@
         await M.sheets.updateValues(token, c.spreadsheetId, p.slug + '!A1', values);
       }
 
-      // 2. Append the _config row locally; the dirty-queue push lifts it to Sheets.
+      // 2. Either re-enable an existing row or append a new one.
       var configMeta = await M.db.getMeta('_config');
       if (!configMeta || !configMeta.headers) throw new Error('Sync first — _config schema not cached.');
-      var maxOrder = (configCache || []).reduce(function (m, r) {
-        var n = Number(r.order) || 0;
-        return n > m ? n : m;
-      }, 0);
-      var row = await addRow('_config', configMeta.headers);
-      row.slug = p.slug;
-      row.title = p.title;
-      row.icon = p.icon;
-      row.tab = p.slug;
-      row.order = maxOrder + 1;
-      row.enabled = 'TRUE';
-      row.defaultSort = p.defaultSort || '';
-      row.defaultFilter = p.defaultFilter || '';
-      row._dirty = 1;
-      await M.db.upsertRow('_config', row);
+      var allRows = await M.db.getAllRows('_config');
+      var existingRow = (allRows || []).find(function (r) { return r.slug === p.slug && !r._deleted; });
+      if (existingRow) {
+        existingRow.enabled = 'TRUE';
+        existingRow._dirty = 1;
+        existingRow._updated = new Date().toISOString();
+        await M.db.upsertRow('_config', existingRow);
+      } else {
+        var maxOrder = (configCache || []).reduce(function (m, r) {
+          var n = Number(r.order) || 0;
+          return n > m ? n : m;
+        }, 0);
+        var row = await addRow('_config', configMeta.headers);
+        row.slug = p.slug;
+        row.title = p.title;
+        row.icon = p.icon;
+        row.tab = p.slug;
+        row.order = maxOrder + 1;
+        row.enabled = 'TRUE';
+        row.defaultSort = p.defaultSort || '';
+        row.defaultFilter = p.defaultFilter || '';
+        row._dirty = 1;
+        await M.db.upsertRow('_config', row);
+      }
       schedulePush();
 
       // 3. Pull the new tab into the local store so the section is immediately viewable.
       try { await M.sync.pullTab(token, c.spreadsheetId, p.slug); } catch (e) { /* non-fatal */ }
       try { await M.sync.pullTab(token, c.spreadsheetId, '_config'); } catch (e) { /* non-fatal */ }
+    }
+
+    // Hide a section: flips its _config.enabled to FALSE and queues a push.
+    // Preserves the section's data tab in Sheets — re-adding from the gallery
+    // restores it. To delete the data permanently, the user has to remove the
+    // tab in Sheets directly.
+    async function removePreset(slug) {
+      var c = readConfig();
+      if (!c.clientId || !c.spreadsheetId) throw new Error('Connect first.');
+      var rows = await M.db.getAllRows('_config');
+      var row = (rows || []).find(function (r) { return r.slug === slug && !r._deleted; });
+      if (!row) throw new Error('Section "' + slug + '" not found in _config.');
+      row.enabled = 'FALSE';
+      row._dirty = 1;
+      row._updated = new Date().toISOString();
+      await M.db.upsertRow('_config', row);
+      schedulePush();
     }
 
     function paintIcal() {

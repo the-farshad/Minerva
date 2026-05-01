@@ -244,7 +244,9 @@ nav#nav {
   border-radius: var(--radius);
 }
 .nav-link {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
   padding: 0.4rem 0.85rem;
   font-size: 0.88rem;
   color: var(--muted);
@@ -252,6 +254,24 @@ nav#nav {
   border-radius: 7px;
   transition: color .12s, background .12s;
 }
+.nav-link .icon { margin: 0; flex-shrink: 0; }
+.nav-sep {
+  display: inline-block;
+  width: 1px;
+  height: 1.4em;
+  margin: 0 0.4rem;
+  background: var(--border);
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.4rem;
+}
+.preset-status { display: inline-flex; align-items: center; gap: 0.3em; }
 .nav-link:hover { color: var(--fg); }
 .nav-link.active {
   background: var(--bg);
