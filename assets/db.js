@@ -253,6 +253,23 @@
     ]);
   }
 
+  // Nuke the whole IndexedDB database — drops every store, every index,
+  // every row. Useful when a schema-level migration left things in a
+  // weird state. After this call the next open() recreates a fresh v3
+  // database from scratch.
+  async function deleteDatabase() {
+    if (_db) { try { _db.close(); } catch (e) { /* ignore */ } _db = null; }
+    _opening = null;
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = function () { resolve(); };
+      req.onerror = function () { reject(req.error); };
+      req.onblocked = function () {
+        reject(new Error('Reset blocked — close other Minerva tabs and try again.'));
+      };
+    });
+  }
+
   async function close() {
     if (_db) { _db.close(); _db = null; }
     _opening = null;
@@ -290,6 +307,7 @@
     listTabs: listTabs,
     getAllMeta: getAllMeta,
     clearAll: clearAll,
+    deleteDatabase: deleteDatabase,
     close: close,
     ulid: ulid,
     getDrawing: getDrawing,
