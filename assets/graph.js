@@ -26,7 +26,7 @@
   var LABEL_MAX = 24;     // truncated label length
   var COMP_GAP = 60;      // horizontal gap between disconnected components
 
-  var D3_FORCE_URL = 'https://cdn.jsdelivr.net/npm/d3-force@3.0.0/dist/d3-force.min.js';
+  var D3_FORCE_URL = 'assets/vendor/d3-force.min.js';
   var LAYOUT_PREF_KEY = 'minerva.graph.layout';
 
   // Tick-bounded force simulation parameters (per planner). 150 ticks at
