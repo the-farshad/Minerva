@@ -117,6 +117,7 @@
     if (!listId) return null;
     var out = [];
     var pageToken = '';
+    var truncated = false;
     while (out.length < MAX_PLAYLIST_ITEMS) {
       var url = 'https://www.googleapis.com/youtube/v3/playlistItems'
         + '?part=snippet&maxResults=50&playlistId=' + encodeURIComponent(listId)
@@ -158,14 +159,19 @@
         });
       });
       if (!json.nextPageToken) break;
-      if (out.length >= MAX_PLAYLIST_ITEMS) break;
+      if (out.length >= MAX_PLAYLIST_ITEMS) {
+        // Hit the cap AND there's more — flag it so the modal/flash
+        // can say "capped at 200, playlist has more".
+        truncated = true;
+        break;
+      }
       pageToken = json.nextPageToken;
     }
     return {
       kind: 'playlist',
       playlistId: listId,
       items: out,
-      truncated: out.length >= MAX_PLAYLIST_ITEMS,
+      truncated: truncated,
       max: MAX_PLAYLIST_ITEMS
     };
   }
