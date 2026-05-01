@@ -3766,7 +3766,18 @@
               if (confirm('Clear the local mirror? Your spreadsheet is not affected; the next sync will re-populate.')) {
                 M.db.clearAll().then(paintLocal);
               }
-            } }, 'Clear local mirror')
+            } }, 'Clear local mirror'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            title: 'Drop the IndexedDB database entirely and reload. Use only if Clear local mirror does not help.',
+            onclick: async function () {
+              if (!confirm('Hard reset: delete the entire local database and reload?\n\nYour Google Sheet is NOT affected. The next sync after reload will repopulate everything from your sheet.')) return;
+              try {
+                await M.db.deleteDatabase();
+                location.reload();
+              } catch (err) {
+                flash(localPanel, 'Reset failed: ' + (err && err.message || err), 'error');
+              }
+            } }, 'Hard reset (delete local DB)')
         )
       );
     }
