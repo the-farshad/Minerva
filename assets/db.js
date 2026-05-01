@@ -18,7 +18,7 @@
   'use strict';
 
   var DB_NAME = 'minerva';
-  var DB_VERSION = 3;
+  var DB_VERSION = 4;
   var _db = null;
   var _opening = null;
 
@@ -54,6 +54,11 @@
         }
         if (!db.objectStoreNames.contains('drawings')) {
           db.createObjectStore('drawings', { keyPath: ['tab', 'rowId', 'col'] });
+        }
+        // v4: per-row offline video blobs for the YouTube tracker. Keyed
+        // by [tab, rowId] so a section's saved videos travel with the row.
+        if (!db.objectStoreNames.contains('videos')) {
+          db.createObjectStore('videos', { keyPath: ['tab', 'rowId'] });
         }
 
         // Existing v1/v2 user: migrate the rows store. Read all rows,
@@ -242,6 +247,43 @@
     });
   }
 
+  // --- videos (offline blobs) -----------------------------------
+
+  async function getVideo(tab, rowId) {
+    var db = await open();
+    if (!db.objectStoreNames.contains('videos')) return null;
+    return reqP(tx(db, 'videos').get([tab, rowId]));
+  }
+
+  async function putVideo(tab, rowId, payload) {
+    var db = await open();
+    var rec = Object.assign({}, payload, { tab: tab, rowId: rowId, savedAt: Date.now() });
+    return reqP(tx(db, 'videos', 'readwrite').put(rec));
+  }
+
+  async function deleteVideo(tab, rowId) {
+    var db = await open();
+    if (!db.objectStoreNames.contains('videos')) return;
+    return reqP(tx(db, 'videos', 'readwrite').delete([tab, rowId]));
+  }
+
+  async function listVideosForTab(tab) {
+    var db = await open();
+    if (!db.objectStoreNames.contains('videos')) return [];
+    var store = tx(db, 'videos');
+    return new Promise(function (resolve, reject) {
+      var out = [];
+      var c = store.openCursor();
+      c.onsuccess = function () {
+        var cur = c.result;
+        if (!cur) { resolve(out); return; }
+        if (cur.value && cur.value.tab === tab) out.push(cur.value);
+        cur.continue();
+      };
+      c.onerror = function () { reject(c.error); };
+    });
+  }
+
   // --- bulk ops -------------------------------------------------
 
   async function clearAll() {
@@ -249,7 +291,10 @@
     await Promise.all([
       reqP(db.transaction('rows', 'readwrite').objectStore('rows').clear()),
       reqP(db.transaction('meta', 'readwrite').objectStore('meta').clear()),
-      reqP(db.transaction('drawings', 'readwrite').objectStore('drawings').clear())
+      reqP(db.transaction('drawings', 'readwrite').objectStore('drawings').clear()),
+      db.objectStoreNames.contains('videos')
+        ? reqP(db.transaction('videos', 'readwrite').objectStore('videos').clear())
+        : Promise.resolve()
     ]);
   }
 
@@ -313,6 +358,10 @@
     getDrawing: getDrawing,
     putDrawing: putDrawing,
     deleteDrawing: deleteDrawing,
-    getDirtyDrawingsForRow: getDirtyDrawingsForRow
+    getDirtyDrawingsForRow: getDirtyDrawingsForRow,
+    getVideo: getVideo,
+    putVideo: putVideo,
+    deleteVideo: deleteVideo,
+    listVideosForTab: listVideosForTab
   };
 })();

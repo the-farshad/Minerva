@@ -1466,26 +1466,84 @@
 
     // Selection state for bulk ops, scoped to this view instance.
     var selectedIds = new Set();
+    // Cached schema for the section — refreshed at the top of every
+    // refresh() so the bulk bar's button-set decisions don't have to
+    // wait on an IndexedDB round-trip every time selection changes.
+    var lastMeta = null;
 
-    function paintBulkBar() {
+    async function paintBulkBar() {
       if (selectedIds.size === 0 || mode !== 'list') {
         bulkBar.hidden = true;
         bulkBar.replaceChildren();
         return;
       }
       bulkBar.hidden = false;
-      // Decide if BibTeX makes sense — only when at least one selected row
-      // has the necessary authors+title fields.
-      var bibtexEligible = false;
-      bulkBar.replaceChildren(
-        el('span', { class: 'bulk-count' }, selectedIds.size + ' selected'),
-        el('button', { class: 'btn', type: 'button',
+      // Build a per-section action set. Each entry decides whether to
+      // render against the section's schema (and any per-row data we can
+      // peek at without an extra round-trip). Hides actions that don't
+      // apply so YouTube users don't see "Mark done" / "Copy BibTeX".
+      var meta = lastMeta || (await M.db.getMeta(sec.tab));
+      var headers = (meta && meta.headers) || [];
+      var has = function (col) { return headers.indexOf(col) >= 0; };
+      var sectionLabel = sec.title || sec.slug || sec.tab;
+      var children = [
+        el('span', { class: 'bulk-count' },
+          selectedIds.size + ' selected',
+          el('span', { class: 'bulk-scope muted small' },
+            ' · ' + sectionLabel))
+      ];
+
+      // Mark watched / unwatched — shown on YouTube and any section that
+      // has a `watched` column.
+      if (has('watched')) {
+        children.push(el('button', { class: 'btn', type: 'button',
+          title: 'Mark selected videos as watched',
           onclick: async function () {
-            var meta = await M.db.getMeta(sec.tab);
-            if (!meta || (meta.headers || []).indexOf('status') < 0) {
-              flash(view, 'No status column on this section.', 'error');
-              return;
+            var ids = Array.from(selectedIds);
+            for (var i = 0; i < ids.length; i++) {
+              var row = await M.db.getRow(sec.tab, ids[i]);
+              if (!row) continue;
+              var prev = row.watched;
+              if (String(prev || '').toUpperCase() === 'TRUE') continue;
+              pushUndo({ kind: 'edit', tab: sec.tab, rowId: row.id, field: 'watched', prevValue: prev });
+              row.watched = 'TRUE';
+              if (has('watched_at') && !row.watched_at) row.watched_at = new Date().toISOString();
+              row._updated = new Date().toISOString();
+              row._dirty = 1;
+              await M.db.upsertRow(sec.tab, row);
             }
+            schedulePush();
+            selectedIds.clear();
+            await refresh();
+            flash(view, 'Marked ' + ids.length + ' as watched.');
+          } }, 'Mark watched'));
+        children.push(el('button', { class: 'btn btn-ghost', type: 'button',
+          title: 'Mark selected as unwatched',
+          onclick: async function () {
+            var ids = Array.from(selectedIds);
+            for (var i = 0; i < ids.length; i++) {
+              var row = await M.db.getRow(sec.tab, ids[i]);
+              if (!row) continue;
+              var prev = row.watched;
+              if (String(prev || '').toUpperCase() !== 'TRUE') continue;
+              pushUndo({ kind: 'edit', tab: sec.tab, rowId: row.id, field: 'watched', prevValue: prev });
+              row.watched = 'FALSE';
+              if (has('watched_at')) row.watched_at = '';
+              row._updated = new Date().toISOString();
+              row._dirty = 1;
+              await M.db.upsertRow(sec.tab, row);
+            }
+            schedulePush();
+            selectedIds.clear();
+            await refresh();
+            flash(view, 'Marked ' + ids.length + ' as unwatched.');
+          } }, 'Mark unwatched'));
+      }
+
+      // Mark done — only when section has a `status` column (tasks).
+      if (has('status')) {
+        children.push(el('button', { class: 'btn', type: 'button',
+          onclick: async function () {
             var ids = Array.from(selectedIds);
             for (var i = 0; i < ids.length; i++) {
               var row = await M.db.getRow(sec.tab, ids[i]);
@@ -1504,21 +1562,63 @@
             await refresh();
             flash(view, 'Marked ' + ids.length + ' row' + (ids.length === 1 ? '' : 's') + ' as done.');
           }
-        }, 'Mark done'),
-        el('button', { class: 'btn btn-ghost', type: 'button',
+        }, 'Mark done'));
+      }
+
+      // Refresh durations — YouTube only. Calls videos.list?part=contentDetails
+      // for the selected rows' video ids and patches the duration column.
+      if (sec.slug === 'youtube' && has('duration') && has('url')) {
+        children.push(el('button', { class: 'btn btn-ghost', type: 'button',
+          title: 'Fetch durations from the YouTube Data API',
           onclick: async function () {
-            var n = selectedIds.size;
-            if (!confirm('Delete ' + n + ' row' + (n === 1 ? '' : 's') + '? This is undoable until your next ' + UNDO_MAX + '-deep operation.')) return;
-            var ids = Array.from(selectedIds);
-            for (var i = 0; i < ids.length; i++) {
-              await deleteRow(sec.tab, ids[i]);
+            var apiKey = (M.import && M.import.ytApiKey) ? M.import.ytApiKey() : '';
+            if (!apiKey) {
+              flash(view, 'Add a YouTube Data API key in Settings to fetch durations.', 'error');
+              return;
             }
-            selectedIds.clear();
-            await refresh();
-            flash(view, 'Deleted ' + ids.length + ' row' + (ids.length === 1 ? '' : 's') + '.');
+            var ids = Array.from(selectedIds);
+            var byVid = {};
+            var vids = [];
+            for (var i = 0; i < ids.length; i++) {
+              var row = await M.db.getRow(sec.tab, ids[i]);
+              if (!row) continue;
+              var vid = M.import.youtubeVideoId(row.url || '');
+              if (vid) { byVid[vid] = row; vids.push(vid); }
+            }
+            if (!vids.length) { flash(view, 'No YouTube URLs in selection.', 'error'); return; }
+            try {
+              var durs = await M.import.fetchDurationsByIds(vids, apiKey);
+              var n = 0;
+              for (var v in durs) {
+                if (!Object.prototype.hasOwnProperty.call(durs, v)) continue;
+                var row2 = byVid[v];
+                if (!row2 || !durs[v]) continue;
+                if (row2.duration === durs[v]) continue;
+                row2.duration = durs[v];
+                row2._updated = new Date().toISOString();
+                row2._dirty = 1;
+                await M.db.upsertRow(sec.tab, row2);
+                n++;
+              }
+              schedulePush();
+              await refresh();
+              flash(view, 'Filled duration for ' + n + ' row' + (n === 1 ? '' : 's') + '.');
+            } catch (err) {
+              flash(view, 'Duration fetch failed: ' + (err && err.message ? err.message : err), 'error');
+            }
           }
-        }, 'Delete'),
-        el('button', { class: 'btn btn-ghost', type: 'button',
+        }, 'Fetch durations'));
+      }
+
+      // BibTeX — only when at least one selected row would produce one.
+      var bibtexAny = false;
+      var sample = Array.from(selectedIds).slice(0, 5);
+      for (var bi = 0; bi < sample.length; bi++) {
+        var sr = await M.db.getRow(sec.tab, sample[bi]);
+        if (sr && rowHasBibtex(sr)) { bibtexAny = true; break; }
+      }
+      if (bibtexAny) {
+        children.push(el('button', { class: 'btn btn-ghost', type: 'button',
           onclick: async function () {
             var ids = Array.from(selectedIds);
             var entries = [];
@@ -1539,23 +1639,76 @@
               flash(view, 'Clipboard unavailable — see console.', 'error');
             }
           }
-        }, 'Copy BibTeX'),
-        el('button', { class: 'btn btn-ghost', type: 'button',
-          onclick: function () {
-            selectedIds.clear();
-            paintBulkBar();
-            // re-render to clear checkbox state
-            var rows = bodyHost.querySelectorAll('tbody tr.is-bulk-selected');
-            rows.forEach(function (r) {
-              r.classList.remove('is-bulk-selected');
-              var cb = r.querySelector('.bulk-cb');
-              if (cb) cb.checked = false;
-            });
-            var head = bodyHost.querySelector('thead .bulk-cb-all');
-            if (head) head.checked = false;
+        }, 'Copy BibTeX'));
+      }
+
+      // Remove offline — YouTube only. Drops cached blobs for the selection.
+      if (sec.slug === 'youtube') {
+        children.push(el('button', { class: 'btn btn-ghost', type: 'button',
+          title: 'Remove the locally-cached video files for the selected rows',
+          onclick: async function () {
+            var ids = Array.from(selectedIds);
+            var n = 0;
+            for (var i = 0; i < ids.length; i++) {
+              var existing = await M.db.getVideo(sec.tab, ids[i]);
+              if (!existing) continue;
+              await M.db.deleteVideo(sec.tab, ids[i]);
+              if (has('offline')) {
+                var row = await M.db.getRow(sec.tab, ids[i]);
+                if (row && row.offline) {
+                  pushUndo({ kind: 'edit', tab: sec.tab, rowId: row.id, field: 'offline', prevValue: row.offline });
+                  row.offline = '';
+                  row._updated = new Date().toISOString();
+                  row._dirty = 1;
+                  await M.db.upsertRow(sec.tab, row);
+                }
+              }
+              n++;
+            }
+            schedulePush();
+            await refresh();
+            flash(view, n ? ('Removed ' + n + ' offline file' + (n === 1 ? '' : 's') + '.') : 'No offline files in selection.');
           }
-        }, 'Clear')
-      );
+        }, 'Remove offline'));
+      }
+
+      // Delete — always available; the destructive action sits at the
+      // far right with a ghost style so it doesn't compete with the
+      // primary section action.
+      children.push(el('button', { class: 'btn btn-ghost btn-danger', type: 'button',
+        onclick: async function () {
+          var n = selectedIds.size;
+          if (!confirm('Delete ' + n + ' row' + (n === 1 ? '' : 's') + ' from ' + sectionLabel + '? This is undoable until your next ' + UNDO_MAX + '-deep operation.')) return;
+          var ids = Array.from(selectedIds);
+          for (var i = 0; i < ids.length; i++) {
+            // Drop any offline blob alongside the row delete.
+            try { await M.db.deleteVideo(sec.tab, ids[i]); } catch (e) { /* ignore */ }
+            await deleteRow(sec.tab, ids[i]);
+          }
+          selectedIds.clear();
+          await refresh();
+          flash(view, 'Deleted ' + ids.length + ' row' + (ids.length === 1 ? '' : 's') + ' from ' + sectionLabel + '.');
+        }
+      }, 'Delete'));
+
+      children.push(el('button', { class: 'btn btn-ghost', type: 'button',
+        onclick: function () {
+          selectedIds.clear();
+          paintBulkBar();
+          var rows = bodyHost.querySelectorAll('tbody tr.is-bulk-selected');
+          rows.forEach(function (r) {
+            r.classList.remove('is-bulk-selected');
+            var cb = r.querySelector('.bulk-cb');
+            if (cb) cb.checked = false;
+          });
+          bodyHost.querySelectorAll('thead .bulk-cb-all, .bulk-cb-group').forEach(function (cb) {
+            cb.checked = false;
+            cb.indeterminate = false;
+          });
+        }
+      }, 'Clear'));
+
+      bulkBar.replaceChildren.apply(bulkBar, children);
     }
 
     var mode = readViewMode(slug);
@@ -1714,6 +1867,17 @@
 
     async function refresh() {
       var meta = await M.db.getMeta(sec.tab);
+      lastMeta = meta;
+      // YouTube schema upgrade: older sheets lack the playlist + offline
+      // columns. Auto-extend the schema (single Sheets API call) so
+      // playlist grouping and offline storage start working without the
+      // user having to delete + re-add the section.
+      if (sec.slug === 'youtube' && meta && meta.headers) {
+        try {
+          var changed = await maybeUpgradeYoutubeSchema(meta);
+          if (changed) { meta = await M.db.getMeta(sec.tab); lastMeta = meta; }
+        } catch (e) { console.warn('[Minerva yt-upgrade]', e); }
+      }
       var allRows = await M.db.getAllRows(sec.tab);
       var visible = allRows.filter(function (r) { return !r._deleted; });
       var backlinks = await computeBacklinks(sec.tab);
@@ -2061,8 +2225,26 @@
         var row = await M.db.getRow(sec.tab, rowId);
         if (!row) return;
         var headers = (await M.db.getMeta(sec.tab)).headers || [];
+        // Section-aware toggle: tasks → status; YouTube + other "watched"
+        // sections → watched. Without this, hitting `c` on a YouTube row
+        // flashed an error instead of toggling the obvious thing.
         if (headers.indexOf('status') < 0) {
-          flash(view, 'No status column on this section.', 'error');
+          if (headers.indexOf('watched') >= 0) {
+            var prevW = row.watched;
+            var nowWatched = String(row.watched || '').toUpperCase() !== 'TRUE';
+            pushUndo({ kind: 'edit', tab: sec.tab, rowId: row.id, field: 'watched', prevValue: prevW });
+            row.watched = nowWatched ? 'TRUE' : 'FALSE';
+            if (headers.indexOf('watched_at') >= 0) {
+              row.watched_at = nowWatched ? new Date().toISOString() : '';
+            }
+            row._updated = new Date().toISOString();
+            row._dirty = 1;
+            await M.db.upsertRow(sec.tab, row);
+            schedulePush();
+            await refresh();
+            return;
+          }
+          flash(view, 'No status or watched column on this section.', 'error');
           return;
         }
         var prevStatus = row.status;
@@ -2243,6 +2425,51 @@
     }
     if (changedAny) schedulePush();
     return changedAny;
+  }
+
+  // ---- YouTube schema migration ------------------------------------
+  // The youtube preset originally had no `playlist` or `offline` columns.
+  // Sections created before that change miss them, breaking playlist
+  // grouping and offline storage. maybeUpgradeYoutubeSchema appends them
+  // to the user's spreadsheet header + type rows on demand, then re-pulls.
+  // Idempotent: returns false when nothing to do.
+  async function maybeUpgradeYoutubeSchema(meta) {
+    if (!meta || !meta.headers) return false;
+    var headers = meta.headers.slice();
+    var types = (meta.types || []).slice();
+    var added = [];
+    function ensureCol(name, type, before) {
+      if (headers.indexOf(name) >= 0) return;
+      var insertAt = before ? headers.indexOf(before) : -1;
+      if (insertAt < 0) {
+        // Keep _updated last so charts and sync stay sane.
+        var upIdx = headers.indexOf('_updated');
+        if (upIdx >= 0) { insertAt = upIdx; }
+      }
+      if (insertAt < 0 || insertAt >= headers.length) {
+        headers.push(name);
+        types.push(type);
+      } else {
+        headers.splice(insertAt, 0, name);
+        types.splice(insertAt, 0, type);
+      }
+      added.push(name);
+    }
+    ensureCol('playlist', 'text', 'url');
+    ensureCol('offline',  'text', '_updated');
+    if (!added.length) return false;
+
+    var c = readConfig();
+    if (!c.spreadsheetId) return false;
+    var token = await M.auth.getToken(c.clientId);
+    // Write headers + type-hint row (rows 1 + 2). USER_ENTERED so any
+    // string types stay as plain text, just like the original seed.
+    await M.sheets.updateValues(token, c.spreadsheetId, 'youtube!A1', [headers, types]);
+    // Re-pull the youtube tab so the local meta and existing rows pick
+    // up the new column slots; pullTab preserves dirty rows.
+    await M.sync.pullTab(token, c.spreadsheetId, 'youtube');
+    flash(document.body, 'YouTube section upgraded: added ' + added.join(', ') + '.');
+    return true;
   }
 
   // ---- preset add / remove (module scope) ---------------------------
@@ -3836,28 +4063,40 @@
       if (h === 'id') continue;
       visibleCols.push({ name: h, type: meta.types[i] || 'text' });
     }
+    var hasPlaylistCol = (meta.headers || []).indexOf('playlist') >= 0;
+    var hasOfflineCol  = (meta.headers || []).indexOf('offline')  >= 0;
+    var hasUrlCol      = (meta.headers || []).indexOf('url')      >= 0;
+
+    function syncAllCheckbox(table) {
+      var head = table.querySelector('thead .bulk-cb-all');
+      if (!head) return;
+      var allChecked = rows.length > 0 && rows.every(function (r) { return selectedIds.has(r.id); });
+      var anyChecked = rows.some(function (r) { return selectedIds.has(r.id); });
+      head.checked = allChecked;
+      head.indeterminate = !allChecked && anyChecked;
+    }
 
     var allSelected = !!selectedIds && rows.length > 0 && rows.every(function (r) { return selectedIds.has(r.id); });
     var bulkAllCb = document.createElement('input');
     bulkAllCb.type = 'checkbox';
     bulkAllCb.className = 'bulk-cb-all';
-    bulkAllCb.title = 'Select all rows';
+    bulkAllCb.title = 'Select all rows in ' + tab;
     bulkAllCb.checked = allSelected;
     bulkAllCb.addEventListener('click', function (e) {
       e.stopPropagation();
       if (!selectedIds) return;
       if (bulkAllCb.checked) rows.forEach(function (r) { selectedIds.add(r.id); });
       else rows.forEach(function (r) { selectedIds.delete(r.id); });
-      // toggle each row checkbox
-      bodyHost = bodyHost; // captured
       var trs = (e.target.closest('table') || document).querySelectorAll('tbody tr');
       trs.forEach(function (tr) {
-        var rid = tr.dataset.rowid;
         var cb = tr.querySelector('.bulk-cb');
         var on = bulkAllCb.checked;
         if (cb) cb.checked = on;
         tr.classList.toggle('is-bulk-selected', on);
       });
+      // Group checkboxes follow the all-checkbox.
+      var groupCbs = (e.target.closest('table') || document).querySelectorAll('.bulk-cb-group');
+      groupCbs.forEach(function (cb) { cb.checked = bulkAllCb.checked; cb.indeterminate = false; });
       if (onBulkChange) onBulkChange();
     });
 
@@ -3891,18 +4130,17 @@
         ])
       )
     );
-    var tbody = el('tbody', null, rows.map(function (row) {
+
+    function buildRow(row) {
       var tr = el('tr', { 'data-rowid': row.id });
       if (row._dirty) tr.classList.add('row-dirty');
       var isSelected = !!selectedIds && selectedIds.has(row.id);
       if (isSelected) tr.classList.add('is-bulk-selected');
       tr.addEventListener('dblclick', function (e) {
-        // Don't open detail when double-clicking the bulk checkbox or actions
-        if (e.target.closest('.col-bulk, .col-actions, button, input, textarea, select')) return;
+        if (e.target.closest('.col-bulk, .col-actions, button, input, textarea, select, a')) return;
         showRowDetail(tab, row.id);
       });
 
-      // checkbox column
       var rowCb = document.createElement('input');
       rowCb.type = 'checkbox';
       rowCb.className = 'bulk-cb';
@@ -3913,9 +4151,20 @@
         if (rowCb.checked) selectedIds.add(row.id);
         else selectedIds.delete(row.id);
         tr.classList.toggle('is-bulk-selected', rowCb.checked);
-        // Sync the header "all" checkbox
-        var th = (tr.closest('table') || document).querySelector('thead .bulk-cb-all');
-        if (th) th.checked = rows.every(function (r) { return selectedIds.has(r.id); });
+        syncAllCheckbox(tr.closest('table') || document);
+        // Update the row's group checkbox state if the row sits in a group.
+        var groupTr = tr.previousElementSibling;
+        while (groupTr && !groupTr.classList.contains('row-group-head') && !groupTr.classList.contains('row-group-end')) {
+          groupTr = groupTr.previousElementSibling;
+        }
+        if (groupTr && groupTr.classList.contains('row-group-head')) {
+          var gid = groupTr.dataset.group;
+          var groupRows = rows.filter(function (r) { return (r.playlist || '(no playlist)') === gid; });
+          var allG = groupRows.every(function (r) { return selectedIds.has(r.id); });
+          var anyG = groupRows.some(function (r) { return selectedIds.has(r.id); });
+          var gcb = groupTr.querySelector('.bulk-cb-group');
+          if (gcb) { gcb.checked = allG; gcb.indeterminate = !allG && anyG; }
+        }
         if (onBulkChange) onBulkChange();
       });
       var bulkTd = el('td', { class: 'col-bulk' });
@@ -3924,7 +4173,34 @@
 
       visibleCols.forEach(function (c, ci) {
         var td = el('td', { 'data-col': c.name, 'data-type': c.type, tabindex: '0' });
-        td.appendChild(M.render.renderCell(row[c.name], c.type));
+        var parsed = M.render.parseType(c.type);
+
+        if (parsed.kind === 'rating') {
+          // One-click rating: render direct stars wired to commitCellEdit
+          // so a single click sets the rating, no edit-mode round-trip.
+          var ratingHost = renderInlineRating(row[c.name], parsed, function (newVal) {
+            if (newVal === row[c.name]) return Promise.resolve();
+            return commitCellEdit(tab, row.id, c.name, newVal).then(function () {
+              row[c.name] = newVal;
+              return refresh();
+            });
+          });
+          td.appendChild(ratingHost);
+          td.classList.add('cell-rating-host');
+        } else {
+          td.appendChild(M.render.renderCell(row[c.name], c.type));
+          td.addEventListener('click', function (e) {
+            // Don't hijack clicks on our own controls (preview/play/etc).
+            if (e.target.closest('.cell-preview, .cell-yt-play, .cell-yt-link, .cell-link, a, button, input, textarea, select, .star-btn')) return;
+            startEdit(td, row, c, tab, refresh);
+          });
+          td.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              startEdit(td, row, c, tab, refresh);
+            }
+          });
+        }
         // Append a small backlink badge to the first visible column.
         if (ci === 0 && backlinks && backlinks[row.id] && backlinks[row.id].length) {
           var n = backlinks[row.id].length;
@@ -3933,16 +4209,19 @@
           badge.appendChild(document.createTextNode(' ' + n));
           td.appendChild(badge);
         }
-        td.addEventListener('click', function () { startEdit(td, row, c, tab, refresh); });
-        td.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            startEdit(td, row, c, tab, refresh);
-          }
-        });
         tr.appendChild(td);
       });
+
       var actions = el('td', { class: 'col-actions' });
+
+      // Per-row offline control — only sections with both `url` and
+      // `offline` columns; the YouTube preset has both. Picks a video
+      // file from disk and stores it as a Blob in IndexedDB.
+      if (hasOfflineCol && hasUrlCol) {
+        var offBtn = renderOfflineButton(tab, row, refresh);
+        actions.appendChild(offBtn);
+      }
+
       var delBtn = el('button', {
         class: 'icon-btn',
         type: 'button',
@@ -3950,6 +4229,7 @@
         'aria-label': 'Delete row',
         onclick: async function () {
           if (!confirm('Delete this row? This will remove it from your spreadsheet on next sync.')) return;
+          try { await M.db.deleteVideo(tab, row.id); } catch (e) { /* ignore */ }
           await deleteRow(tab, row.id);
           await refresh();
         }
@@ -3957,10 +4237,255 @@
       actions.appendChild(delBtn);
       tr.appendChild(actions);
       return tr;
-    }));
+    }
+
+    // Group rows by `playlist` only when the column exists AND at least
+    // one row carries a non-empty value — otherwise the grouping just
+    // adds a single "(no playlist)" header that adds noise.
+    var anyPlaylist = hasPlaylistCol && rows.some(function (r) { return r.playlist && String(r.playlist).trim(); });
+    var bodyChildren = [];
+    if (anyPlaylist) {
+      var byGroup = {};
+      var order = [];
+      rows.forEach(function (r) {
+        var key = (r.playlist && String(r.playlist).trim()) || '(no playlist)';
+        if (!byGroup[key]) { byGroup[key] = []; order.push(key); }
+        byGroup[key].push(r);
+      });
+      // Stable: keep first-seen order so the user's sort decides ranking.
+      order.forEach(function (key) {
+        var groupRows = byGroup[key];
+        var allG = groupRows.every(function (r) { return selectedIds.has(r.id); });
+        var anyG = groupRows.some(function (r) { return selectedIds.has(r.id); });
+
+        var gcb = document.createElement('input');
+        gcb.type = 'checkbox';
+        gcb.className = 'bulk-cb-group';
+        gcb.title = 'Select every row in "' + key + '"';
+        gcb.checked = allG;
+        gcb.indeterminate = !allG && anyG;
+        gcb.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (gcb.checked) groupRows.forEach(function (r) { selectedIds.add(r.id); });
+          else            groupRows.forEach(function (r) { selectedIds.delete(r.id); });
+          gcb.indeterminate = false;
+          var table = e.target.closest('table') || document;
+          // Flip the row checkboxes inside this group only.
+          groupRows.forEach(function (r) {
+            var tr = table.querySelector('tbody tr[data-rowid="' + cssEscape(r.id) + '"]');
+            if (!tr) return;
+            var cb = tr.querySelector('.bulk-cb');
+            if (cb) cb.checked = gcb.checked;
+            tr.classList.toggle('is-bulk-selected', gcb.checked);
+          });
+          syncAllCheckbox(table);
+          if (onBulkChange) onBulkChange();
+        });
+
+        var headTd = document.createElement('td');
+        headTd.colSpan = visibleCols.length + 2; // bulk + cols + actions
+        headTd.className = 'row-group-head-cell';
+        var titleSpan = el('span', { class: 'row-group-title' }, key);
+        var countSpan = el('span', { class: 'row-group-count small muted' },
+          ' · ' + groupRows.length + ' video' + (groupRows.length === 1 ? '' : 's'));
+        var watchedN = groupRows.filter(function (r) { return String(r.watched || '').toUpperCase() === 'TRUE'; }).length;
+        if (watchedN > 0) {
+          var pctW = Math.round(100 * watchedN / groupRows.length);
+          countSpan.appendChild(document.createTextNode(' · ' + watchedN + ' watched (' + pctW + '%)'));
+        }
+        headTd.appendChild(gcb);
+        headTd.appendChild(titleSpan);
+        headTd.appendChild(countSpan);
+
+        var groupTr = el('tr', { class: 'row-group-head', 'data-group': key }, headTd);
+        bodyChildren.push(groupTr);
+        groupRows.forEach(function (r) { bodyChildren.push(buildRow(r)); });
+      });
+    } else {
+      rows.forEach(function (r) { bodyChildren.push(buildRow(r)); });
+    }
+
+    var tbody = el('tbody', null, bodyChildren);
     var wrap = el('div', { class: 'table-wrap' });
-    wrap.appendChild(el('table', { class: 'rows' }, thead, tbody));
+    wrap.appendChild(el('table', { class: 'rows' + (anyPlaylist ? ' rows-grouped' : ''), }, thead, tbody));
     return wrap;
+  }
+
+  // Lightweight CSS.escape polyfill — we only need it for ULIDs which are
+  // alphanumeric, but a robust escape lets us survive the (currently
+  // theoretical) case where someone pastes an id with quotes or hyphens.
+  function cssEscape(s) {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(s);
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, function (c) {
+      return '\\' + c;
+    });
+  }
+
+  // Render an inline rating control directly in a table cell. Click any
+  // star to commit that rating; click the currently-set star again to
+  // clear the rating. No edit-mode round-trip — feels native.
+  function renderInlineRating(value, t, onCommit) {
+    var max = t.max || 5;
+    var current = Math.max(t.min || 0, Math.min(max, Number(value) || 0));
+    var wrap = el('span', { class: 'stars stars-inline' });
+    function paint() {
+      wrap.replaceChildren();
+      for (var i = 1; i <= max; i++) {
+        (function (val) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'star-btn star-btn-inline' + (val <= current ? ' on' : '');
+          btn.title = val + ' / ' + max + (val === current ? ' (click to clear)' : '');
+          btn.setAttribute('aria-label', 'Rate ' + val + ' of ' + max);
+          var ic = document.createElement('i');
+          ic.setAttribute('data-lucide', 'star');
+          btn.appendChild(ic);
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            // Click the currently-set rank to clear; otherwise set to it.
+            var next = (val === current) ? '' : String(val);
+            var parsed = next === '' ? 0 : Number(next);
+            if (parsed === current) return;
+            current = parsed;
+            paint();
+            Promise.resolve(onCommit(next)).catch(function (err) {
+              console.warn('[Minerva rating]', err);
+            });
+          });
+          wrap.appendChild(btn);
+        })(i);
+      }
+      if (window.lucide && window.lucide.createIcons) {
+        try { window.lucide.createIcons(); } catch (e) { /* ignore */ }
+      }
+    }
+    paint();
+    return wrap;
+  }
+
+  // Per-row "Save offline" toggle. Reads existing offline blob to decide
+  // its label/state. Click Save → file picker; click Saved → confirm
+  // remove. Click Watch → opens preview with blob URL when offline.
+  function renderOfflineButton(tab, row, refresh) {
+    var wrap = el('span', { class: 'offline-actions' });
+    function paint() {
+      wrap.replaceChildren();
+      M.db.getVideo(tab, row.id).then(function (rec) {
+        wrap.replaceChildren();
+        if (rec && rec.blob) {
+          var sizeMB = rec.blob.size ? (rec.blob.size / (1024 * 1024)).toFixed(1) : '?';
+          var watchBtn = el('button', {
+            class: 'btn btn-ghost offline-watch',
+            type: 'button',
+            title: 'Play the locally-saved file (' + sizeMB + ' MB)',
+            onclick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              playOfflineBlob(rec, row);
+            }
+          });
+          watchBtn.appendChild(M.render.icon('play-circle'));
+          watchBtn.appendChild(document.createTextNode(' Offline'));
+          var rmBtn = el('button', {
+            class: 'icon-btn offline-remove',
+            type: 'button',
+            title: 'Remove the local copy (' + sizeMB + ' MB)',
+            'aria-label': 'Remove offline copy',
+            onclick: async function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!confirm('Remove the local copy of this video?')) return;
+              await M.db.deleteVideo(tab, row.id);
+              if (row.offline) {
+                pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'offline', prevValue: row.offline });
+                row.offline = '';
+                row._updated = new Date().toISOString();
+                row._dirty = 1;
+                await M.db.upsertRow(tab, row);
+                schedulePush();
+              }
+              if (refresh) refresh();
+            }
+          });
+          rmBtn.appendChild(M.render.icon('trash-2'));
+          wrap.appendChild(watchBtn);
+          wrap.appendChild(rmBtn);
+        } else {
+          var saveBtn = el('button', {
+            class: 'btn btn-ghost offline-save',
+            type: 'button',
+            title: 'Save a video file from disk for offline playback',
+            onclick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              pickAndSaveOfflineFile(tab, row, refresh);
+            }
+          });
+          saveBtn.appendChild(M.render.icon('download'));
+          saveBtn.appendChild(document.createTextNode(' Save offline'));
+          wrap.appendChild(saveBtn);
+        }
+      }).catch(function () { /* db not yet open is fine */ });
+    }
+    paint();
+    return wrap;
+  }
+
+  function pickAndSaveOfflineFile(tab, row, refresh) {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/*,.mp4,.webm,.mkv,.mov';
+    input.style.display = 'none';
+    input.addEventListener('change', async function () {
+      var file = input.files && input.files[0];
+      input.remove();
+      if (!file) return;
+      // Soft cap — IndexedDB blobs work but multi-GB stores fight quota.
+      if (file.size > 2 * 1024 * 1024 * 1024) {
+        if (!confirm('This file is ' + (file.size / 1e9).toFixed(1) + ' GB. Saving very large videos can hit your browser\'s storage quota. Continue?')) return;
+      }
+      try {
+        await M.db.putVideo(tab, row.id, {
+          blob: file,
+          name: file.name,
+          mime: file.type || 'video/mp4',
+          size: file.size
+        });
+        // Mirror a tiny breadcrumb to the offline column so the spreadsheet
+        // reflects which rows are saved (the blob itself stays local).
+        var meta = await M.db.getMeta(tab);
+        if (meta && (meta.headers || []).indexOf('offline') >= 0) {
+          pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'offline', prevValue: row.offline });
+          row.offline = 'local · ' + (file.size ? (file.size / (1024 * 1024)).toFixed(1) + ' MB' : 'saved');
+          row._updated = new Date().toISOString();
+          row._dirty = 1;
+          await M.db.upsertRow(tab, row);
+          schedulePush();
+        }
+        flash(document.body, 'Saved offline: ' + file.name);
+        if (refresh) await refresh();
+      } catch (err) {
+        flash(document.body, 'Save failed: ' + (err && err.message ? err.message : err), 'error');
+      }
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  function playOfflineBlob(rec, row) {
+    if (!rec || !rec.blob) return;
+    var url = URL.createObjectURL(rec.blob);
+    if (M.preview && M.preview.showVideoBlob) {
+      M.preview.showVideoBlob({
+        url: url,
+        title: row.title || row.name || rec.name || 'Offline video',
+        sourceUrl: row.url || ''
+      });
+      return;
+    }
+    // Fallback: open directly in a new tab.
+    window.open(url, '_blank');
   }
 
   function startEdit(td, row, col, tab, refresh) {
@@ -6870,7 +7395,23 @@
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
     if (location.protocol === 'file:') return; // never registers from file://
-    navigator.serviceWorker.register('sw.js').catch(function (e) {
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      if (!reg) return;
+      // Eagerly check for an updated SW on every page load. When a new
+      // worker is found, it activates immediately (it ships with
+      // skipWaiting + clients.claim) and we trigger one transparent
+      // reload so the user gets fresh code without manual hard-refresh.
+      reg.update().catch(function () { /* offline is fine */ });
+      var refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (refreshing) return;
+        refreshing = true;
+        // Brief delay so any in-flight DOM work completes; then reload
+        // once. The new SW is now controlling all clients, so the next
+        // GET serves the fresh shell.
+        setTimeout(function () { location.reload(); }, 50);
+      });
+    }).catch(function (e) {
       console.warn('[Minerva sw]', e);
     });
   }

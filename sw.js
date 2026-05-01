@@ -1,16 +1,25 @@
 /* Minerva — service worker.
  *
- * Cache-first for the static shell so the app loads and runs without
- * network. API calls (accounts.google.com, sheets.googleapis.com,
- * www.googleapis.com, api.telegram.org, fonts.*, jsdelivr) pass through
- * untouched — Minerva's local IndexedDB is the offline data source.
+ * Strategy: **network-first for the app shell** (HTML / JS / CSS), with
+ * the cache as an offline fallback. We used to do stale-while-revalidate
+ * here, but that meant every deploy needed *two* page reloads before the
+ * user actually saw the new code: the first reload served the cached old
+ * version while the SW silently fetched the new one, and only the second
+ * reload picked it up. That's a footgun — the wrong default for a
+ * frequently-updated app — so we prefer fresh code when online and only
+ * fall back to cache when the network is unreachable.
  *
- * Bump CACHE_VERSION on any shipped change to force re-cache.
+ * API calls (accounts.google.com, sheets.googleapis.com, www.googleapis.com,
+ * api.telegram.org, fonts.*, jsdelivr) pass straight through — the SW
+ * never touches cross-origin requests.
+ *
+ * Bump CACHE_VERSION on any shipped change to invalidate stale caches
+ * left over from previous SW generations.
  */
 
 'use strict';
 
-var CACHE_VERSION = 'minerva-v40';
+var CACHE_VERSION = 'minerva-v42';
 var SHELL = [
   './',
   './index.html',
@@ -77,24 +86,22 @@ self.addEventListener('fetch', function (event) {
   // Only same-origin requests are served from cache. Everything else
   // (Google auth, Sheets/Drive APIs, Telegram, fonts, CDN libs) goes
   // straight to the network — those responses change too often or have
-  // auth/Cors implications we don't want to second-guess.
+  // auth/CORS implications we don't want to second-guess.
   if (url.origin !== location.origin) return;
 
   event.respondWith(
-    caches.match(req).then(function (cached) {
-      var fetcher = fetch(req).then(function (resp) {
-        if (resp && resp.ok) {
-          var cloned = resp.clone();
-          caches.open(CACHE_VERSION).then(function (c) {
-            try { c.put(req, cloned); } catch (e) { /* ignore */ }
-          });
-        }
-        return resp;
-      }).catch(function () { return cached; });
-
-      // stale-while-revalidate: hand back the cache if we have it; let
-      // the fetch update the cache in the background for next load.
-      return cached || fetcher;
+    fetch(req).then(function (resp) {
+      if (resp && resp.ok) {
+        var cloned = resp.clone();
+        caches.open(CACHE_VERSION).then(function (c) {
+          try { c.put(req, cloned); } catch (e) { /* ignore */ }
+        });
+      }
+      return resp;
+    }).catch(function () {
+      // Offline (or server unreachable). Fall back to whatever we cached
+      // last time the asset was reachable.
+      return caches.match(req);
     })
   );
 });

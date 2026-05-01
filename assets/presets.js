@@ -200,10 +200,10 @@
       slug: 'youtube',
       title: 'YouTube tracker',
       icon: 'youtube',
-      description: 'Track YouTube videos: title, channel, duration, watch state, rating. Paste a URL into the URL column and "+ Import → From URL" auto-fetches the title via oEmbed. Link cells render with a thumbnail; the eye button opens an inline player that walks prev/next through the section.',
+      description: 'Track YouTube videos with playlist grouping and offline support: title, channel, playlist, duration, watch state, rating. Paste a single video URL or a playlist URL (?list=… — needs a free Data API key in Settings) and Minerva enumerates every video, fetches durations, and groups videos by playlist. Each row gets Save offline (attach a downloaded mp4 — stored locally for distraction-free playback).',
       schema: {
-        headers: ['id','title','channel','url','duration','watched','watched_at','rating','tags','notes','_updated'],
-        types:   ['text','text','text','link','text','check','datetime','rating(0..5)','multiselect()','markdown','datetime']
+        headers: ['id','title','channel','playlist','url','duration','watched','watched_at','rating','tags','notes','offline','_updated'],
+        types:   ['text','text','text','text','link','text','check','datetime','rating(0..5)','multiselect()','markdown','text','datetime']
       },
       defaultSort: 'watched_at:desc'
     },
