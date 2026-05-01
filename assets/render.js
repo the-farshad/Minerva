@@ -253,6 +253,23 @@
       };
       a.appendChild(thumb);
       a.appendChild(document.createTextNode(host));
+      // Plain click on a YouTube cell plays inline. Modifier-click and
+      // middle-click still open the YouTube page in a new tab via the
+      // anchor's default behavior.
+      a.addEventListener('click', function (ev) {
+        if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button === 1) return;
+        if (!window.Minerva || !window.Minerva.preview) return;
+        ev.preventDefault();
+        var preview = window.Minerva.preview;
+        if (preview.showPlaylist && typeof preview.getPlaylistContext === 'function') {
+          var ctx = preview.getPlaylistContext(raw);
+          if (ctx && ctx.items && ctx.items.length > 1) {
+            preview.showPlaylist(ctx.items, ctx.startIndex || 0);
+            return;
+          }
+        }
+        preview.show(raw);
+      });
     } else {
       a.className = 'cell-link';
       a.appendChild(renderIcon('external-link'));

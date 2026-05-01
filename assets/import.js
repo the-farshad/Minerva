@@ -60,10 +60,14 @@
     var resp = await fetch('https://www.youtube.com/oembed?url=' + encodeURIComponent(s) + '&format=json');
     if (!resp.ok) throw new Error('YouTube ' + resp.status);
     var data = await resp.json();
+    var author = clean(data.author_name || '');
     return {
       kind: 'video',
       title: clean(data.title || ''),
-      authors: clean(data.author_name || ''),
+      // `authors` for the library preset (back-compat); `channel` for the
+      // youtube tracker preset; both populated so either schema picks it up.
+      authors: author,
+      channel: author,
       url: s,
       thumbnail: data.thumbnail_url || ''
     };
