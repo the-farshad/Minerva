@@ -446,7 +446,9 @@ footer a:hover { color: var(--fg); }
 
 .btn,
 button.btn {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--on-accent);
@@ -457,10 +459,12 @@ button.btn {
   font-weight: 500;
   cursor: pointer;
   text-decoration: none;
-  transition: background .12s, border-color .12s, transform .05s;
+  transition: background .12s, border-color .12s, transform .05s, color .12s;
+  white-space: nowrap;
 }
 .btn:hover { background: var(--accent-2); border-color: var(--accent-2); color: var(--on-accent); }
 .btn:active { transform: translateY(1px); }
+.btn-primary { /* alias: explicit primary intent — same styling as .btn */ }
 .btn-ghost {
   background: transparent;
   color: var(--accent);
@@ -469,8 +473,10 @@ button.btn {
 .btn-ghost:hover {
   color: var(--fg);
   border-color: var(--accent);
-  background: transparent;
+  background: var(--surface);
 }
+.btn .icon,
+.btn svg { flex-shrink: 0; }
 
 /* --- form ---------------------------------------------------- */
 
@@ -1714,8 +1720,30 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 .view-section-head-right {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
   flex-wrap: wrap;
+  /* Push the group-row controls (filter + pills) to one cluster on the
+     left, and the action buttons (import + add) to the right edge. */
+  justify-content: flex-end;
+}
+.view-section-head-right > .seg-mode,
+.view-section-head-right > .cal-nav,
+.view-section-head-right > .unwatched-toggle {
+  margin-right: 0.1rem;
+}
+/* Visual separator + breathing room before the action button cluster. */
+.view-section-head-right > .import-wrap {
+  margin-left: 0.4rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid var(--border);
+}
+.section-add-btn { margin-left: 0.15rem; }
+@media (max-width: 640px) {
+  .view-section-head-right > .import-wrap {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
 }
 .import-wrap {
   position: relative;
@@ -3714,6 +3742,70 @@ table.rows.rows-grouped tr.row-group-head td {
   background: #000;
   outline: none;
 }
+
+/* --- Cobalt download progress (bottom-right toast) -------------- */
+.cobalt-progress {
+  position: fixed;
+  right: 1rem;
+  bottom: 4rem;
+  z-index: 100;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 0.75rem 1rem;
+  min-width: 280px;
+  max-width: 360px;
+  font-size: 0.86rem;
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.cobalt-progress-label {
+  font-variant-numeric: tabular-nums;
+}
+.cobalt-progress-bar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.cobalt-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width .15s linear;
+}
+
+/* --- Add row modal --------------------------------------------- */
+.add-row-overlay { padding: 1.5rem 1rem; }
+.add-row-panel {
+  max-width: 640px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.add-row-panel .row-detail-grid {
+  margin-top: 0.25rem;
+}
+.add-row-input {
+  min-height: 2.4rem;
+}
+.add-row-input .editor {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Per-row offline upload icon button (when both Cobalt + manual options shown) */
+.icon-btn.offline-upload {
+  width: 1.7rem;
+  height: 1.7rem;
+}
+.icon-btn.offline-upload svg { width: 0.95em; height: 0.95em; }
 
 /* --- print --------------------------------------------------- */
 

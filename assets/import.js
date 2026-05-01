@@ -339,13 +339,24 @@
       } catch (e) { /* fall through */ }
     }
 
-    // YouTube playlist (only when an API key is configured). Both pure
-    // playlist URLs and watch+list URLs match here; the playlist branch
-    // wins over the single-video oEmbed when keyed. Errors are surfaced
-    // so the user knows why the playlist didn't enumerate.
-    if (/[?&]list=[\w-]+/.test(input) && ytApiKey()) {
-      var pl = await youtubePlaylistLookup(input);
-      if (pl) return pl;
+    // YouTube playlist. Both pure playlist URLs and watch+list URLs
+    // match. With an API key set, we enumerate every video; without one,
+    // we surface a structured "needs-key" sentinel so the URL Import
+    // modal can show a clear "set up API key" CTA instead of silently
+    // falling through to a single-video oEmbed (which is what made the
+    // user feel that "playlist doesn't work" — it kind of did, but only
+    // for one video at a time).
+    if (/[?&]list=[\w-]+/.test(input)) {
+      if (ytApiKey()) {
+        var pl = await youtubePlaylistLookup(input);
+        if (pl) return pl;
+      } else {
+        return {
+          kind: 'playlist-needs-key',
+          message: 'This URL contains a playlist (?list=…). To import every video automatically, set a free YouTube Data API v3 key in Settings → YouTube API key. Without it, we can only import the single video shown.',
+          url: input
+        };
+      }
     }
 
     // YouTube single video.
