@@ -19,7 +19,7 @@
 
 'use strict';
 
-var CACHE_VERSION = 'minerva-v42';
+var CACHE_VERSION = 'minerva-v44';
 var SHELL = [
   './',
   './index.html',
@@ -75,6 +75,17 @@ self.addEventListener('activate', function (event) {
         if (k !== CACHE_VERSION) return caches.delete(k);
       }));
     }).then(function () { return self.clients.claim(); })
+    .then(function () {
+      // Tell every page controlled by this worker that a fresh version is
+      // live, so they can reload themselves. Belt-and-braces alongside
+      // the controllerchange listener in app.js — covers the case where
+      // the in-page code didn't (yet) wire that listener up.
+      return self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+    }).then(function (clients) {
+      clients.forEach(function (c) {
+        try { c.postMessage({ type: 'minerva-sw-activated', version: CACHE_VERSION }); } catch (e) {}
+      });
+    })
   );
 });
 

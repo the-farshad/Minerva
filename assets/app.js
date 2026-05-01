@@ -1040,6 +1040,13 @@
       return;
     }
 
+    // No API key but playlist URL — surface guidance instead of silently
+    // falling through to a single-video import.
+    if (data.kind === 'playlist-needs-key') {
+      flash(document.body, data.message, 'error');
+      return;
+    }
+
     var changed = false;
     Object.keys(data).forEach(function (k) {
       if (k === 'kind') return;
@@ -1376,14 +1383,27 @@
     }
     var header = el('div', { class: 'view-section-head' });
     var meta1Span = el('span');
-    var addBtn = el('button', { class: 'btn', type: 'button' }, '+ Add row');
-    // Single 'Import ▾' control that opens a small menu with both
-    // import flows — keeps the section header tidy without removing
-    // either path.
+
+    // Section-specific primary action. For YouTube, the natural action
+    // is "Add video" (opens URL import) — never creating an empty row.
+    // For other sections, "Add row" opens a form modal so the user
+    // fills in fields before any row is created (no more empty junk).
+    var isYoutube = sec.slug === 'youtube';
+    var primaryLabel = isYoutube ? '+ Add video' : '+ Add row';
+    var addBtn = el('button', {
+      class: 'btn btn-primary section-add-btn',
+      type: 'button',
+      title: isYoutube ? 'Paste a YouTube video or playlist URL' : 'Open a form to add a new row'
+    });
+    addBtn.appendChild(M.render.icon(isYoutube ? 'youtube' : 'plus'));
+    addBtn.appendChild(document.createTextNode(' ' + (isYoutube ? 'Add video' : 'Add row')));
+
+    // Secondary import menu. For YouTube, only CSV/TSV (URL is the
+    // primary). For other sections, both URL and CSV.
     var importWrap = el('div', { class: 'import-wrap' });
     var importMenu = null;
     var importBtn = el('button', { class: 'btn btn-ghost', type: 'button',
-      title: 'Add rows: from URL (arXiv/YouTube), or paste CSV/TSV',
+      title: isYoutube ? 'Bulk import from CSV/TSV' : 'Add rows from URL or CSV/TSV',
       onclick: function (e) {
         e.stopPropagation();
         if (importMenu) { importMenu.remove(); importMenu = null; return; }
@@ -1397,7 +1417,9 @@
           );
           importMenu.appendChild(item);
         };
-        pick('From URL', 'arXiv id, YouTube URL, web page', function () { showUrlImport(sec.tab); });
+        if (!isYoutube) {
+          pick('From URL', 'arXiv id, YouTube URL, web page', function () { showUrlImport(sec.tab); });
+        }
         pick('Paste CSV / TSV', 'Bulk-import rows from a clipboard paste', function () { showCsvImport(sec.tab); });
         importWrap.appendChild(importMenu);
         var close = function (ev) {
@@ -1408,7 +1430,7 @@
         };
         setTimeout(function () { document.addEventListener('click', close); }, 0);
       }
-    }, 'Import ▾');
+    }, isYoutube ? 'CSV ▾' : 'Import ▾');
     importWrap.appendChild(importBtn);
     var modeToggle = el('div', { class: 'seg seg-mode' });
     var calNav = el('div', { class: 'cal-nav' });
@@ -2158,10 +2180,18 @@
         flash(view, 'No schema cached — Sync first.', 'error');
         return;
       }
-      await addRow(sec.tab, meta.headers);
+      // YouTube: jump straight to URL import. The user almost always
+      // adds videos by pasting a URL; an empty row is just noise.
+      if (isYoutube) {
+        showUrlImport(sec.tab);
+        return;
+      }
+      // Non-YouTube: open a form modal so the user fills in fields
+      // before any row is created. Cancel = no row. Save = row created
+      // with the values the user typed. No more empty junk rows.
       mode = 'list';
       writeViewMode(slug, 'list');
-      await refresh();
+      showAddRowForm(sec.tab, meta, function () { refresh(); });
     });
 
     // Wire j/k/e/x/c row-navigation when this view is the active route.
@@ -4412,19 +4442,41 @@
           wrap.appendChild(watchBtn);
           wrap.appendChild(rmBtn);
         } else {
+          var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
           var saveBtn = el('button', {
             class: 'btn btn-ghost offline-save',
             type: 'button',
-            title: 'Save a video file from disk for offline playback',
+            title: cobaltOk
+              ? 'Download via Cobalt for offline playback'
+              : 'Set up Cobalt in Settings, or pick a video file from disk',
             onclick: function (e) {
               e.preventDefault();
               e.stopPropagation();
-              pickAndSaveOfflineFile(tab, row, refresh);
+              if (cobaltOk && row.url) downloadOfflineViaCobalt(tab, row, refresh);
+              else pickAndSaveOfflineFile(tab, row, refresh);
             }
           });
           saveBtn.appendChild(M.render.icon('download'));
-          saveBtn.appendChild(document.createTextNode(' Save offline'));
+          saveBtn.appendChild(document.createTextNode(cobaltOk ? ' Download' : ' Save offline'));
           wrap.appendChild(saveBtn);
+          // Always offer the manual upload as a secondary option, even
+          // when Cobalt is configured — useful when the user already has
+          // a local copy or Cobalt is failing.
+          if (cobaltOk) {
+            var uploadBtn = el('button', {
+              class: 'icon-btn offline-upload',
+              type: 'button',
+              title: 'Upload an existing local video file instead',
+              'aria-label': 'Upload local video',
+              onclick: function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                pickAndSaveOfflineFile(tab, row, refresh);
+              }
+            });
+            uploadBtn.appendChild(M.render.icon('upload'));
+            wrap.appendChild(uploadBtn);
+          }
         }
       }).catch(function () { /* db not yet open is fine */ });
     }
@@ -4488,6 +4540,156 @@
     window.open(url, '_blank');
   }
 
+  // ---- Cobalt downloader -------------------------------------------
+  //
+  // Calls a Cobalt API instance (https://github.com/imputnet/cobalt) to
+  // resolve a YouTube URL to a CORS-safe download URL, then streams the
+  // bytes into IndexedDB as a Blob. Cobalt v10 protocol:
+  //   POST {endpoint}/    (some hosts accept /api/json — we send to /)
+  //   {
+  //     "url":           "<youtube url>",
+  //     "downloadMode":  "auto" | "audio" | "mute",
+  //     "videoQuality":  "144" | "240" | ... | "max",
+  //     "filenameStyle": "classic"
+  //   }
+  // Response: { "status": "tunnel" | "redirect" | "error" | "picker", "url": "..." }
+  // Tunnel URLs sit on Cobalt's own server and DO send CORS headers,
+  // so the browser can fetch them as Blobs. Redirect URLs go to
+  // googlevideo.com which doesn't allow CORS — those fail in browsers
+  // and we surface a clear error.
+  async function callCobalt(endpoint, apiKey, payload) {
+    var base = String(endpoint || '').replace(/\/+$/, '');
+    if (!base) throw new Error('Cobalt endpoint not configured');
+    var headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+    if (apiKey) headers['Authorization'] = 'Api-Key ' + apiKey;
+    var resp = await fetch(base + '/', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(payload)
+    });
+    var data;
+    try { data = await resp.json(); } catch (e) { data = null; }
+    if (!resp.ok) {
+      var msg = (data && (data.error && data.error.code || data.text)) || ('HTTP ' + resp.status);
+      throw new Error('Cobalt: ' + msg);
+    }
+    if (!data) throw new Error('Cobalt returned non-JSON');
+    if (data.status === 'error') {
+      throw new Error('Cobalt: ' + ((data.error && data.error.code) || data.text || 'unknown error'));
+    }
+    if (data.status === 'rate-limit') throw new Error('Cobalt rate-limited — wait or use a different instance');
+    if (data.status === 'picker') throw new Error('Cobalt returned a picker (multi-stream); not supported here yet');
+    if (data.status !== 'tunnel' && data.status !== 'redirect') {
+      throw new Error('Cobalt status: ' + data.status);
+    }
+    return data;
+  }
+
+  async function fetchAsBlobWithProgress(url, onProgress) {
+    var resp = await fetch(url);
+    if (!resp.ok) throw new Error('Download HTTP ' + resp.status);
+    var total = parseInt(resp.headers.get('Content-Length') || '0', 10) || 0;
+    if (!resp.body || !resp.body.getReader) {
+      // No streaming support — just fetch the whole blob.
+      return resp.blob();
+    }
+    var reader = resp.body.getReader();
+    var chunks = [];
+    var received = 0;
+    while (true) {
+      var step = await reader.read();
+      if (step.done) break;
+      chunks.push(step.value);
+      received += step.value.length;
+      if (onProgress) {
+        try { onProgress(received, total); } catch (e) {}
+      }
+    }
+    return new Blob(chunks, { type: resp.headers.get('Content-Type') || 'video/mp4' });
+  }
+
+  async function downloadOfflineViaCobalt(tab, row, refresh) {
+    if (!row.url) {
+      flash(document.body, 'No URL on this row to download.', 'error');
+      return;
+    }
+    var cfg = readConfig();
+    if (!cfg.cobaltEndpoint) {
+      flash(document.body, 'Set a Cobalt endpoint in Settings first.', 'error');
+      return;
+    }
+    var quality = (cfg.offlineQuality || '720');
+
+    // Show a progress flash with a cancel-on-Escape hint.
+    var progressBar = el('div', { class: 'cobalt-progress' },
+      el('span', { class: 'cobalt-progress-label' }, 'Resolving via Cobalt…'),
+      el('span', { class: 'cobalt-progress-bar' },
+        el('span', { class: 'cobalt-progress-fill' })
+      )
+    );
+    document.body.appendChild(progressBar);
+    var label = progressBar.querySelector('.cobalt-progress-label');
+    var fill = progressBar.querySelector('.cobalt-progress-fill');
+
+    function cleanup() { try { progressBar.remove(); } catch (e) {} }
+
+    try {
+      var result = await callCobalt(cfg.cobaltEndpoint, cfg.cobaltApiKey, {
+        url: row.url,
+        downloadMode: 'auto',
+        videoQuality: quality,
+        filenameStyle: 'classic'
+      });
+      if (result.status === 'redirect') {
+        // Browsers can't fetch googlevideo redirects (no CORS). Open it
+        // in a new tab so the user can save manually, and surface a
+        // suggestion to use a tunnel-mode instance.
+        cleanup();
+        flash(document.body,
+          'Cobalt returned a direct YouTube URL (CORS-blocked). The browser can\'t fetch it. Self-host Cobalt or use an instance that returns tunnel URLs.',
+          'error');
+        try { window.open(result.url, '_blank'); } catch (e) {}
+        return;
+      }
+      label.textContent = 'Downloading…';
+      var blob = await fetchAsBlobWithProgress(result.url, function (received, total) {
+        if (total > 0) {
+          var pct = Math.round(100 * received / total);
+          fill.style.width = pct + '%';
+          label.textContent = 'Downloading… ' + pct + '% (' + (received / (1024*1024)).toFixed(1) + ' / ' + (total / (1024*1024)).toFixed(1) + ' MB)';
+        } else {
+          label.textContent = 'Downloading… ' + (received / (1024*1024)).toFixed(1) + ' MB';
+        }
+      });
+      label.textContent = 'Saving locally…';
+      await M.db.putVideo(tab, row.id, {
+        blob: blob,
+        name: result.filename || 'video.mp4',
+        mime: blob.type || 'video/mp4',
+        size: blob.size
+      });
+      // Breadcrumb in the spreadsheet so other devices know it's local.
+      var meta = await M.db.getMeta(tab);
+      if (meta && (meta.headers || []).indexOf('offline') >= 0) {
+        pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'offline', prevValue: row.offline });
+        row.offline = 'cobalt · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB · ' + quality + 'p';
+        row._updated = new Date().toISOString();
+        row._dirty = 1;
+        await M.db.upsertRow(tab, row);
+        schedulePush();
+      }
+      cleanup();
+      flash(document.body, 'Downloaded ' + (blob.size / (1024*1024)).toFixed(1) + ' MB.');
+      if (refresh) await refresh();
+    } catch (err) {
+      cleanup();
+      var msg = (err && err.message) || String(err);
+      // Common failure mode: CORS / network. Offer the manual upload as
+      // a fallback so the user isn't stuck.
+      flash(document.body, 'Cobalt download failed: ' + msg + ' — try the upload button to pick a file manually.', 'error');
+    }
+  }
+
   function startEdit(td, row, col, tab, refresh) {
     if (td.classList.contains('editing')) return;
     var current = row[col.name];
@@ -4526,9 +4728,12 @@
       e.preventDefault();
       var f = new FormData(form);
       writeConfig({
-        clientId:      String(f.get('clientId') || '').trim(),
-        spreadsheetId: String(f.get('spreadsheetId') || '').trim(),
-        youtubeApiKey: String(f.get('youtubeApiKey') || '').trim()
+        clientId:        String(f.get('clientId') || '').trim(),
+        spreadsheetId:   String(f.get('spreadsheetId') || '').trim(),
+        youtubeApiKey:   String(f.get('youtubeApiKey') || '').trim(),
+        cobaltEndpoint:  String(f.get('cobaltEndpoint') || '').trim(),
+        cobaltApiKey:    String(f.get('cobaltApiKey') || '').trim(),
+        offlineQuality:  String(f.get('offlineQuality') || '720').trim()
       });
       flash(form, 'Saved locally.');
     } },
@@ -4548,7 +4753,31 @@
         el('input', { name: 'youtubeApiKey', type: 'password',
           placeholder: 'AIza…',
           value: cfg.youtubeApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
-        'Only needed for playlist imports. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.'
+        'Only needed for playlist imports + duration auto-fill. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.'
+      ),
+      field('Cobalt downloader endpoint (optional)',
+        el('input', { name: 'cobaltEndpoint', type: 'url',
+          placeholder: 'https://api.cobalt.tools/  or  https://your-cobalt.example.com/',
+          value: cfg.cobaltEndpoint || '', autocomplete: 'off', spellcheck: 'false' }),
+        'Enables the per-row "Save offline" button to actually download videos (instead of asking you to pick a file). Cobalt is a free open-source media downloader — github.com/imputnet/cobalt. Self-hosting is recommended; the public instance at api.cobalt.tools may rate-limit. Leave blank to fall back to manual file pick.'
+      ),
+      field('Cobalt API key (optional)',
+        el('input', { name: 'cobaltApiKey', type: 'password',
+          placeholder: 'leave blank for public/self-hosted Cobalt without auth',
+          value: cfg.cobaltApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
+        'Some self-hosted Cobalt instances require an API key (sent as the Authorization: Api-Key header). Stored locally only.'
+      ),
+      field('Offline video quality',
+        (function () {
+          var sel = el('select', { name: 'offlineQuality' });
+          ['144','240','360','480','720','1080','1440','2160','max'].forEach(function (q) {
+            var o = el('option', { value: q }, q === 'max' ? 'max (best available)' : q + 'p');
+            if (q === (cfg.offlineQuality || '720')) o.setAttribute('selected', '');
+            sel.appendChild(o);
+          });
+          return sel;
+        })(),
+        'Max video resolution to request from Cobalt. Higher = bigger file. 720p is a sensible default for laptop / phone playback.'
       ),
       el('div', { class: 'form-actions' },
         el('button', { class: 'btn', type: 'submit' }, 'Save'),
@@ -5915,6 +6144,112 @@
     return '';
   }
 
+  // ---- "+ Add row" form modal --------------------------------------
+  // For non-YouTube sections that don't have a natural URL workflow.
+  // Replaces the old behavior of dropping an empty row onto the table —
+  // the user fills in fields *first*, and the row is only created when
+  // they click Save. Cancel/Esc creates nothing.
+  async function showAddRowForm(tab, meta, onCreated) {
+    if (document.querySelector('.add-row-overlay')) return;
+    if (!meta || !meta.headers) {
+      flash(document.body, 'No schema cached — Sync first.', 'error');
+      return;
+    }
+    var draft = { id: M.db.ulid(), _localOnly: 1, _dirty: 1, _deleted: 0, _rowIndex: null };
+    meta.headers.forEach(function (h) {
+      if (h === 'id') return;
+      if (h === '_updated') draft[h] = new Date().toISOString();
+      else draft[h] = '';
+    });
+
+    var overlay = el('div', { class: 'modal-overlay add-row-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+    var panel = el('div', { class: 'modal-panel add-row-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    });
+
+    panel.appendChild(el('div', { class: 'row-detail-head' },
+      el('h3', null, 'Add row to ', el('code', null, tab)),
+      el('button', { class: 'icon-btn', type: 'button', title: 'Close',
+        onclick: function () { overlay.remove(); } }, '×')
+    ));
+    panel.appendChild(el('p', { class: 'small muted' },
+      'Fill in any fields you want. Empty fields stay blank. Click Save to create the row, or Cancel to discard.'
+    ));
+
+    var grid = el('div', { class: 'row-detail-grid' });
+    panel.appendChild(grid);
+
+    // First non-internal, non-id, non-_updated column gets autofocus.
+    var focusTarget = null;
+
+    meta.headers.forEach(function (h, i) {
+      if (M.render.isInternal(h)) return;
+      if (h === 'id') return;
+      var type = meta.types[i] || 'text';
+      var labelEl = el('div', { class: 'row-detail-label' }, h);
+      var valueEl = el('div', { class: 'row-detail-value add-row-input' });
+      var parsed = M.render.parseType(type);
+      // Drawing fields can't be filled inline before creation. Skip.
+      if (parsed.kind === 'drawing') {
+        valueEl.appendChild(el('span', { class: 'muted small' }, '— add later from row detail —'));
+        grid.appendChild(labelEl);
+        grid.appendChild(valueEl);
+        return;
+      }
+      var ed = M.editors.make('', type, function (v) { draft[h] = v; }, function () { /* cancel */ }, { tab: tab, rowId: draft.id, col: h });
+      valueEl.appendChild(ed);
+      grid.appendChild(labelEl);
+      grid.appendChild(valueEl);
+      if (!focusTarget && ed && (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA')) focusTarget = ed;
+    });
+
+    var saveBtn = el('button', { class: 'btn btn-primary', type: 'button',
+      onclick: async function () {
+        // Pull final values from any open editors so trailing edits land.
+        grid.querySelectorAll('input, textarea, select').forEach(function (n) {
+          var col = n.closest('.add-row-input') ? n.closest('.add-row-input').previousSibling.textContent : null;
+          if (!col) return;
+          if (n.type === 'checkbox') draft[col] = n.checked ? 'TRUE' : 'FALSE';
+          else if (draft[col] === '') draft[col] = n.value;
+        });
+        // Discard if nothing was actually filled in (other than auto fields).
+        var hasContent = meta.headers.some(function (h) {
+          if (h === 'id' || h === '_updated' || M.render.isInternal(h)) return false;
+          var v = draft[h];
+          return v != null && String(v).trim() !== '';
+        });
+        if (!hasContent) {
+          flash(panel, 'Fill at least one field before saving.', 'error');
+          return;
+        }
+        await M.db.upsertRow(tab, draft);
+        pushUndo({ kind: 'add', tab: tab, rowId: draft.id });
+        schedulePush();
+        overlay.remove();
+        flash(document.body, 'Added row to ' + tab + '.');
+        if (onCreated) onCreated();
+      }
+    }, 'Save');
+
+    panel.appendChild(el('div', { class: 'form-actions' },
+      saveBtn,
+      el('button', { class: 'btn btn-ghost', type: 'button',
+        onclick: function () { overlay.remove(); } }, 'Cancel')
+    ));
+
+    panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveBtn.click(); }
+    });
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    M.render.refreshIcons();
+    if (focusTarget) setTimeout(function () { try { focusTarget.focus(); } catch (e) {} }, 30);
+  }
+
   // ---- smart URL import modal (arXiv / YouTube / generic) ----
 
   async function showUrlImport(tab) {
@@ -5967,6 +6302,24 @@
           return;
         }
         fetched = data;
+
+        // No API key + playlist URL → surface a clear "set up your key"
+        // hint with a one-click jump to Settings, instead of silently
+        // falling through to a single-video import.
+        if (data.kind === 'playlist-needs-key') {
+          fetched = null; // disable Add button
+          preview.replaceChildren(el('div', { class: 'preview-needs-key' },
+            el('p', { class: 'small' }, data.message),
+            el('p', { class: 'small' },
+              el('a', {
+                href: '#/settings',
+                class: 'btn btn-ghost',
+                onclick: function () { overlay.remove(); }
+              }, M.render.icon('settings'), ' Open Settings')
+            )
+          ));
+          return;
+        }
 
         // Playlist branch — preview N items, "Import N videos" button.
         if (data.kind === 'playlist') {
@@ -7395,6 +7748,16 @@
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
     if (location.protocol === 'file:') return; // never registers from file://
+    var refreshing = false;
+    function reloadOnce(reason) {
+      if (refreshing) return;
+      refreshing = true;
+      console.log('[Minerva sw] reloading for fresh code:', reason);
+      // Tiny delay so any in-flight DOM work completes; then reload
+      // once. The new SW is now controlling all clients, so the next
+      // GET serves the fresh shell.
+      setTimeout(function () { location.reload(); }, 50);
+    }
     navigator.serviceWorker.register('sw.js').then(function (reg) {
       if (!reg) return;
       // Eagerly check for an updated SW on every page load. When a new
@@ -7402,17 +7765,20 @@
       // skipWaiting + clients.claim) and we trigger one transparent
       // reload so the user gets fresh code without manual hard-refresh.
       reg.update().catch(function () { /* offline is fine */ });
-      var refreshing = false;
       navigator.serviceWorker.addEventListener('controllerchange', function () {
-        if (refreshing) return;
-        refreshing = true;
-        // Brief delay so any in-flight DOM work completes; then reload
-        // once. The new SW is now controlling all clients, so the next
-        // GET serves the fresh shell.
-        setTimeout(function () { location.reload(); }, 50);
+        reloadOnce('controllerchange');
       });
     }).catch(function (e) {
       console.warn('[Minerva sw]', e);
+    });
+    // Belt-and-braces: the SW also broadcasts a message on activate. If
+    // controllerchange somehow doesn't fire in this browser, the message
+    // path still triggers the reload.
+    navigator.serviceWorker.addEventListener('message', function (e) {
+      var data = e && e.data;
+      if (data && data.type === 'minerva-sw-activated') {
+        reloadOnce('sw-message:' + (data.version || 'unknown'));
+      }
     });
   }
 
