@@ -29,6 +29,55 @@
     return String(s || '').trim().replace(/\s+/g, ' ');
   }
 
+  // ---- localStorage cache for YouTube Data API responses --------------
+  // Cuts quota use across repeated imports / refreshes. Three buckets:
+  //   pl.<listId>     — playlist enumeration (TTL: 6 hours)
+  //   dur.<videoId>   — duration string (no TTL — videos don't change length)
+  //   ch.<kind>.<val> — resolved channel { uploadsPlaylistId, ... } (TTL: 30d)
+  // Quota cap on individual entries (~200 KB) keeps a single huge playlist
+  // from blowing up localStorage. Soft-fail on quota errors.
+  var CACHE_PREFIX = 'minerva.ytcache.';
+  var CACHE_TTL_PLAYLIST = 6 * 60 * 60 * 1000;
+  var CACHE_TTL_CHANNEL  = 30 * 24 * 60 * 60 * 1000;
+  function cacheGet(key, ttlMs) {
+    var rec = cacheGetEntry(key, ttlMs);
+    return rec ? rec.value : null;
+  }
+  function cacheGetEntry(key, ttlMs) {
+    try {
+      var raw = localStorage.getItem(CACHE_PREFIX + key);
+      if (!raw) return null;
+      var rec = JSON.parse(raw);
+      if (!rec || typeof rec.t !== 'number') return null;
+      var age = Date.now() - rec.t;
+      if (ttlMs && age > ttlMs) {
+        try { localStorage.removeItem(CACHE_PREFIX + key); } catch (e) {}
+        return null;
+      }
+      return { value: rec.v, ageMs: age, ts: rec.t };
+    } catch (e) { return null; }
+  }
+  function cachePut(key, value) {
+    try {
+      var s = JSON.stringify({ t: Date.now(), v: value });
+      // Hard cap per entry — keeps a single absurd playlist from filling
+      // the 5MB localStorage budget.
+      if (s.length > 200000) return;
+      localStorage.setItem(CACHE_PREFIX + key, s);
+    } catch (e) { /* quota — non-fatal */ }
+  }
+  function cacheClear() {
+    try {
+      var keys = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(CACHE_PREFIX) === 0) keys.push(k);
+      }
+      keys.forEach(function (k) { localStorage.removeItem(k); });
+      return keys.length;
+    } catch (e) { return 0; }
+  }
+
   async function arxivLookup(input) {
     var s = String(input || '');
     var m = s.match(/(?:arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(?:v\d+)?/i);
@@ -85,15 +134,19 @@
       url: s,
       thumbnail: data.thumbnail_url || ''
     };
-    // If the user has set an API key, fetch the duration too. Free, one
-    // unit; oEmbed alone doesn't return duration so this is the cheapest
-    // way to populate the column.
+    // If the user has set an API key, fetch duration + publish date too.
+    // Free, one unit; oEmbed alone returns neither so this is the cheapest
+    // way to populate those columns for single-video imports.
     var apiKey = ytApiKey();
     var vid = videoIdOf(s);
     if (apiKey && vid) {
       try {
-        var durs = await fetchDurationsByIds([vid], apiKey);
-        if (durs[vid]) out.duration = durs[vid];
+        var details = await fetchVideoDetailsByIds([vid], apiKey);
+        var d = details[vid];
+        if (d) {
+          if (d.duration) out.duration = d.duration;
+          if (d.published) out.published = d.published;
+        }
       } catch (e) { /* non-fatal */ }
     }
     return out;
@@ -118,6 +171,119 @@
     return m ? m[1] : null;
   }
 
+  // Detect a YouTube channel URL. Returns one of:
+  //   { kind: 'handle',    value: 'mkbhd' }       — youtube.com/@mkbhd
+  //   { kind: 'channelId', value: 'UC...' }       — youtube.com/channel/UC...
+  //   { kind: 'username',  value: 'somename' }    — youtube.com/user/somename
+  //   { kind: 'custom',    value: 'somename' }    — youtube.com/c/somename
+  // or null when input isn't a channel URL.
+  function youtubeChannelTarget(input) {
+    var s = String(input || '').trim();
+    var m;
+    if ((m = s.match(/youtube\.com\/@([^\/?#]+)/i))) return { kind: 'handle', value: m[1] };
+    if ((m = s.match(/youtube\.com\/channel\/(UC[\w-]+)/i))) return { kind: 'channelId', value: m[1] };
+    if ((m = s.match(/youtube\.com\/user\/([^\/?#]+)/i))) return { kind: 'username', value: m[1] };
+    if ((m = s.match(/youtube\.com\/c\/([^\/?#]+)/i))) return { kind: 'custom', value: m[1] };
+    return null;
+  }
+
+  // Resolve a channel target to its uploads playlist id (UU...) using the
+  // Data API. Returns { uploadsPlaylistId, channelTitle, channelId } or
+  // throws on API error. /c/ "custom" URLs require search.list (heavier);
+  // we treat them like a handle lookup (forHandle takes the slug too) and
+  // fall back to search if that fails.
+  async function resolveChannelToUploads(target, apiKey) {
+    if (!target || !apiKey) return null;
+    var cacheKey = 'ch.' + target.kind + '.' + target.value;
+    var cached = cacheGet(cacheKey, CACHE_TTL_CHANNEL);
+    if (cached) return cached;
+    var qs = '';
+    if (target.kind === 'channelId') {
+      qs = 'id=' + encodeURIComponent(target.value);
+    } else if (target.kind === 'handle') {
+      qs = 'forHandle=' + encodeURIComponent('@' + target.value);
+    } else if (target.kind === 'username') {
+      qs = 'forUsername=' + encodeURIComponent(target.value);
+    } else if (target.kind === 'custom') {
+      // Try forHandle first — many /c/slugs are also valid handles.
+      qs = 'forHandle=' + encodeURIComponent('@' + target.value);
+    }
+    var url = 'https://www.googleapis.com/youtube/v3/channels'
+      + '?part=snippet,contentDetails&' + qs
+      + '&key=' + encodeURIComponent(apiKey);
+    var resp = await fetch(url);
+    if (!resp.ok) {
+      var body = await resp.text().catch(function () { return ''; });
+      var err;
+      if (body && body.indexOf('quotaExceeded') >= 0) {
+        err = 'YouTube API quota exceeded for today.';
+      } else if (resp.status === 400 || resp.status === 401 || resp.status === 403) {
+        err = 'YouTube API ' + resp.status + ': check your API key in Settings.';
+      } else {
+        err = 'YouTube API ' + resp.status + ': ' + body.slice(0, 200);
+      }
+      throw new Error(err);
+    }
+    var json = await resp.json();
+    var first = (json.items || [])[0];
+    if (!first) {
+      // /c/ "custom" URLs don't always resolve via forHandle. Fall back
+      // to search.list (100 quota units) to find the channel by name.
+      if (target.kind === 'custom') {
+        var sUrl = 'https://www.googleapis.com/youtube/v3/search'
+          + '?part=snippet&type=channel&maxResults=1&q=' + encodeURIComponent(target.value)
+          + '&key=' + encodeURIComponent(apiKey);
+        var sResp = await fetch(sUrl);
+        if (!sResp.ok) throw new Error('YouTube channel search failed: ' + sResp.status);
+        var sJson = await sResp.json();
+        var sFirst = (sJson.items || [])[0];
+        if (!sFirst || !sFirst.snippet) throw new Error('Channel not found: ' + target.value);
+        var foundId = sFirst.snippet.channelId || (sFirst.id && sFirst.id.channelId);
+        if (!foundId) throw new Error('Channel not found: ' + target.value);
+        return resolveChannelToUploads({ kind: 'channelId', value: foundId }, apiKey);
+      }
+      throw new Error('Channel not found: ' + target.value);
+    }
+    var uploads = first.contentDetails
+      && first.contentDetails.relatedPlaylists
+      && first.contentDetails.relatedPlaylists.uploads;
+    if (!uploads) throw new Error('Channel has no uploads playlist.');
+    var resolved = {
+      uploadsPlaylistId: uploads,
+      channelTitle: clean((first.snippet && first.snippet.title) || ''),
+      channelId: first.id || ''
+    };
+    cachePut(cacheKey, resolved);
+    return resolved;
+  }
+
+  // Convenience: from a channel URL straight to a playlist enumeration
+  // result. Reuses youtubePlaylistLookup() under the hood, then rewrites
+  // the playlistTitle to the channel title (more meaningful than "Uploads
+  // from Foo").
+  async function youtubeChannelLookup(input, opts) {
+    opts = opts || {};
+    var apiKey = opts.apiKey || ytApiKey();
+    if (!apiKey) return null;
+    var target = youtubeChannelTarget(input);
+    if (!target) return null;
+    if (opts.noCache) {
+      try { localStorage.removeItem(CACHE_PREFIX + 'ch.' + target.kind + '.' + target.value); } catch (e) {}
+    }
+    var resolved = await resolveChannelToUploads(target, apiKey);
+    if (!resolved) return null;
+    var fakePlaylistUrl = 'https://www.youtube.com/playlist?list=' + resolved.uploadsPlaylistId;
+    var pl = await youtubePlaylistLookup(fakePlaylistUrl, { apiKey: apiKey, noCache: opts.noCache });
+    if (!pl) return null;
+    var title = resolved.channelTitle || pl.playlistTitle;
+    pl.kind = 'channel';
+    pl.channelId = resolved.channelId;
+    pl.channelTitle = resolved.channelTitle;
+    pl.playlistTitle = title;
+    pl.items.forEach(function (it) { if (title) it.playlist = title; });
+    return pl;
+  }
+
   // Cap on items per playlist import. The free YouTube Data API v3 quota
   // is 10,000 units/day; playlistItems.list costs 1 unit/page (50 items),
   // so 200 items = ~4 units per import. Twenty-five imports ~ 100 units.
@@ -136,27 +302,56 @@
     return mn + ':' + String(s).padStart(2, '0');
   }
 
-  // videos.list?part=contentDetails for up to 50 ids per call. Returns a
-  // map { videoId: 'mm:ss' }. Costs 1 quota unit per call.
-  async function fetchDurationsByIds(ids, apiKey) {
+  // videos.list for up to 50 ids per call. Returns a map keyed by videoId
+  // with { duration, published }. Costs 1 quota unit per call (parts are
+  // free of additional units). Per-id localStorage cache so re-importing
+  // skips the API for already-known videos.
+  async function fetchVideoDetailsByIds(ids, apiKey) {
     var out = {};
-    if (!apiKey) return out;
-    for (var off = 0; off < ids.length; off += 50) {
-      var batch = ids.slice(off, off + 50);
+    if (!apiKey || !ids || !ids.length) return out;
+    var miss = [];
+    ids.forEach(function (id) {
+      var cached = cacheGet('dur.' + id, 0);
+      if (cached && typeof cached === 'object') {
+        out[id] = cached;
+      } else if (cached) {
+        // Legacy cache entries stored just the duration string. Keep them
+        // working but treat as missing the published field.
+        out[id] = { duration: cached, published: '' };
+      } else {
+        miss.push(id);
+      }
+    });
+    for (var off = 0; off < miss.length; off += 50) {
+      var batch = miss.slice(off, off + 50);
       var url = 'https://www.googleapis.com/youtube/v3/videos'
-        + '?part=contentDetails&id=' + encodeURIComponent(batch.join(','))
+        + '?part=contentDetails,snippet&id=' + encodeURIComponent(batch.join(','))
         + '&key=' + encodeURIComponent(apiKey);
       var resp = await fetch(url);
       if (!resp.ok) {
-        // Non-fatal — durations are nice-to-have. Bail this batch only.
+        // Non-fatal — details are nice-to-have. Bail this batch only.
         continue;
       }
       var json = await resp.json();
       (json.items || []).forEach(function (it) {
         var d = isoToDuration(it.contentDetails && it.contentDetails.duration);
-        if (d) out[it.id] = d;
+        var p = (it.snippet && it.snippet.publishedAt) || '';
+        var rec = { duration: d || '', published: p ? String(p).slice(0, 10) : '' };
+        out[it.id] = rec;
+        cachePut('dur.' + it.id, rec);
       });
     }
+    return out;
+  }
+
+  // Backwards-compatible alias — old callers expected a flat
+  // { videoId: 'mm:ss' } map. Wraps fetchVideoDetailsByIds and unwraps.
+  async function fetchDurationsByIds(ids, apiKey) {
+    var details = await fetchVideoDetailsByIds(ids, apiKey);
+    var out = {};
+    Object.keys(details).forEach(function (k) {
+      if (details[k] && details[k].duration) out[k] = details[k].duration;
+    });
     return out;
   }
 
@@ -186,6 +381,14 @@
     if (!apiKey) return null;
     var listId = youtubePlaylistId(input);
     if (!listId) return null;
+    if (!opts.noCache) {
+      var cachedEntry = cacheGetEntry('pl.' + listId, CACHE_TTL_PLAYLIST);
+      if (cachedEntry) {
+        var hit = cachedEntry.value;
+        hit._cachedAgeMs = cachedEntry.ageMs;
+        return hit;
+      }
+    }
     var out = [];
     var pageToken = '';
     var truncated = false;
@@ -221,12 +424,17 @@
         if (title === 'Deleted video' || title === 'Private video') return;
         var thumbs = sn.thumbnails || {};
         var t = thumbs.medium || thumbs.high || thumbs.default || {};
+        // playlistItems gives us snippet.publishedAt (when added to the
+        // playlist) and videoPublishedAt (when uploaded). Prefer the upload
+        // date — that's what users mean by "when was this video published".
+        var pub = sn.videoPublishedAt || sn.publishedAt || '';
         out.push({
           title: title,
           channel: clean(sn.videoOwnerChannelTitle || sn.channelTitle || ''),
           url: 'https://www.youtube.com/watch?v=' + rid.videoId,
           thumbnail: t.url || '',
-          videoId: rid.videoId
+          videoId: rid.videoId,
+          published: pub ? String(pub).slice(0, 10) : ''
         });
       });
       if (!json.nextPageToken) break;
@@ -240,20 +448,25 @@
     }
 
     // Fan-out fetches for the playlist's title (used as a subcategory) and
-    // every video's duration. Both run in parallel; failure is non-fatal.
+    // every video's duration + publish date. Both run in parallel; failure
+    // is non-fatal.
     var ids = out.map(function (x) { return x.videoId; }).filter(Boolean);
     var titlePromise = fetchPlaylistTitle(listId, apiKey);
-    var durPromise  = fetchDurationsByIds(ids, apiKey);
+    var detailPromise = fetchVideoDetailsByIds(ids, apiKey);
     var playlistTitle = '';
     try { playlistTitle = await titlePromise; } catch (e) { /* ignore */ }
-    var durations = {};
-    try { durations = await durPromise; } catch (e) { /* ignore */ }
+    var details = {};
+    try { details = await detailPromise; } catch (e) { /* ignore */ }
     out.forEach(function (it) {
-      it.duration = durations[it.videoId] || '';
+      var d = details[it.videoId] || {};
+      it.duration = d.duration || '';
+      // Prefer the upload date from videos.list (more reliable than the
+      // playlist snippet's videoPublishedAt, which can be stale).
+      if (d.published && !it.published) it.published = d.published;
       if (playlistTitle) it.playlist = playlistTitle;
     });
 
-    return {
+    var result = {
       kind: 'playlist',
       playlistId: listId,
       playlistTitle: playlistTitle,
@@ -261,6 +474,8 @@
       truncated: truncated,
       max: MAX_PLAYLIST_ITEMS
     };
+    cachePut('pl.' + listId, result);
+    return result;
   }
 
   async function doiLookup(input) {
@@ -319,7 +534,8 @@
     return out;
   }
 
-  async function lookup(input) {
+  async function lookup(input, opts) {
+    opts = opts || {};
     input = String(input || '').trim();
     if (!input) return null;
 
@@ -348,12 +564,29 @@
     // for one video at a time).
     if (/[?&]list=[\w-]+/.test(input)) {
       if (ytApiKey()) {
-        var pl = await youtubePlaylistLookup(input);
+        var pl = await youtubePlaylistLookup(input, { noCache: !!opts.noCache });
         if (pl) return pl;
       } else {
         return {
           kind: 'playlist-needs-key',
           message: 'This URL contains a playlist (?list=…). To import every video automatically, set a free YouTube Data API v3 key in Settings → YouTube API key. Without it, we can only import the single video shown.',
+          url: input
+        };
+      }
+    }
+
+    // YouTube channel — @handle, /channel/UC..., /c/, /user/.
+    // Same key-required model as playlists: with a key we enumerate the
+    // uploads playlist; without one, we surface a clear "needs-key" hint.
+    var chTarget = youtubeChannelTarget(input);
+    if (chTarget) {
+      if (ytApiKey()) {
+        var ch = await youtubeChannelLookup(input, { noCache: !!opts.noCache });
+        if (ch) return ch;
+      } else {
+        return {
+          kind: 'channel-needs-key',
+          message: 'This is a YouTube channel URL. To import every video, set a free YouTube Data API v3 key in Settings → YouTube API key.',
           url: input
         };
       }
@@ -383,7 +616,11 @@
     youtubePlaylist: youtubePlaylistLookup,
     youtubePlaylistId: youtubePlaylistId,
     youtubeVideoId: videoIdOf,
+    youtubeChannel: youtubeChannelLookup,
+    youtubeChannelTarget: youtubeChannelTarget,
+    clearYoutubeCache: cacheClear,
     fetchDurationsByIds: fetchDurationsByIds,
+    fetchVideoDetailsByIds: fetchVideoDetailsByIds,
     fetchPlaylistTitle: fetchPlaylistTitle,
     isoToDuration: isoToDuration,
     ytApiKey: ytApiKey,

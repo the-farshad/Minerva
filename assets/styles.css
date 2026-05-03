@@ -1836,6 +1836,38 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   border-color: var(--accent-2);
 }
 
+.category-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.4rem 0 0.8rem;
+}
+.category-chip {
+  appearance: none;
+  font: inherit;
+  font-size: 0.78rem;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.18rem 0.65rem;
+  cursor: pointer;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.category-chip:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.category-chip.is-active {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.category-chip.is-active:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
 /* saved views */
 .saved-views {
   display: flex;
@@ -2829,6 +2861,8 @@ table.kv tbody tr:hover { background: var(--surface); }
 
 /* URL smart import */
 .url-import-panel { max-width: 640px; }
+.url-import-panel input.editor { display: block; width: 100%; margin-bottom: 0.8rem; }
+.url-import-panel .form-actions { margin-top: 1rem; }
 .url-import-preview {
   margin: 0.6rem 0;
   font-size: 0.88rem;
@@ -2892,6 +2926,14 @@ table.kv tbody tr:hover { background: var(--surface); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.url-import-cache-line { margin: 0; }
+.url-import-refresh {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+.url-import-refresh:hover { text-decoration-style: solid; }
 
 /* CSV import */
 .csv-panel { max-width: 720px; }
@@ -3722,6 +3764,12 @@ table.rows.rows-grouped tr.row-group-head td {
   background: var(--accent);
   color: var(--on-accent);
 }
+.icon-btn.row-unwatch {
+  color: var(--muted);
+  margin-left: 0.15rem;
+}
+.icon-btn.row-unwatch:hover { color: var(--accent); }
+.icon-btn.row-unwatch svg { width: 0.95em; height: 0.95em; }
 .icon-btn.offline-remove {
   width: 1.7rem;
   height: 1.7rem;

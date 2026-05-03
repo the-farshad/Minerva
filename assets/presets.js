@@ -50,20 +50,20 @@
       slug: 'books',
       title: 'Books',
       icon: 'book',
-      description: 'Books you\'re reading or have finished, with start/finish dates and a rating.',
+      description: 'Books you\'re reading or have finished, with start/finish dates, category, and a rating.',
       schema: {
-        headers: ['id','title','author','started','finished','rating','notes','_updated'],
-        types:   ['text','text','text','date','date','rating(0..5)','markdown','datetime']
+        headers: ['id','title','author','category','started','finished','rating','notes','_updated'],
+        types:   ['text','text','text','select(fiction,non-fiction,biography,history,science,philosophy,technical,reference,poetry,other)','date','date','rating(0..5)','markdown','datetime']
       }
     },
     {
       slug: 'films',
       title: 'Films',
       icon: 'film',
-      description: 'Films watched with date, rating, and notes.',
+      description: 'Films watched with date, category, rating, and notes.',
       schema: {
-        headers: ['id','title','watched','rating','notes','_updated'],
-        types:   ['text','text','date','rating(0..5)','markdown','datetime']
+        headers: ['id','title','category','watched','rating','notes','_updated'],
+        types:   ['text','text','select(drama,comedy,action,thriller,sci-fi,horror,documentary,animation,romance,other)','date','rating(0..5)','markdown','datetime']
       },
       defaultSort: 'watched:desc'
     },
@@ -82,10 +82,10 @@
       slug: 'papers',
       title: 'Papers',
       icon: 'file-text',
-      description: 'Research papers — title, authors, year, URL, read flag, notes.',
+      description: 'Research papers — title, authors, year, URL, category, tags, read flag, notes.',
       schema: {
-        headers: ['id','title','authors','year','url','read','notes','_updated'],
-        types:   ['text','text','text','number','link','check','markdown','datetime']
+        headers: ['id','title','authors','year','url','category','tags','read','notes','_updated'],
+        types:   ['text','text','text','number','link','select(method,review,dataset,benchmark,position,survey,theory,application,other)','multiselect()','check','markdown','datetime']
       }
     },
     {
@@ -113,10 +113,10 @@
       slug: 'recipes',
       title: 'Recipes',
       icon: 'chef-hat',
-      description: 'Recipes worth keeping — ingredients + steps as markdown.',
+      description: 'Recipes worth keeping — meal category, tags, ingredients + steps as markdown.',
       schema: {
-        headers: ['id','title','tags','ingredients','steps','_updated'],
-        types:   ['text','text','multiselect()','longtext','markdown','datetime']
+        headers: ['id','title','category','tags','ingredients','steps','_updated'],
+        types:   ['text','text','select(breakfast,lunch,dinner,snack,dessert,drink,sauce,baking,other)','multiselect()','longtext','markdown','datetime']
       }
     },
     {
@@ -202,10 +202,10 @@
       icon: 'youtube',
       description: 'Track YouTube videos with playlist grouping and offline support: title, channel, playlist, duration, watch state, rating. Paste a single video URL or a playlist URL (?list=… — needs a free Data API key in Settings) and Minerva enumerates every video, fetches durations, and groups videos by playlist. Each row gets Save offline (attach a downloaded mp4 — stored locally for distraction-free playback).',
       schema: {
-        headers: ['id','title','channel','playlist','url','duration','watched','watched_at','rating','tags','notes','offline','_updated'],
-        types:   ['text','text','text','text','link','text','check','datetime','rating(0..5)','multiselect()','markdown','text','datetime']
+        headers: ['id','title','channel','playlist','category','url','duration','published','watched','watched_at','rating','tags','notes','offline','_updated'],
+        types:   ['text','text','text','text','select(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)','link','text','date','check','datetime','rating(0..5)','multiselect()','markdown','text','datetime']
       },
-      defaultSort: 'watched_at:desc'
+      defaultSort: 'published:desc'
     },
     {
       slug: 'proposals',

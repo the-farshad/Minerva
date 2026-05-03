@@ -48,10 +48,20 @@
     return iframe;
   }
 
+  // Delay before dispatching minerva:videoplay (which auto-marks watched).
+  // Gives the user a few seconds to bail out if they opened the wrong video
+  // or just wanted to glance at the title — closing or skipping within the
+  // window cancels the mark.
+  var WATCH_MARK_DELAY_MS = 8000;
+
   function openModal(items, startIndex) {
     if (document.querySelector('.preview-overlay')) return;
 
     var idx = Math.max(0, Math.min(items.length - 1, startIndex || 0));
+    var watchTimer = null;
+    function clearWatchTimer() {
+      if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; }
+    }
 
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay preview-overlay';
@@ -164,12 +174,16 @@
         frameHost.appendChild(note);
       }
       // Notify any listener that a URL is being played — the section view
-      // uses this to auto-mark a matching row as watched.
-      try {
-        window.dispatchEvent(new CustomEvent('minerva:videoplay', {
-          detail: { url: url, isYouTube: isYt }
-        }));
-      } catch (e) { /* ignore */ }
+      // uses this to auto-mark a matching row as watched. Delayed so a
+      // quick glance / wrong-video click doesn't immediately flip the row.
+      clearWatchTimer();
+      watchTimer = setTimeout(function () {
+        try {
+          window.dispatchEvent(new CustomEvent('minerva:videoplay', {
+            detail: { url: url, isYouTube: isYt }
+          }));
+        } catch (e) { /* ignore */ }
+      }, WATCH_MARK_DELAY_MS);
 
       if (prevBtn) prevBtn.disabled = idx <= 0;
       if (nextBtn) nextBtn.disabled = idx >= items.length - 1;
@@ -186,6 +200,7 @@
     }
 
     function close() {
+      clearWatchTimer();
       overlay.remove();
       document.removeEventListener('keydown', onKey);
     }
@@ -286,14 +301,18 @@
     document.body.appendChild(overlay);
 
     // Surface the same auto-watch event so the section view can flip
-    // watched=TRUE the same way as embedded YouTube playback.
-    try {
-      window.dispatchEvent(new CustomEvent('minerva:videoplay', {
-        detail: { url: opts.sourceUrl || opts.url, isYouTube: !!(opts.sourceUrl && /youtube\.com|youtu\.be/i.test(opts.sourceUrl)), offline: true }
-      }));
-    } catch (e) { /* ignore */ }
+    // watched=TRUE the same way as embedded YouTube playback. Delayed so
+    // a quick close doesn't accidentally mark the row watched.
+    var blobWatchTimer = setTimeout(function () {
+      try {
+        window.dispatchEvent(new CustomEvent('minerva:videoplay', {
+          detail: { url: opts.sourceUrl || opts.url, isYouTube: !!(opts.sourceUrl && /youtube\.com|youtu\.be/i.test(opts.sourceUrl)), offline: true }
+        }));
+      } catch (e) { /* ignore */ }
+    }, WATCH_MARK_DELAY_MS);
 
     function close() {
+      if (blobWatchTimer) { clearTimeout(blobWatchTimer); blobWatchTimer = null; }
       try { video.pause(); } catch (e) { /* ignore */ }
       try { URL.revokeObjectURL(opts.url); } catch (e) { /* ignore */ }
       overlay.remove();

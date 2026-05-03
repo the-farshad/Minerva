@@ -1028,21 +1028,21 @@
     var row = await M.db.getRow(tab, rowId);
     if (!row) return;
 
-    // Playlist branch: enumerate every video and add a row per video.
+    // Playlist / channel branch: enumerate every video and add a row per video.
     // The pasted-into row receives item 0 (so the user keeps the row they
     // were editing); items 1..N-1 become new rows.
-    if (data.kind === 'playlist') {
+    if (data.kind === 'playlist' || data.kind === 'channel') {
       try {
         await importYoutubePlaylist(tab, data, row);
       } catch (e) {
-        flash(document.body, 'Playlist import failed: ' + ((e && e.message) || e), 'error');
+        flash(document.body, (data.kind === 'channel' ? 'Channel' : 'Playlist') + ' import failed: ' + ((e && e.message) || e), 'error');
       }
       return;
     }
 
-    // No API key but playlist URL — surface guidance instead of silently
-    // falling through to a single-video import.
-    if (data.kind === 'playlist-needs-key') {
+    // No API key but playlist / channel URL — surface guidance instead of
+    // silently falling through to a single-video import.
+    if (data.kind === 'playlist-needs-key' || data.kind === 'channel-needs-key') {
       flash(document.body, data.message, 'error');
       return;
     }
@@ -1077,6 +1077,21 @@
     var meta = await M.db.getMeta(tab);
     if (!meta || !meta.headers) return;
 
+    // Build a set of URLs already present in this section so re-importing
+    // a playlist / channel only adds new videos. Treat sourceRow as
+    // already-present so the paste-into-row branch doesn't duplicate item 0.
+    var existingUrls = new Set();
+    if (meta.headers.indexOf('url') >= 0) {
+      var existingRows = await M.db.getAllRows(tab);
+      existingRows.forEach(function (r) {
+        if (r._deleted) return;
+        if (sourceRow && r.id === sourceRow.id) return;
+        var u = r.url && String(r.url).trim();
+        if (u) existingUrls.add(u);
+      });
+    }
+    var skipped = 0;
+
     var startIdx = 0;
     if (sourceRow) {
       var first = items[0];
@@ -1100,8 +1115,11 @@
       startIdx = 1;
     }
 
+    var addedCount = 0;
     for (var i = startIdx; i < items.length; i++) {
       var item = items[i];
+      var itemUrl = item.url && String(item.url).trim();
+      if (itemUrl && existingUrls.has(itemUrl)) { skipped++; continue; }
       var newRow = await addRow(tab, meta.headers);
       Object.keys(item).forEach(function (k) {
         if (k === 'videoId') return;
@@ -1117,12 +1135,24 @@
       newRow._updated = new Date().toISOString();
       newRow._dirty = 1;
       await M.db.upsertRow(tab, newRow);
+      if (itemUrl) existingUrls.add(itemUrl);
+      addedCount++;
     }
     schedulePush();
-    var added = items.length - startIdx;
-    flash(document.body, 'Imported ' + items.length + ' video' + (items.length === 1 ? '' : 's')
-      + ' from playlist' + (data.truncated ? ' (capped at ' + data.max + ')' : '')
-      + (sourceRow ? ' — ' + added + ' new row' + (added === 1 ? '' : 's') : ''));
+    var srcLabel = data.kind === 'channel'
+      ? 'channel' + (data.channelTitle ? ' ' + data.channelTitle : '')
+      : 'playlist';
+    var msg;
+    if (addedCount === 0 && skipped > 0) {
+      msg = 'Already up to date — ' + skipped + ' video' + (skipped === 1 ? '' : 's')
+        + ' from ' + srcLabel + ' already in section.';
+    } else {
+      msg = 'Imported ' + addedCount + ' video' + (addedCount === 1 ? '' : 's')
+        + ' from ' + srcLabel
+        + (data.truncated ? ' (capped at ' + data.max + ')' : '')
+        + (skipped > 0 ? ' — skipped ' + skipped + ' already in section' : '');
+    }
+    flash(document.body, msg);
     try { if (typeof route === 'function') await route(); } catch (e) { /* ignore */ }
   }
 
@@ -1325,6 +1355,20 @@
     } catch (e) { /* ignore */ }
   }
 
+  function readCategoryFilter(slug) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.category') || '{}');
+      return raw[slug] || '';
+    } catch (e) { return ''; }
+  }
+  function writeCategoryFilter(slug, value) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.category') || '{}');
+      if (value) raw[slug] = value; else delete raw[slug];
+      localStorage.setItem('minerva.section.category', JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+
   function readSort(slug) {
     try {
       var raw = JSON.parse(localStorage.getItem('minerva.section.sort') || '{}');
@@ -1472,6 +1516,12 @@
 
     var bulkBar = el('div', { class: 'bulk-bar', hidden: true });
     view.appendChild(bulkBar);
+
+    // Category chip-bar — shown only when section has a `category` column
+    // AND at least one row has a non-empty value. Populated in refresh().
+    var categoryFilter = readCategoryFilter(slug);
+    var categoryBar = el('div', { class: 'category-bar', hidden: true });
+    view.appendChild(categoryBar);
 
     // Per-section chart strip — currently only the tasks section.
     // Slice B-3 will add charts for goals/projects.
@@ -1894,11 +1944,17 @@
       // columns. Auto-extend the schema (single Sheets API call) so
       // playlist grouping and offline storage start working without the
       // user having to delete + re-add the section.
-      if (sec.slug === 'youtube' && meta && meta.headers) {
+      var upgrader = null;
+      if (sec.slug === 'youtube') upgrader = maybeUpgradeYoutubeSchema;
+      else if (sec.slug === 'papers') upgrader = maybeUpgradePapersSchema;
+      else if (sec.slug === 'books') upgrader = maybeUpgradeBooksSchema;
+      else if (sec.slug === 'films') upgrader = maybeUpgradeFilmsSchema;
+      else if (sec.slug === 'recipes') upgrader = maybeUpgradeRecipesSchema;
+      if (upgrader && meta && meta.headers) {
         try {
-          var changed = await maybeUpgradeYoutubeSchema(meta);
+          var changed = await upgrader(meta);
           if (changed) { meta = await M.db.getMeta(sec.tab); lastMeta = meta; }
-        } catch (e) { console.warn('[Minerva yt-upgrade]', e); }
+        } catch (e) { console.warn('[Minerva ' + sec.slug + '-upgrade]', e); }
       }
       var allRows = await M.db.getAllRows(sec.tab);
       var visible = allRows.filter(function (r) { return !r._deleted; });
@@ -1933,6 +1989,60 @@
         filtered = filtered.filter(function (r) {
           return String(r.watched || '').toUpperCase() !== 'TRUE';
         });
+      }
+
+      // Category chip-bar — driven by the first matching column in the
+      // section schema: `category` is canonical; `kind` is the legacy name
+      // used by Workouts. Populated from unique non-empty values across
+      // sorted rows. Click chip → filter; click again or "All" → clear.
+      var headers0 = (meta && meta.headers) || [];
+      var catCol = headers0.indexOf('category') >= 0 ? 'category'
+        : (headers0.indexOf('kind') >= 0 ? 'kind' : '');
+      if (catCol) {
+        var seen = Object.create(null);
+        var cats = [];
+        sorted.forEach(function (r) {
+          var v = r[catCol] && String(r[catCol]).trim();
+          if (!v || seen[v]) return;
+          seen[v] = 1;
+          cats.push(v);
+        });
+        categoryBar.replaceChildren();
+        if (cats.length) {
+          categoryBar.hidden = false;
+          var allChip = el('button', {
+            type: 'button',
+            class: 'category-chip' + (categoryFilter ? '' : ' is-active'),
+            onclick: function () {
+              categoryFilter = '';
+              writeCategoryFilter(slug, '');
+              refresh();
+            }
+          }, 'All');
+          categoryBar.appendChild(allChip);
+          cats.sort();
+          cats.forEach(function (cat) {
+            var chip = el('button', {
+              type: 'button',
+              class: 'category-chip' + (categoryFilter === cat ? ' is-active' : ''),
+              onclick: function () {
+                categoryFilter = (categoryFilter === cat) ? '' : cat;
+                writeCategoryFilter(slug, categoryFilter);
+                refresh();
+              }
+            }, cat);
+            categoryBar.appendChild(chip);
+          });
+        } else {
+          categoryBar.hidden = true;
+        }
+        if (categoryFilter) {
+          filtered = filtered.filter(function (r) {
+            return String(r[catCol] || '').trim() === categoryFilter;
+          });
+        }
+      } else {
+        categoryBar.hidden = true;
       }
 
       var dateCol = findDateCol(meta);
@@ -2485,8 +2595,10 @@
       }
       added.push(name);
     }
-    ensureCol('playlist', 'text', 'url');
-    ensureCol('offline',  'text', '_updated');
+    ensureCol('playlist',  'text', 'url');
+    ensureCol('category',  'select(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)', 'url');
+    ensureCol('published', 'date', 'watched');
+    ensureCol('offline',   'text', '_updated');
     if (!added.length) return false;
 
     var c = readConfig();
@@ -2500,6 +2612,65 @@
     await M.sync.pullTab(token, c.spreadsheetId, 'youtube');
     flash(document.body, 'YouTube section upgraded: added ' + added.join(', ') + '.');
     return true;
+  }
+
+  // Generic schema-upgrade helper. additions is a list of
+  //   { name: 'category', type: 'select(...)', before: 'read' }
+  // Inserts each missing column before the named anchor (or before
+  // _updated when the anchor isn't found). Idempotent. Writes both header
+  // + type rows back to the sheet, then re-pulls so local meta + rows
+  // pick up the new column slots.
+  async function upgradeSectionSchema(slug, meta, additions) {
+    if (!meta || !meta.headers) return false;
+    var headers = meta.headers.slice();
+    var types = (meta.types || []).slice();
+    var added = [];
+    additions.forEach(function (col) {
+      if (headers.indexOf(col.name) >= 0) return;
+      var insertAt = col.before ? headers.indexOf(col.before) : -1;
+      if (insertAt < 0) {
+        var upIdx = headers.indexOf('_updated');
+        if (upIdx >= 0) insertAt = upIdx;
+      }
+      if (insertAt < 0 || insertAt >= headers.length) {
+        headers.push(col.name);
+        types.push(col.type);
+      } else {
+        headers.splice(insertAt, 0, col.name);
+        types.splice(insertAt, 0, col.type);
+      }
+      added.push(col.name);
+    });
+    if (!added.length) return false;
+    var c = readConfig();
+    if (!c.spreadsheetId) return false;
+    var token = await M.auth.getToken(c.clientId);
+    await M.sheets.updateValues(token, c.spreadsheetId, slug + '!A1', [headers, types]);
+    await M.sync.pullTab(token, c.spreadsheetId, slug);
+    flash(document.body, slug + ' section upgraded: added ' + added.join(', ') + '.');
+    return true;
+  }
+
+  function maybeUpgradePapersSchema(meta) {
+    return upgradeSectionSchema('papers', meta, [
+      { name: 'category', type: 'select(method,review,dataset,benchmark,position,survey,theory,application,other)', before: 'read' },
+      { name: 'tags',     type: 'multiselect()', before: 'read' }
+    ]);
+  }
+  function maybeUpgradeBooksSchema(meta) {
+    return upgradeSectionSchema('books', meta, [
+      { name: 'category', type: 'select(fiction,non-fiction,biography,history,science,philosophy,technical,reference,poetry,other)', before: 'started' }
+    ]);
+  }
+  function maybeUpgradeFilmsSchema(meta) {
+    return upgradeSectionSchema('films', meta, [
+      { name: 'category', type: 'select(drama,comedy,action,thriller,sci-fi,horror,documentary,animation,romance,other)', before: 'watched' }
+    ]);
+  }
+  function maybeUpgradeRecipesSchema(meta) {
+    return upgradeSectionSchema('recipes', meta, [
+      { name: 'category', type: 'select(breakfast,lunch,dinner,snack,dessert,drink,sauce,baking,other)', before: 'tags' }
+    ]);
   }
 
   // ---- preset add / remove (module scope) ---------------------------
@@ -4096,6 +4267,8 @@
     var hasPlaylistCol = (meta.headers || []).indexOf('playlist') >= 0;
     var hasOfflineCol  = (meta.headers || []).indexOf('offline')  >= 0;
     var hasUrlCol      = (meta.headers || []).indexOf('url')      >= 0;
+    var hasWatchedCol2 = (meta.headers || []).indexOf('watched')  >= 0;
+    var hasWatchedAt2  = (meta.headers || []).indexOf('watched_at') >= 0;
 
     function syncAllCheckbox(table) {
       var head = table.querySelector('thead .bulk-cb-all');
@@ -4250,6 +4423,31 @@
       if (hasOfflineCol && hasUrlCol) {
         var offBtn = renderOfflineButton(tab, row, refresh);
         actions.appendChild(offBtn);
+      }
+
+      // Per-row "mark unwatched" — only when row is currently watched.
+      // Lets the user undo a stale auto-mark without bulk-selecting.
+      if (hasWatchedCol2 && String(row.watched || '').toUpperCase() === 'TRUE') {
+        var unwatchBtn = el('button', {
+          class: 'icon-btn row-unwatch',
+          type: 'button',
+          title: 'Mark unwatched',
+          'aria-label': 'Mark unwatched',
+          onclick: async function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'watched', prevValue: row.watched });
+            row.watched = 'FALSE';
+            if (hasWatchedAt2) row.watched_at = '';
+            row._updated = new Date().toISOString();
+            row._dirty = 1;
+            await M.db.upsertRow(tab, row);
+            schedulePush();
+            if (refresh) await refresh();
+          }
+        });
+        unwatchBtn.appendChild(M.render.icon('eye-off'));
+        actions.appendChild(unwatchBtn);
       }
 
       var delBtn = el('button', {
@@ -4448,7 +4646,7 @@
             type: 'button',
             title: cobaltOk
               ? 'Download via Cobalt for offline playback'
-              : 'Set up Cobalt in Settings, or pick a video file from disk',
+              : 'Pick a local video file to attach. To download from YouTube directly, set up a Cobalt endpoint in Settings.',
             onclick: function (e) {
               e.preventDefault();
               e.stopPropagation();
@@ -4456,8 +4654,8 @@
               else pickAndSaveOfflineFile(tab, row, refresh);
             }
           });
-          saveBtn.appendChild(M.render.icon('download'));
-          saveBtn.appendChild(document.createTextNode(cobaltOk ? ' Download' : ' Save offline'));
+          saveBtn.appendChild(M.render.icon(cobaltOk ? 'download' : 'upload'));
+          saveBtn.appendChild(document.createTextNode(cobaltOk ? ' Download' : ' Upload local'));
           wrap.appendChild(saveBtn);
           // Always offer the manual upload as a secondary option, even
           // when Cobalt is configured — useful when the user already has
@@ -6267,7 +6465,7 @@
     var input = document.createElement('input');
     input.type = 'text';
     input.className = 'editor';
-    input.placeholder = 'arXiv ID · DOI (10.xxxx/...) · YouTube URL · any other URL';
+    input.placeholder = 'arXiv ID · DOI (10.xxxx/...) · YouTube video / playlist / @channel · any other URL';
     input.autocomplete = 'off';
     input.spellcheck = false;
 
@@ -6275,6 +6473,16 @@
     var addBtn = el('button', { class: 'btn', type: 'button', disabled: true }, 'Add to ' + tab);
     var fetched = null;
     var debounce = null;
+
+    function fmtAge(ms) {
+      var s = Math.round(ms / 1000);
+      if (s < 60) return s + 's ago';
+      var m = Math.round(s / 60);
+      if (m < 60) return m + 'm ago';
+      var h = Math.round(m / 60);
+      if (h < 24) return h + 'h ago';
+      return Math.round(h / 24) + 'd ago';
+    }
 
     function renderField(label, value) {
       if (!value) return null;
@@ -6286,15 +6494,16 @@
 
     function setBtnLabel(s) { addBtn.textContent = s; }
 
-    async function lookup() {
+    async function lookup(opts) {
+      opts = opts || {};
       var raw = input.value.trim();
       fetched = null;
       addBtn.disabled = true;
       setBtnLabel('Add to ' + tab);
       if (!raw) { preview.replaceChildren(); return; }
-      preview.replaceChildren(el('p', { class: 'small muted' }, 'Looking up…'));
+      preview.replaceChildren(el('p', { class: 'small muted' }, opts.noCache ? 'Refreshing…' : 'Looking up…'));
       try {
-        var data = await M.import.lookup(raw);
+        var data = await M.import.lookup(raw, { noCache: !!opts.noCache });
         if (!data) {
           preview.replaceChildren(el('p', { class: 'small muted' },
             'Not recognized as arXiv, YouTube, or a URL. Either paste a real URL or use ',
@@ -6303,10 +6512,10 @@
         }
         fetched = data;
 
-        // No API key + playlist URL → surface a clear "set up your key"
+        // No API key + playlist/channel URL → surface a clear "set up your key"
         // hint with a one-click jump to Settings, instead of silently
         // falling through to a single-video import.
-        if (data.kind === 'playlist-needs-key') {
+        if (data.kind === 'playlist-needs-key' || data.kind === 'channel-needs-key') {
           fetched = null; // disable Add button
           preview.replaceChildren(el('div', { class: 'preview-needs-key' },
             el('p', { class: 'small' }, data.message),
@@ -6322,20 +6531,35 @@
         }
 
         // Playlist branch — preview N items, "Import N videos" button.
-        if (data.kind === 'playlist') {
+        // Channel imports use the same shape (kind: 'channel' is a thin
+        // wrapper over a playlist enumeration of the channel's uploads).
+        if (data.kind === 'playlist' || data.kind === 'channel') {
           var n = (data.items || []).length;
           if (!n) {
             preview.replaceChildren(el('p', { class: 'error small' },
-              'Playlist enumerated, but contained no playable videos.'));
+              (data.kind === 'channel' ? 'Channel ' : 'Playlist ') + 'enumerated, but contained no playable videos.'));
             return;
           }
           var plNodes = [];
+          var sourceLabel = data.kind === 'channel'
+            ? el('span', null, 'channel ', el('strong', null, data.channelTitle || data.channelId || '(unknown)'))
+            : el('span', null, 'playlist ', el('code', null, data.playlistId));
           plNodes.push(el('p', { class: 'small' },
             'Will import ', el('strong', null, n + ' video' + (n === 1 ? '' : 's')),
-            ' from playlist ', el('code', null, data.playlistId),
-            data.truncated ? ' (capped at ' + data.max + ' — playlist has more)' : '',
+            ' from ', sourceLabel,
+            data.truncated ? ' (capped at ' + data.max + ' — more available)' : '',
             ' to ', el('code', null, tab), '.'
           ));
+          if (typeof data._cachedAgeMs === 'number') {
+            plNodes.push(el('p', { class: 'small muted url-import-cache-line' },
+              'Loaded from cache (' + fmtAge(data._cachedAgeMs) + '). ',
+              el('a', {
+                href: '#',
+                class: 'url-import-refresh',
+                onclick: function (e) { e.preventDefault(); lookup({ noCache: true }); }
+              }, 'Refresh from YouTube')
+            ));
+          }
           var listNode = el('div', { class: 'url-import-playlist' });
           var SHOW = 10;
           var preview_n = Math.min(n, SHOW);
@@ -6417,8 +6641,8 @@
       if (!fetched) return;
       addBtn.disabled = true;
       var prevLabel = addBtn.textContent;
-      // Playlist branch — fan out into N rows.
-      if (fetched.kind === 'playlist') {
+      // Playlist / channel branch — fan out into N rows.
+      if (fetched.kind === 'playlist' || fetched.kind === 'channel') {
         setBtnLabel('Importing…');
         try {
           await importYoutubePlaylist(tab, fetched, null);
@@ -6463,8 +6687,8 @@
       ),
       el('p', { class: 'small muted' },
         hasYtKey
-          ? 'YouTube playlist URLs (anything with ?list=…) enumerate every video — capped at 200 per import.'
-          : 'Paste a YouTube playlist URL to add every video — requires a free YouTube Data API key in Settings.'
+          ? 'YouTube playlist URLs (?list=…) and channel URLs (youtube.com/@handle, /channel/UC…, /c/, /user/) enumerate every video — capped at 200 per import.'
+          : 'Paste a YouTube playlist or @channel URL to add every video — requires a free YouTube Data API key in Settings.'
       ),
       input,
       preview,
