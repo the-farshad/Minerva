@@ -132,4 +132,14 @@
 
   window.Minerva = window.Minerva || {};
   window.Minerva.bootstrap = bootstrap;
+
+  // Build / version metadata. Surfaced in the home footer and Settings so
+  // a user can verify which version they're actually running (PWA caches
+  // can lag a deploy by a refresh). Keep `build` in sync with the
+  // CACHE_VERSION in sw.js — bump both whenever you ship.
+  window.Minerva.version = {
+    semver: 'v0.22',
+    build:  53,
+    label:  'v0.22 · build 53'
+  };
 })();

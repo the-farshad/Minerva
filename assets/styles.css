@@ -836,6 +836,35 @@ code {
 }
 .home-footer-link:hover { color: var(--accent); }
 
+/* Build / version badge — small monospace pill, click-to-copy. Same
+   shape in the home footer and the Settings header. */
+.version-badge {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted);
+  cursor: pointer;
+  margin-left: auto;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.version-badge:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.settings-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.settings-head h2 { margin: 0; }
+.settings-head .version-badge { margin-left: auto; }
+
 /* Landing variant — bigger hero, calmer color */
 .view-home-landing .home-hero-greet {
   font-size: 2.4rem;

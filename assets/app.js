@@ -730,9 +730,31 @@
         el('a', { href: '#/schedule', class: 'home-footer-link' }, 'Schedule'),
         el('a', { href: '#/graph', class: 'home-footer-link' }, 'Graph'),
         el('a', { href: M.sheets.spreadsheetUrl(cfg.spreadsheetId), class: 'home-footer-link', target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Spreadsheet'),
-        el('a', { href: '#/settings', class: 'home-footer-link' }, 'Settings')
+        el('a', { href: '#/settings', class: 'home-footer-link' }, 'Settings'),
+        renderVersionBadge()
       )
     );
+  }
+
+  // Click-to-copy version pill. Lives in the home footer + Settings
+  // header so the user can verify which build the PWA is actually
+  // running (cache can lag a deploy by one refresh).
+  function renderVersionBadge() {
+    var v = (window.Minerva && Minerva.version) || { label: 'v?' };
+    var badge = el('button', {
+      type: 'button',
+      class: 'version-badge',
+      title: 'Click to copy: ' + v.label,
+      onclick: async function () {
+        try {
+          await navigator.clipboard.writeText(v.label);
+          flash(document.body, 'Version copied: ' + v.label);
+        } catch (e) {
+          flash(document.body, v.label, 'error');
+        }
+      }
+    }, v.label);
+    return badge;
   }
 
   function viewHomeLanding(cfg, st) {
@@ -6215,7 +6237,10 @@
     });
 
     return el('section', { class: 'view view-settings' },
-      el('h2', null, 'Settings'),
+      el('div', { class: 'settings-head' },
+        el('h2', null, 'Settings'),
+        renderVersionBadge()
+      ),
       el('p', { class: 'lead' },
         'Minerva keeps no secrets in its repo. You bring your own Google OAuth client; Minerva remembers it locally. ',
         el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough')
