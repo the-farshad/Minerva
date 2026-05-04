@@ -2528,7 +2528,9 @@
     titleH2.appendChild(document.createTextNode(' When to meet'));
     view.appendChild(titleH2);
     view.appendChild(el('p', { class: 'lead' },
-      'Make a group-availability poll. Pick a date range and a daily time window; everyone you share the link with marks the slots they\'re free, copies a response token, and sends it back. Paste responses together to see overlapping availability — no backend, no accounts, no data leaves your browser unless you share it.'
+      'Make a group-availability poll. Pick a date range and a daily time window, then share the link. ',
+      el('strong', null, 'Each person adds their availability and forwards the new link onward'),
+      ' — every shared URL carries everyone\'s answers so far, so you don\'t collect responses by hand. No backend, no accounts, no data leaves your browser unless you share it.'
     ));
 
     var today = new Date();
@@ -3050,17 +3052,40 @@
     view.appendChild(el('p', { class: 'small muted' },
       'Click cells (or drag) to mark when you\'re free. Times are in your local time zone (',
       el('em', null, Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'),
-      '). When done, fill in your name and copy the response token to send back to the organizer.'
+      '). When done, type your name and Generate — the link below carries everyone\'s answers so far, including yours.'
     ));
 
-    // Optional: pre-load a previous response so the participant can edit.
-    // Hash format used to load: ?r=<responseToken>
+    // Optional query params:
+    //   ?r=<responseToken>           — pre-load a previous response (edit mode)
+    //   ?prev=<r1>;<r2>;...          — carry forward existing aggregate
+    //                                  responses so the new link cumulates them
     var preload = null;
+    var prevTokens = [];
     try {
       var qs = location.hash.split('?')[1] || '';
       var rMatch = qs.match(/(?:^|&)r=([^&]+)/);
-      if (rMatch) preload = M.meet.decodeResponse(rMatch[1]);
+      if (rMatch) preload = M.meet.decodeResponse(decodeURIComponent(rMatch[1]));
+      var prevMatch = qs.match(/(?:^|&)prev=([^&]+)/);
+      if (prevMatch) {
+        prevTokens = decodeURIComponent(prevMatch[1])
+          .split(';').filter(Boolean);
+      }
     } catch (e) { /* ignore malformed */ }
+    var prevNames = [];
+    prevTokens.forEach(function (t) {
+      try {
+        var dr = M.meet.decodeResponse(t);
+        if (dr && dr.name) prevNames.push(dr.name);
+      } catch (e) { /* skip unparseable */ }
+    });
+    if (prevNames.length) {
+      view.appendChild(el('p', { class: 'small meet-prev-line' },
+        M.render.icon('users'),
+        ' Already responded: ',
+        el('strong', null, prevNames.join(', ')),
+        '. Your answer will be added to the chain.'
+      ));
+    }
 
     var initial = null;
     if (preload && Array.isArray(preload.yes)) {
@@ -3112,12 +3137,20 @@
         }
         var resp = { v: 1, name: name, yes: yes };
         var rtoken = M.meet.encodeResponse(resp);
-        var aggregateUrl = location.origin + location.pathname + '#/meet/' + token + '/' + rtoken;
+        // Cumulative chain: glue the new response onto whatever the
+        // previous aggregate already contained, so the link the user
+        // shares next is always "everyone's answers including mine".
+        var allTokens = prevTokens.concat([rtoken]);
+        var aggregateUrl = location.origin + location.pathname + '#/meet/' + token + '/' + allTokens.join(';');
         var subject = 'Re: ' + (poll.t || 'meeting availability');
+        var totalCount = allTokens.length;
         var bodyText =
           name + ' marked ' + yes.length + ' available slot' + (yes.length === 1 ? '' : 's') +
           ' for "' + (poll.t || 'meeting') + '".\n\n' +
-          'Open this link to add my response to the aggregate view:\n' + aggregateUrl + '\n';
+          'This link includes everyone\'s answers so far (' + totalCount +
+          ' response' + (totalCount === 1 ? '' : 's') + '). ' +
+          'Open it to see the heatmap, or forward it to the next person to add their availability:\n' +
+          aggregateUrl + '\n';
 
         var actions = [];
         // Native share — opens iOS/Android share sheet, also works on
@@ -3169,8 +3202,13 @@
         copyBtn.appendChild(document.createTextNode(' Copy URL'));
         actions.push(copyBtn);
 
+        var headLine = prevTokens.length
+          ? 'Forward this link to the next person — it now carries '
+            + totalCount + ' response' + (totalCount === 1 ? '' : 's')
+            + ' (yours included).'
+          : 'Share this link with everyone you want to invite — they\'ll add their availability and forward it on.';
         output.replaceChildren(
-          el('p', { class: 'small' }, 'Send your response back to the organizer:'),
+          el('p', { class: 'small' }, headLine),
           el('div', { class: 'meet-share-row' }, actions),
           el('div', { class: 'link-row' }, urlInput)
         );
@@ -3223,11 +3261,27 @@
     });
 
     var view = el('section', { class: 'view view-meet' });
-    view.appendChild(el('h2', null, poll.t || 'Group availability — results'));
+    view.appendChild(el('h2', null, poll.t || 'Group availability'));
     view.appendChild(el('p', { class: 'lead' },
-      responses.length + ' response' + (responses.length === 1 ? '' : 's'),
+      responses.length + ' response' + (responses.length === 1 ? '' : 's') + ' so far',
       failed > 0 ? ' (· ' + failed + ' couldn\'t be parsed)' : '',
       '. Cells darken with the number of people available.'
+    ));
+
+    // Prominent "Add my availability" button — opens the participant view
+    // with prev=<existing tokens> so the next response chains onto this
+    // aggregate rather than replacing it. This is the everyone-adds flow.
+    var prevQs = responseTokens.length ? '?prev=' + encodeURIComponent(responseTokens.join(';')) : '';
+    var addMineBtn = el('a', {
+      class: 'btn btn-primary meet-add-mine',
+      href: '#/meet/' + pollToken + prevQs
+    });
+    addMineBtn.appendChild(M.render.icon('plus'));
+    addMineBtn.appendChild(document.createTextNode(' Add my availability'));
+    view.appendChild(el('div', { class: 'meet-add-mine-row' }, addMineBtn,
+      el('span', { class: 'small muted' },
+        'Each person clicks this, fills the grid, and shares the new link onward.'
+      )
     ));
 
     if (responses.length) {
@@ -3309,13 +3363,20 @@
 
     var pageUrl = location.origin + location.pathname + location.hash;
     view.appendChild(el('div', { class: 'form-actions' },
-      el('label', { class: 'small' }, 'Add response: ', addInput),
-      el('a', { class: 'btn btn-ghost', href: '#/meet/' + pollToken, target: '_blank', rel: 'noopener' }, M.render.icon('external-link'), ' Open participant view'),
-      el('button', { class: 'btn btn-ghost', type: 'button',
-        onclick: function () {
+      el('button', { class: 'btn', type: 'button',
+        onclick: async function () {
+          var shareText = 'Group availability — ' + (poll.t || 'meeting') + '\n' +
+            responses.length + ' response' + (responses.length === 1 ? '' : 's') +
+            ' so far. Open this to see the heatmap or click "Add my availability":\n' +
+            pageUrl;
+          if (navigator.share) {
+            try { await navigator.share({ title: poll.t || 'Group availability', text: shareText, url: pageUrl }); return; }
+            catch (e) { /* user cancelled — fall through to clipboard */ }
+          }
           if (navigator.clipboard) navigator.clipboard.writeText(pageUrl);
-          flash(view, 'Aggregate URL copied — paste it into your bookmarks bar.');
-        } }, 'Copy this URL'),
+          flash(view, 'Link copied — share it with your group.');
+        } }, M.render.icon('share-2'), ' Share with group'),
+      el('label', { class: 'small' }, 'Or paste a response: ', addInput),
       el('button', { class: 'btn btn-ghost', type: 'button',
         onclick: async function () {
           try {
