@@ -1562,6 +1562,7 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   box-shadow: var(--shadow);
 }
 .tile-thumb {
+  position: relative;
   aspect-ratio: 16 / 9;
   background: var(--surface-2);
   overflow: hidden;
@@ -1569,6 +1570,27 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   align-items: center;
   justify-content: center;
 }
+.tile-download {
+  position: absolute;
+  right: 0.4rem;
+  top: 0.4rem;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s, background .12s;
+}
+.tile:hover .tile-download,
+.tile-download:focus-visible { opacity: 1; }
+.tile-download:hover { background: var(--accent); }
+.tile-download svg { width: 1em; height: 1em; }
 .tile-thumb img {
   width: 100%;
   height: 100%;
@@ -2824,7 +2846,9 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   background: var(--surface);
 }
 
-/* preview modal */
+/* preview modal — default sizing favours the tall PDF layout. The
+   preview-panel-yt modifier reshapes the panel for 16:9 video embeds
+   so they don't render squashed inside a portrait box. */
 .preview-overlay { padding: 2rem 1rem; align-items: stretch; }
 .preview-panel {
   max-width: 1080px;
@@ -2835,6 +2859,16 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   padding: 0;
   overflow: hidden;
 }
+.preview-overlay:has(.preview-panel-yt),
+.modal-overlay:has(.preview-panel-yt) { align-items: center; }
+.preview-panel.preview-panel-yt {
+  max-width: min(1280px, calc(100vw - 2rem));
+  height: auto;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100vh - 4rem);
+}
+.preview-panel.preview-panel-yt .preview-frame-host { aspect-ratio: 16 / 9; }
+.preview-panel.preview-panel-yt .preview-frame { height: 100%; }
 .preview-head {
   display: flex;
   align-items: center;

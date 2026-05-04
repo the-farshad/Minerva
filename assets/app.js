@@ -2077,7 +2077,7 @@
       modeToggle.appendChild(listBtn);
       if (hasTiles) {
         var tilesBtn = el('button', { type: 'button', 'data-value': 'tiles',
-          class: mode === 'tiles' ? 'active' : '' }, 'Tiles');
+          class: mode === 'tiles' ? 'active' : '' }, 'Grid');
         tilesBtn.addEventListener('click', function () { switchMode('tiles'); });
         modeToggle.appendChild(tilesBtn);
       }
@@ -2315,10 +2315,10 @@
       } else if (mode === 'tiles' && canTiles) {
         bodyHost.replaceChildren(renderTiles(meta, filtered, sec.tab, refresh));
         hint.replaceChildren(
-          'Tiles group rows by ',
+          'Grid groups rows by ',
           el('code', null, (meta.headers || []).indexOf('playlist') >= 0 ? 'playlist'
             : ((meta.headers || []).indexOf('category') >= 0 ? 'category' : 'kind')),
-          '. Click a tile to open the preview.'
+          '. Click a card to open the preview; the ⬇ icon downloads.'
         );
       } else if (mode === 'graph' && canGraph) {
         var graphHost = el('div', {
@@ -4747,11 +4747,13 @@
   }
 
   // Tiles view — visual cards grouped by playlist / category / kind
-  // (whichever the section has). Designed for "scan a library and pick
-  // something to watch / read" rather than the spreadsheet feel of the
-  // list view. Each tile shows: thumbnail (YouTube thumb when the row
-  // has a YouTube URL, otherwise a colored monogram fallback), title,
-  // a small chip with channel / authors, and a watched-state dot.
+  // Card-grid layout grouping rows by `playlist`, `category`, or `kind`
+  // when present. Each card surfaces a thumbnail (YouTube derivation
+  // first, row.thumbnail second, monogram fallback otherwise), the
+  // title, a sub-line (channel / authors), an optional duration or
+  // year stamp, and — when the section has both `url` and `offline`
+  // columns — an inline Download icon button that mirrors the
+  // table-row routing.
   function renderTiles(meta, rows, tab, refresh) {
     var headers = (meta && meta.headers) || [];
     var groupCol = headers.indexOf('playlist') >= 0 ? 'playlist'
@@ -4764,6 +4766,7 @@
         : (headers.indexOf('author') >= 0 ? 'author' : ''));
     var hasWatched = headers.indexOf('watched') >= 0;
     var hasUrl = headers.indexOf('url') >= 0;
+    var hasOffline = headers.indexOf('offline') >= 0;
     var collapsed = readCollapsedGroups(tab);
 
     var ytId = function (s) {
@@ -4796,6 +4799,40 @@
       }
       tile.appendChild(thumb);
 
+      // Per-card Download overlay — only when the section can store
+      // offline blobs. Mounted on the thumbnail so it's reachable
+      // without expanding the body. Routing matches the table view:
+      // yt-dlp server → Cobalt → clipboard fallback (shift-click
+      // opens the full options modal).
+      if (hasOffline && hasUrl && url) {
+        var dlBtn = el('button', {
+          type: 'button',
+          class: 'tile-download',
+          title: 'Download for offline playback (shift-click for options)',
+          'aria-label': 'Download',
+          onclick: function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.shiftKey) {
+              showOfflineSetupDialog(tab, r, refresh);
+              return;
+            }
+            var cfg = readConfig();
+            if ((cfg.ytDlpServer || '').trim()) {
+              downloadOfflineViaYtDlp(tab, r, refresh);
+              return;
+            }
+            if ((cfg.cobaltEndpoint || '').trim()) {
+              downloadOfflineViaCobalt(tab, r, refresh);
+              return;
+            }
+            copyYtDlpCommand(url);
+          }
+        });
+        dlBtn.appendChild(M.render.icon('download'));
+        thumb.appendChild(dlBtn);
+      }
+
       var body = el('div', { class: 'tile-body' });
       var titleEl = el('div', { class: 'tile-title' }, r[titleCol] || r.title || '(untitled)');
       body.appendChild(titleEl);
@@ -4810,9 +4847,10 @@
       tile.appendChild(body);
 
       tile.addEventListener('click', function (e) {
-        // Plain click → preview (URL) or row-detail (no URL). Modifier
-        // keys defer to the OS / let-link-open behavior.
+        // Modifier-clicks defer to native link / OS behavior. Clicks
+        // on the per-card Download button stop propagation upstream.
         if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        if (e.target.closest('.tile-download')) return;
         e.preventDefault();
         if (url && window.Minerva && Minerva.preview) {
           Minerva.preview.show(url);
@@ -5773,6 +5811,10 @@
       el('div', { class: 'dl-job-bar' }, el('span', { class: 'dl-job-fill' }))
     );
     tray.appendChild(card);
+    // Lucide swap runs lazily on a route boundary, so dynamically-
+    // inserted cards display empty <i data-lucide> placeholders until
+    // the next refresh. Force one immediately.
+    if (M.render && M.render.refreshIcons) M.render.refreshIcons();
     var statusEl = card.querySelector('.dl-job-status');
     var fillEl = card.querySelector('.dl-job-fill');
     return {
@@ -5799,6 +5841,7 @@
             onclick: function () { try { action.run(); } catch (e) {} card.remove(); }
           }, M.render.icon(action.icon || 'play'), ' ' + action.label);
           card.appendChild(btn);
+          if (M.render && M.render.refreshIcons) M.render.refreshIcons();
         }
         setTimeout(function () {
           if (card.classList.contains('is-done')) try { card.remove(); } catch (e) {}
@@ -5815,6 +5858,18 @@
   async function downloadOfflineViaYtDlp(tab, row, refresh) {
     if (!row.url) {
       flash(document.body, 'No URL on this row to download.', 'error');
+      return;
+    }
+    // Skip when an offline blob is already cached for this row. Users
+    // remove the blob explicitly via the row's trash icon (or the bulk
+    // "Remove offline" action) before re-downloading.
+    var alreadyHave = await M.db.getVideo(tab, row.id).catch(function () { return null; });
+    if (alreadyHave && alreadyHave.blob) {
+      if (refresh !== null) {
+        flash(document.body,
+          'Already saved offline (' + (alreadyHave.blob.size / (1024*1024)).toFixed(1)
+          + ' MB). Remove the existing copy first if you want to re-download.');
+      }
       return;
     }
     var cfg = readConfig();
@@ -5903,6 +5958,15 @@
   async function downloadOfflineViaCobalt(tab, row, refresh) {
     if (!row.url) {
       flash(document.body, 'No URL on this row to download.', 'error');
+      return;
+    }
+    var alreadyHave = await M.db.getVideo(tab, row.id).catch(function () { return null; });
+    if (alreadyHave && alreadyHave.blob) {
+      if (refresh !== null) {
+        flash(document.body,
+          'Already saved offline (' + (alreadyHave.blob.size / (1024*1024)).toFixed(1)
+          + ' MB). Remove the existing copy first if you want to re-download.');
+      }
       return;
     }
     var cfg = readConfig();

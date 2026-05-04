@@ -299,6 +299,12 @@
       pageWrap.style.display = isPdfNow ? '' : 'none';
       if (isPdfNow) pageInput.value = String(savedPage);
 
+      // Adjust the panel aspect to the content kind. YouTube embeds
+      // are 16:9 and look squashed in the tall PDF-shaped panel; PDFs
+      // keep the original full-height layout.
+      panel.classList.toggle('preview-panel-yt', isYt);
+      panel.classList.toggle('preview-panel-pdf', isPdfNow);
+
       while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
       var resumeAt = isYt ? readVideoResume(url) : 0;
       var iframe = buildIframeForUrl(url, savedPage, resumeAt);
