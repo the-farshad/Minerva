@@ -32,17 +32,47 @@ If `ffmpeg` is missing:
 
 ## 2 · Install dependencies
 
+Pick whichever package manager you have. `uv` is recommended where available — it resolves and installs in seconds.
+
+### With `uv` (recommended)
+
+Install `uv` once: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or `brew install uv`, `pipx install uv`, etc.).
+
+Then either:
+
+```sh
+# One-shot run via uv (no venv to manage):
+uv run --with flask --with yt-dlp python docs/yt-dlp-server.py
+```
+
+or as a project venv:
+
+```sh
+uv venv ~/.minerva-ytdl
+uv pip install --python ~/.minerva-ytdl/bin/python flask yt-dlp
+~/.minerva-ytdl/bin/python docs/yt-dlp-server.py
+```
+
+### With `pip`
+
 ```sh
 pip install --user flask yt-dlp
 ```
 
-If `pip install` complains about an "externally managed environment" (newer Python on macOS/Linux), use a venv:
+If `pip install` rejects with "externally managed environment" (newer Python on macOS/Linux), use a venv:
 
 ```sh
 python3 -m venv ~/.minerva-ytdl
 ~/.minerva-ytdl/bin/pip install flask yt-dlp
-# then run the server with that venv:
 ~/.minerva-ytdl/bin/python /path/to/Minerva/docs/yt-dlp-server.py
+```
+
+### With `pipx`
+
+```sh
+pipx install flask
+pipx inject flask yt-dlp
+pipx run --spec . python docs/yt-dlp-server.py   # from inside the repo
 ```
 
 ---
@@ -54,6 +84,8 @@ The reference server is shipped in this repo at [`docs/yt-dlp-server.py`](yt-dlp
 ```sh
 cd Minerva
 python3 docs/yt-dlp-server.py
+# or with uv:
+uv run --with flask --with yt-dlp python docs/yt-dlp-server.py
 ```
 
 You should see:

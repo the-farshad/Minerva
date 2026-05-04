@@ -32,11 +32,11 @@
     catch (e) { return url; }
   }
 
-  // Persisted "last page read" per PDF URL. The browser's native PDF
-  // viewer respects #page=N in the iframe src, so jumping back to where
-  // the user left off is just a hash fragment. We can't observe their
-  // current page (cross-origin iframe), so the user types it into the
-  // page-jumper input — auto-saved on change.
+  // Persisted last-read page per PDF URL. The native PDF viewer
+  // honours #page=N on the iframe src, so resume is implemented as a
+  // hash fragment write at mount time. Cross-origin guards prevent
+  // observing the live scroll position; the value is updated only when
+  // the page-jumper input commits.
   var PDF_PAGE_KEY = 'minerva.pdf.page';
   function readPdfPage(url) {
     try {
@@ -123,10 +123,9 @@
     return iframe;
   }
 
-  // Delay before dispatching minerva:videoplay (which auto-marks watched).
-  // Gives the user a few seconds to bail out if they opened the wrong video
-  // or just wanted to glance at the title — closing or skipping within the
-  // window cancels the mark.
+  // Debounce window before dispatching minerva:videoplay (the auto-
+  // mark-watched signal). Closing or navigating away within this
+  // window cancels the dispatch.
   var WATCH_MARK_DELAY_MS = 8000;
 
   function openModal(items, startIndex) {
@@ -210,9 +209,9 @@
       }
     });
 
-    // Page jumper — only attached for PDF items. Lets the user pick a
-    // page; auto-saved as resume position. Hidden by default; shown in
-    // render() when the current item is a PDF.
+    // Page-jumper input. Visible only when the active item is a PDF.
+    // The value is persisted via writePdfPage() and re-mounts the
+    // iframe with the new #page=N fragment.
     var pageInput = document.createElement('input');
     pageInput.type = 'number';
     pageInput.min = '1';

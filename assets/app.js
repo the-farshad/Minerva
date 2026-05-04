@@ -736,9 +736,10 @@
     );
   }
 
-  // Click-to-copy version pill. Lives in the home footer + Settings
-  // header so the user can verify which build the PWA is actually
-  // running (cache can lag a deploy by one refresh).
+  // Click-to-copy build pill. Rendered in the home footer and the
+  // Settings header. Useful for diagnosing service-worker cache lag,
+  // where a deploy may need a refresh before the active assets match
+  // the published build label.
   function renderVersionBadge() {
     var v = (window.Minerva && Minerva.version) || { label: 'v?' };
     var badge = el('button', {
@@ -1103,9 +1104,10 @@
       ? String(opts.category)
       : '';
 
-    // Build a set of URLs already present in this section so re-importing
-    // a playlist / channel only adds new videos. Treat sourceRow as
-    // already-present so the paste-into-row branch doesn't duplicate item 0.
+    // Index URLs already present in this section so re-importing the
+    // same playlist or channel adds only new videos. The sourceRow (if
+    // any) is excluded from the index so the paste-into-row branch is
+    // free to overwrite it with item 0.
     var existingUrls = new Set();
     if (meta.headers.indexOf('url') >= 0) {
       var existingRows = await M.db.getAllRows(tab);
@@ -1360,8 +1362,9 @@
       var raw = JSON.parse(localStorage.getItem('minerva.section.view') || '{}');
       if (raw[slug]) return raw[slug];
     } catch (e) { /* fall through to default */ }
-    // Per-section default mode. Notes opens in the reader (iPad-Notes
-    // shape) by default — table is still one click away.
+    // Per-section default mode. The notes section defaults to the
+    // reader layout because the body column dominates that schema; all
+    // sections expose a List toggle.
     if (slug === 'notes') return 'reader';
     return 'list';
   }
@@ -1841,10 +1844,11 @@
         }, 'Copy BibTeX'));
       }
 
-      // Bulk download — YouTube only. With a Cobalt endpoint configured
-      // we fan out one fetch per selected row; without one we hand back
-      // a single yt-dlp command listing every URL (yt-dlp accepts many
-      // URLs in one invocation so the user gets a single paste-and-run).
+      // Bulk download — YouTube only. When a yt-dlp server or Cobalt
+      // endpoint is configured, the action fans out one fetch per row.
+      // Otherwise it concatenates every URL into a single yt-dlp
+      // invocation and writes that to the clipboard (yt-dlp accepts
+      // multiple URL arguments).
       if (sec.slug === 'youtube') {
         children.push(el('button', { class: 'btn btn-ghost', type: 'button',
           title: 'Download every selected video for offline playback',
@@ -2160,9 +2164,9 @@
       var filtered = M.render.applyFilter(sorted, sec.defaultFilter);
 
       // Per-section live filter (typed in the header search box). Skip
-      // `link`-typed columns so a search for a word doesn't get matched
-      // against URL slugs — the user wants to find videos by title/name,
-      // not by chunks of their watch URL.
+      // `link`-typed columns so token matches do not catch substrings
+      // inside URL slugs — only title-like text columns contribute to
+      // the search haystack.
       if (liveQuery) {
         var qterms = liveQuery.split(/\s+/).filter(Boolean);
         var allHeaders0 = (meta && meta.headers) || [];
@@ -4550,11 +4554,11 @@
     });
   }
 
-  // Notes reader — iPad-Notes-style sidebar + reading pane. Sidebar
-  // lists titles + previews; selecting a note loads its body, sketch,
-  // and tag chips into the right pane for inline editing. Auto-saves
-  // on blur of any field. Selected id persists per tab so navigating
-  // away and back doesn't lose your place.
+  // Two-pane note layout. The sidebar lists every row by title and
+  // a stripped-markdown preview; selecting a row populates the right
+  // pane with editors for the title input, body textarea, sketch
+  // thumbnail, and tag chips. Each editor commits on blur. The
+  // selected row id is persisted per tab in localStorage.
   function renderNotesReader(meta, rows, tab, refresh) {
     var headers = (meta && meta.headers) || [];
     var bodyCol = headers.indexOf('body') >= 0 ? 'body'
@@ -5007,9 +5011,10 @@
           td.classList.add('cell-rating-host');
         } else {
           td.appendChild(M.render.renderCell(row[c.name], c.type));
-          // Drawing cells route directly to the canvas editor — clicking
-          // a thumbnail (or the empty em-dash placeholder) is what users
-          // expect, not a text-edit modal.
+          // Drawing cells route directly to the canvas editor regardless
+          // of whether the cell already has a value. Click and Enter/Space
+          // both trigger the navigation; the inline text editor used by
+          // other cell types is bypassed for this column type.
           var openDrawEditor = function () {
             location.hash = '#/draw/' + encodeURIComponent(tab) +
               '/' + encodeURIComponent(row.id) +
@@ -5054,8 +5059,10 @@
         actions.appendChild(offBtn);
       }
 
-      // Per-row "mark unwatched" — only when row is currently watched.
-      // Lets the user undo a stale auto-mark without bulk-selecting.
+      // Per-row mark-unwatched action. Rendered only when the row is
+      // currently watched, so the action is always a state flip back to
+      // unwatched. Provides parity with the bulk action without
+      // requiring a selection.
       if (hasWatchedCol2 && String(row.watched || '').toUpperCase() === 'TRUE') {
         var unwatchBtn = el('button', {
           class: 'icon-btn row-unwatch',
@@ -5348,11 +5355,12 @@
           var cfgRO = readConfig();
           var ytDlpOk = !!(cfgRO.ytDlpServer || '').trim();
           var cobaltOk = !!(cfgRO.cobaltEndpoint || '').trim();
-          // Priority order on click:
-          //   1. yt-dlp server (preferred — actual file download)
-          //   2. Cobalt instance (fallback)
-          //   3. Copy yt-dlp command + visible toast (no backend at all)
-          // Shift-click opens the options modal.
+          // Click-handler routing precedence:
+          //   1. yt-dlp server endpoint, when configured.
+          //   2. Cobalt endpoint, when configured.
+          //   3. Clipboard write of an equivalent yt-dlp command.
+          // Shift-click opens the full options modal regardless of
+          // which path would otherwise run.
           var saveBtn = el('button', {
             class: 'btn btn-ghost offline-save',
             type: 'button',
@@ -5405,9 +5413,9 @@
     return wrap;
   }
 
-  // Build a yt-dlp command from the user's saved format preference and
-  // copy it to the clipboard. Surfaces a toast with the command so the
-  // user knows what landed on their clipboard. No prompt, no modal.
+  // Construct a yt-dlp invocation using the configured format and
+  // write it to the clipboard. Returns silently; callers surface a
+  // toast independently. No modal, no setup wizard.
   function buildYtDlpCommand(url, fmt) {
     fmt = fmt || (readConfig().ytDlpFormat || 'mp4');
     var parts = ['yt-dlp'];
@@ -5740,9 +5748,9 @@
   //   from the optional Content-Disposition header.
   // The reference Flask server in docs/yt-dlp-server.py implements this.
   // Multi-job downloads tray. Stacks one card per concurrent download
-  // bottom-right; each card has its own progress bar + status. Cards
-  // auto-collapse 4 s after success; failures stick around with a
-  // close button so the user can read the error.
+  // bottom-right; each card has its own progress bar + status. Success
+  // cards auto-dismiss after 4 s (12 s when an action button is
+  // attached). Failure cards persist until explicitly dismissed.
   function getDownloadsTray() {
     var tray = document.querySelector('.downloads-tray');
     if (tray) return tray;
@@ -7801,8 +7809,8 @@
               (data.kind === 'channel' ? 'Channel ' : 'Playlist ') + 'enumerated, but contained no playable videos.'));
             return;
           }
-          // Tally how many incoming videos already exist in this section.
-          // Cheaper to do once here than to surprise the user post-import.
+          // Tally how many incoming videos already exist in this section
+          // so the preview can show a per-import dedup count up front.
           var existingDup = await M.db.getAllRows(tab);
           var dupSet = new Set();
           existingDup.forEach(function (r) {

@@ -655,11 +655,11 @@
     input = String(input || '').trim();
     if (!input) return null;
 
-    // arXiv first — bare id or any arxiv URL. If the pattern matches,
-    // the user clearly wants arXiv metadata; surface the error so the
-    // import modal can show "arXiv API failed: …" instead of silently
-    // falling through to a generic title-only fetch (which made the
-    // failure look like "no metadata fetched").
+    // arXiv first — bare id or any arxiv URL. When the pattern matches,
+    // a fetch failure is propagated as an Error rather than swallowed,
+    // so callers can surface it (e.g. "arXiv API failed: …"). Otherwise
+    // a transient network error degrades to a generic title-only fetch
+    // and the bibliographic fields silently come back empty.
     if (/arxiv\.org|^\d{4}\.\d{4,5}/i.test(input)) {
       try {
         var ax = await arxivLookup(input);

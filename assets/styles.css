@@ -536,8 +536,9 @@ button.btn {
   color: var(--ok);
   font-size: 0.85rem;
 }
-/* Body-rooted flashes float bottom-right so feedback is always visible.
-   Otherwise they flow at the page bottom and disappear under the fold. */
+/* Body-rooted flashes are pinned bottom-right so they stay in view
+   regardless of scroll position. Flash elements appended to a
+   specific parent retain the default in-flow positioning above. */
 body > .flash {
   position: fixed;
   right: 1rem;
@@ -1607,8 +1608,9 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   content: '';
   position: absolute;
 }
-/* Drawing cell discoverability — empty placeholder needs a hint that
-   clicking opens the editor, otherwise it looks like a dead em-dash. */
+/* Pointer cursor + accent hover for drawing cells. The empty
+   em-dash placeholder is otherwise indistinguishable from any other
+   read-only cell. */
 table.rows td.cell-drawing-host { cursor: pointer; }
 table.rows td.cell-drawing-host:hover { background: var(--surface); }
 table.rows td.cell-drawing-host:hover .muted { color: var(--accent); }
