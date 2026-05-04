@@ -1071,11 +1071,15 @@
   // is given (paste into an existing row), item 0 fills that row's empty
   // fields and items 1..N become new rows; when null (URL-import modal),
   // every item becomes a new row.
-  async function importYoutubePlaylist(tab, data, sourceRow) {
+  async function importYoutubePlaylist(tab, data, sourceRow, opts) {
+    opts = opts || {};
     var items = (data && data.items) || [];
     if (!items.length) return;
     var meta = await M.db.getMeta(tab);
     if (!meta || !meta.headers) return;
+    var applyCategory = opts.category && meta.headers.indexOf('category') >= 0
+      ? String(opts.category)
+      : '';
 
     // Build a set of URLs already present in this section so re-importing
     // a playlist / channel only adds new videos. Treat sourceRow as
@@ -1109,6 +1113,7 @@
         if (sourceRow[k] && String(sourceRow[k]).trim()) return;
         sourceRow[k] = first[k];
       });
+      if (applyCategory && !sourceRow.category) sourceRow.category = applyCategory;
       sourceRow._updated = new Date().toISOString();
       sourceRow._dirty = 1;
       await M.db.upsertRow(tab, sourceRow);
@@ -1132,6 +1137,7 @@
       // watched/unwatched; default to FALSE so freshly-imported videos
       // start as unwatched (consistent with single-URL import).
       if (meta.headers.indexOf('read') >= 0 && !newRow.read) newRow.read = 'FALSE';
+      if (applyCategory) newRow.category = applyCategory;
       newRow._updated = new Date().toISOString();
       newRow._dirty = 1;
       await M.db.upsertRow(tab, newRow);
@@ -1369,6 +1375,22 @@
     } catch (e) { /* ignore */ }
   }
 
+  function readCollapsedGroups(tab) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.collapsed') || '{}');
+      return new Set(raw[tab] || []);
+    } catch (e) { return new Set(); }
+  }
+  function writeCollapsedGroups(tab, set) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.collapsed') || '{}');
+      var arr = [];
+      set.forEach(function (k) { arr.push(k); });
+      if (arr.length) raw[tab] = arr; else delete raw[tab];
+      localStorage.setItem('minerva.section.collapsed', JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+
   function readSort(slug) {
     try {
       var raw = JSON.parse(localStorage.getItem('minerva.section.sort') || '{}');
@@ -1433,14 +1455,19 @@
     // For other sections, "Add row" opens a form modal so the user
     // fills in fields before any row is created (no more empty junk).
     var isYoutube = sec.slug === 'youtube';
-    var primaryLabel = isYoutube ? '+ Add video' : '+ Add row';
+    var isPapers = sec.slug === 'papers';
+    var primaryLabel = isYoutube ? '+ Add video' : (isPapers ? '+ Add paper' : '+ Add row');
     var addBtn = el('button', {
       class: 'btn btn-primary section-add-btn',
       type: 'button',
-      title: isYoutube ? 'Paste a YouTube video or playlist URL' : 'Open a form to add a new row'
+      title: isYoutube ? 'Paste a YouTube video or playlist URL'
+        : (isPapers ? 'Paste an arXiv id, DOI, or paper URL — auto-fetches title/authors/abstract'
+          : 'Open a form to add a new row')
     });
-    addBtn.appendChild(M.render.icon(isYoutube ? 'youtube' : 'plus'));
-    addBtn.appendChild(document.createTextNode(' ' + (isYoutube ? 'Add video' : 'Add row')));
+    addBtn.appendChild(M.render.icon(isYoutube ? 'youtube' : (isPapers ? 'file-text' : 'plus')));
+    addBtn.appendChild(document.createTextNode(
+      ' ' + (isYoutube ? 'Add video' : (isPapers ? 'Add paper' : 'Add row'))
+    ));
 
     // Secondary import menu. For YouTube, only CSV/TSV (URL is the
     // primary). For other sections, both URL and CSV.
@@ -1967,14 +1994,21 @@
       var sorted = M.render.applySort(visible, sortSpec);
       var filtered = M.render.applyFilter(sorted, sec.defaultFilter);
 
-      // Per-section live filter (typed in the header search box).
+      // Per-section live filter (typed in the header search box). Skip
+      // `link`-typed columns so a search for a word doesn't get matched
+      // against URL slugs — the user wants to find videos by title/name,
+      // not by chunks of their watch URL.
       if (liveQuery) {
         var qterms = liveQuery.split(/\s+/).filter(Boolean);
-        var visibleHeaders = (meta && meta.headers || []).filter(function (h) {
-          return !M.render.isInternal(h) && h !== 'id';
+        var allHeaders0 = (meta && meta.headers) || [];
+        var allTypes0 = (meta && meta.types) || [];
+        var searchHeaders = allHeaders0.filter(function (h, i) {
+          if (M.render.isInternal(h) || h === 'id') return false;
+          var t = M.render.parseType(allTypes0[i] || 'text');
+          return t.kind !== 'link';
         });
         filtered = filtered.filter(function (r) {
-          var hay = visibleHeaders
+          var hay = searchHeaders
             .map(function (h) { return r[h] != null ? String(r[h]) : ''; })
             .join('  ').toLowerCase();
           return qterms.every(function (t) { return hay.indexOf(t) >= 0; });
@@ -2290,9 +2324,10 @@
         flash(view, 'No schema cached — Sync first.', 'error');
         return;
       }
-      // YouTube: jump straight to URL import. The user almost always
-      // adds videos by pasting a URL; an empty row is just noise.
-      if (isYoutube) {
+      // YouTube + Papers: jump straight to URL import. Both flows are
+      // overwhelmingly URL-driven (paste a video / arXiv id / DOI and let
+      // the importer auto-fetch metadata) — an empty form row is friction.
+      if (isYoutube || isPapers) {
         showUrlImport(sec.tab);
         return;
       }
@@ -4473,6 +4508,7 @@
     var anyPlaylist = hasPlaylistCol && rows.some(function (r) { return r.playlist && String(r.playlist).trim(); });
     var bodyChildren = [];
     if (anyPlaylist) {
+      var collapsed = readCollapsedGroups(tab);
       var byGroup = {};
       var order = [];
       rows.forEach(function (r) {
@@ -4483,6 +4519,7 @@
       // Stable: keep first-seen order so the user's sort decides ranking.
       order.forEach(function (key) {
         var groupRows = byGroup[key];
+        var isCollapsed = collapsed.has(key);
         var allG = groupRows.every(function (r) { return selectedIds.has(r.id); });
         var anyG = groupRows.some(function (r) { return selectedIds.has(r.id); });
 
@@ -4513,6 +4550,23 @@
         var headTd = document.createElement('td');
         headTd.colSpan = visibleCols.length + 2; // bulk + cols + actions
         headTd.className = 'row-group-head-cell';
+        var caretBtn = el('button', {
+          type: 'button',
+          class: 'row-group-caret',
+          title: isCollapsed ? 'Expand group' : 'Collapse group',
+          'aria-expanded': isCollapsed ? 'false' : 'true',
+          'aria-label': (isCollapsed ? 'Expand' : 'Collapse') + ' ' + key,
+          onclick: function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var cur = readCollapsedGroups(tab);
+            if (cur.has(key)) cur.delete(key);
+            else cur.add(key);
+            writeCollapsedGroups(tab, cur);
+            if (refresh) refresh();
+          }
+        });
+        caretBtn.appendChild(M.render.icon(isCollapsed ? 'chevron-right' : 'chevron-down'));
         var titleSpan = el('span', { class: 'row-group-title' }, key);
         var countSpan = el('span', { class: 'row-group-count small muted' },
           ' · ' + groupRows.length + ' video' + (groupRows.length === 1 ? '' : 's'));
@@ -4521,13 +4575,19 @@
           var pctW = Math.round(100 * watchedN / groupRows.length);
           countSpan.appendChild(document.createTextNode(' · ' + watchedN + ' watched (' + pctW + '%)'));
         }
+        headTd.appendChild(caretBtn);
         headTd.appendChild(gcb);
         headTd.appendChild(titleSpan);
         headTd.appendChild(countSpan);
 
-        var groupTr = el('tr', { class: 'row-group-head', 'data-group': key }, headTd);
+        var groupTr = el('tr', {
+          class: 'row-group-head' + (isCollapsed ? ' is-collapsed' : ''),
+          'data-group': key
+        }, headTd);
         bodyChildren.push(groupTr);
-        groupRows.forEach(function (r) { bodyChildren.push(buildRow(r)); });
+        if (!isCollapsed) {
+          groupRows.forEach(function (r) { bodyChildren.push(buildRow(r)); });
+        }
       });
     } else {
       rows.forEach(function (r) { bodyChildren.push(buildRow(r)); });
@@ -4641,45 +4701,101 @@
           wrap.appendChild(rmBtn);
         } else {
           var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
+          // The primary action always *says* Download — that's what the
+          // user wants to do. When a Cobalt endpoint is configured we
+          // actually fetch the video; otherwise clicking opens a small
+          // dialog explaining the setup options (browsers can't fetch
+          // YouTube directly due to CORS, so a Cobalt instance is the
+          // mechanism). The secondary "upload local file" option is
+          // always present as an icon button.
           var saveBtn = el('button', {
             class: 'btn btn-ghost offline-save',
             type: 'button',
             title: cobaltOk
               ? 'Download via Cobalt for offline playback'
-              : 'Pick a local video file to attach. To download from YouTube directly, set up a Cobalt endpoint in Settings.',
+              : 'Download for offline playback (needs a Cobalt endpoint — click for setup options)',
             onclick: function (e) {
               e.preventDefault();
               e.stopPropagation();
               if (cobaltOk && row.url) downloadOfflineViaCobalt(tab, row, refresh);
-              else pickAndSaveOfflineFile(tab, row, refresh);
+              else showOfflineSetupDialog(tab, row, refresh);
             }
           });
-          saveBtn.appendChild(M.render.icon(cobaltOk ? 'download' : 'upload'));
-          saveBtn.appendChild(document.createTextNode(cobaltOk ? ' Download' : ' Upload local'));
+          saveBtn.appendChild(M.render.icon('download'));
+          saveBtn.appendChild(document.createTextNode(' Download'));
           wrap.appendChild(saveBtn);
-          // Always offer the manual upload as a secondary option, even
-          // when Cobalt is configured — useful when the user already has
-          // a local copy or Cobalt is failing.
-          if (cobaltOk) {
-            var uploadBtn = el('button', {
-              class: 'icon-btn offline-upload',
-              type: 'button',
-              title: 'Upload an existing local video file instead',
-              'aria-label': 'Upload local video',
-              onclick: function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                pickAndSaveOfflineFile(tab, row, refresh);
-              }
-            });
-            uploadBtn.appendChild(M.render.icon('upload'));
-            wrap.appendChild(uploadBtn);
-          }
+          // Secondary upload button — always available, both when Cobalt
+          // is and isn't configured. The user already has a local copy or
+          // Cobalt is down, this is the escape hatch.
+          var uploadBtn = el('button', {
+            class: 'icon-btn offline-upload',
+            type: 'button',
+            title: 'Upload an existing local video file instead',
+            'aria-label': 'Upload local video',
+            onclick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              pickAndSaveOfflineFile(tab, row, refresh);
+            }
+          });
+          uploadBtn.appendChild(M.render.icon('upload'));
+          wrap.appendChild(uploadBtn);
         }
       }).catch(function () { /* db not yet open is fine */ });
     }
     paint();
     return wrap;
+  }
+
+  // Modal explaining why Download requires Cobalt, with two clear paths:
+  // (1) open Settings to set up an endpoint, (2) upload a local file
+  // instead. Replaces the silent "click Download → file picker" surprise.
+  function showOfflineSetupDialog(tab, row, refresh) {
+    if (document.querySelector('.offline-setup-overlay')) return;
+    var overlay = el('div', { class: 'modal-overlay offline-setup-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+    var panel = el('div', { class: 'modal-panel offline-setup-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      el('h3', null, 'Download for offline playback'),
+      el('p', { class: 'small' },
+        'Browsers can\'t fetch YouTube videos directly — YouTube doesn\'t serve them with CORS headers. To download in one click, point Minerva at a ',
+        el('strong', null, 'Cobalt'),
+        ' instance (open-source media downloader, you can self-host or pick a public one).'
+      ),
+      el('p', { class: 'small muted' },
+        'You can also attach a video file you\'ve already downloaded — same end result, just stored locally.'
+      ),
+      el('div', { class: 'form-actions' },
+        el('a', {
+          class: 'btn',
+          href: '#/settings',
+          onclick: function () { overlay.remove(); }
+        }, M.render.icon('settings'), ' Set up Cobalt'),
+        el('button', {
+          class: 'btn btn-ghost',
+          type: 'button',
+          onclick: function () {
+            overlay.remove();
+            pickAndSaveOfflineFile(tab, row, refresh);
+          }
+        }, M.render.icon('upload'), ' Upload local file instead'),
+        el('button', {
+          class: 'btn btn-ghost',
+          type: 'button',
+          onclick: function () { overlay.remove(); }
+        }, 'Cancel')
+      )
+    );
+    panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
+    });
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    if (window.lucide && window.lucide.createIcons) {
+      try { window.lucide.createIcons(); } catch (e) { /* ignore */ }
+    }
   }
 
   function pickAndSaveOfflineFile(tab, row, refresh) {
@@ -6465,7 +6581,17 @@
     var input = document.createElement('input');
     input.type = 'text';
     input.className = 'editor';
-    input.placeholder = 'arXiv ID · DOI (10.xxxx/...) · YouTube video / playlist / @channel · any other URL';
+    // Tailor the placeholder so a YouTube section doesn't advertise arXiv
+    // and vice-versa. Library / generic sections still see everything.
+    var sectionKind = tab === 'youtube' ? 'youtube'
+      : (tab === 'papers' ? 'papers' : 'mixed');
+    if (sectionKind === 'youtube') {
+      input.placeholder = 'YouTube video URL · playlist URL · @channel URL';
+    } else if (sectionKind === 'papers') {
+      input.placeholder = 'arXiv id (e.g. 2401.12345) · DOI (10.xxxx/yyy) · paper URL';
+    } else {
+      input.placeholder = 'arXiv ID · DOI (10.xxxx/...) · YouTube video / playlist / @channel · any other URL';
+    }
     input.autocomplete = 'off';
     input.spellcheck = false;
 
@@ -6473,6 +6599,36 @@
     var addBtn = el('button', { class: 'btn', type: 'button', disabled: true }, 'Add to ' + tab);
     var fetched = null;
     var debounce = null;
+
+    // Category picker — only when the section schema has a `category`
+    // column. Lists the column's select() options as a dropdown so the
+    // user can stamp every imported row with one (e.g. "science"). The
+    // selected value applies to single-row, playlist, and channel imports.
+    var categoryColIdx = (meta.headers || []).indexOf('category');
+    var categoryFieldNode = null;
+    var categorySelect = null;
+    if (categoryColIdx >= 0) {
+      var catType = M.render.parseType((meta.types || [])[categoryColIdx] || 'text');
+      var catOpts = (catType.options && catType.options.length)
+        ? catType.options
+        : [];
+      categorySelect = document.createElement('select');
+      categorySelect.className = 'editor editor-select url-import-category';
+      var blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = '— no category —';
+      categorySelect.appendChild(blank);
+      catOpts.forEach(function (opt) {
+        var o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        categorySelect.appendChild(o);
+      });
+      categoryFieldNode = el('label', { class: 'url-import-category-row small' },
+        el('span', { class: 'muted' }, 'Category'),
+        categorySelect
+      );
+    }
 
     function fmtAge(ms) {
       var s = Math.round(ms / 1000);
@@ -6641,11 +6797,12 @@
       if (!fetched) return;
       addBtn.disabled = true;
       var prevLabel = addBtn.textContent;
+      var chosenCategory = categorySelect ? categorySelect.value : '';
       // Playlist / channel branch — fan out into N rows.
       if (fetched.kind === 'playlist' || fetched.kind === 'channel') {
         setBtnLabel('Importing…');
         try {
-          await importYoutubePlaylist(tab, fetched, null);
+          await importYoutubePlaylist(tab, fetched, null, { category: chosenCategory });
           overlay.remove();
         } catch (err) {
           flash(preview, 'Import failed: ' + (err && err.message ? err.message : err), 'error');
@@ -6660,6 +6817,9 @@
         Object.keys(fetched).forEach(function (k) {
           if (meta.headers.indexOf(k) >= 0) row[k] = fetched[k];
         });
+        if (chosenCategory && meta.headers.indexOf('category') >= 0) {
+          row.category = chosenCategory;
+        }
         if (meta.headers.indexOf('read') >= 0) row.read = 'FALSE';
         row._dirty = 1;
         await M.db.upsertRow(tab, row);
@@ -6675,22 +6835,45 @@
     });
 
     var hasYtKey = !!(readConfig().youtubeApiKey || '').trim();
-    var panel = el('div', { class: 'modal-panel url-import-panel',
-      onclick: function (e) { e.stopPropagation(); }
-    },
-      el('h3', null, 'Add from URL — ', el('code', null, tab)),
-      el('p', { class: 'small muted' },
+    // Section-tailored help paragraphs. YouTube section hides arXiv/DOI;
+    // Papers hides YouTube. Library / generic shows everything.
+    var helpNodes = [];
+    if (sectionKind === 'youtube') {
+      helpNodes.push(el('p', { class: 'small muted' },
+        'Paste a ', el('strong', null, 'YouTube'),
+        ' video URL to auto-fetch title, channel, duration, and publish date.'
+      ));
+      helpNodes.push(el('p', { class: 'small muted' },
+        hasYtKey
+          ? 'Playlist (?list=…) and channel (youtube.com/@handle, /channel/UC…) URLs enumerate every video — capped at 200 per import.'
+          : 'Playlist or @channel URLs add every video — requires a free YouTube Data API key in Settings.'
+      ));
+    } else if (sectionKind === 'papers') {
+      helpNodes.push(el('p', { class: 'small muted' },
+        'Auto-fetches metadata from ',
+        el('strong', null, 'arXiv'), ' (paste 2401.12345 or any arxiv URL) and ',
+        el('strong', null, 'DOI'), ' (10.xxxx/yyy or doi.org URL — uses CrossRef). Title, authors, year, abstract, and PDF link populate automatically.'
+      ));
+    } else {
+      helpNodes.push(el('p', { class: 'small muted' },
         'Auto-fetches metadata from ',
         el('strong', null, 'arXiv'), ' (paste 2401.12345 or any arxiv URL), ',
         el('strong', null, 'DOI'), ' (10.xxxx/yyy or doi.org URL — uses CrossRef), and ',
         el('strong', null, 'YouTube'), ' (any watch / youtu.be URL). Other URLs are added with title-only when CORS allows, or just the URL otherwise.'
-      ),
-      el('p', { class: 'small muted' },
+      ));
+      helpNodes.push(el('p', { class: 'small muted' },
         hasYtKey
           ? 'YouTube playlist URLs (?list=…) and channel URLs (youtube.com/@handle, /channel/UC…, /c/, /user/) enumerate every video — capped at 200 per import.'
           : 'Paste a YouTube playlist or @channel URL to add every video — requires a free YouTube Data API key in Settings.'
-      ),
+      ));
+    }
+    var panel = el('div', { class: 'modal-panel url-import-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      el('h3', null, 'Add from URL — ', el('code', null, tab)),
+      helpNodes,
       input,
+      categoryFieldNode,
       preview,
       el('div', { class: 'form-actions' },
         addBtn,

@@ -2926,6 +2926,14 @@ table.kv tbody tr:hover { background: var(--surface); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.url-import-category-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.6rem 0 0;
+}
+.url-import-category-row > span { min-width: 5.5rem; }
+.url-import-category-row select { flex: 1; }
 .url-import-cache-line { margin: 0; }
 .url-import-refresh {
   color: var(--accent);
@@ -3709,6 +3717,23 @@ table.rows.rows-grouped tr.row-group-head td {
 .row-group-count {
   margin-left: 0.15rem;
 }
+.row-group-caret {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0.1rem;
+  margin: 0;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color .12s, background .12s;
+}
+.row-group-caret:hover { color: var(--accent); background: var(--surface); }
+.row-group-caret svg { width: 1em; height: 1em; }
+.row-group-head.is-collapsed td { border-bottom: 1px solid var(--border); }
 
 /* --- inline rating (one-click stars) ---------------------------- */
 .stars-inline {
