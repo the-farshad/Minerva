@@ -53,7 +53,7 @@
       description: 'Books you\'re reading or have finished, with start/finish dates, category, and a rating.',
       schema: {
         headers: ['id','title','author','category','started','finished','rating','notes','_updated'],
-        types:   ['text','text','text','select(fiction,non-fiction,biography,history,science,philosophy,technical,reference,poetry,other)','date','date','rating(0..5)','markdown','datetime']
+        types:   ['text','text','text','multiselect(fiction,non-fiction,biography,history,science,philosophy,technical,reference,poetry,other)','date','date','rating(0..5)','markdown','datetime']
       }
     },
     {
@@ -63,7 +63,7 @@
       description: 'Films watched with date, category, rating, and notes.',
       schema: {
         headers: ['id','title','category','watched','rating','notes','_updated'],
-        types:   ['text','text','select(drama,comedy,action,thriller,sci-fi,horror,documentary,animation,romance,other)','date','rating(0..5)','markdown','datetime']
+        types:   ['text','text','multiselect(drama,comedy,action,thriller,sci-fi,horror,documentary,animation,romance,other)','date','rating(0..5)','markdown','datetime']
       },
       defaultSort: 'watched:desc'
     },
@@ -82,10 +82,10 @@
       slug: 'papers',
       title: 'Papers',
       icon: 'file-text',
-      description: 'Research papers — title, authors, year, URL, category, tags, read flag, notes.',
+      description: 'Research papers — auto-fetches title, authors, year, venue, DOI, abstract, PDF link from arXiv or any DOI. Add an arXiv id, DOI, or paper URL and Minerva fills the rest.',
       schema: {
-        headers: ['id','title','authors','year','url','category','tags','read','notes','_updated'],
-        types:   ['text','text','text','number','link','select(method,review,dataset,benchmark,position,survey,theory,application,other)','multiselect()','check','markdown','datetime']
+        headers: ['id','title','authors','year','venue','volume','pages','doi','url','pdf','abstract','category','tags','read','notes','_updated'],
+        types:   ['text','text','text','number','text','text','text','text','link','link','markdown','multiselect(method,review,dataset,benchmark,position,survey,theory,application,other)','multiselect()','check','markdown','datetime']
       }
     },
     {
@@ -116,7 +116,7 @@
       description: 'Recipes worth keeping — meal category, tags, ingredients + steps as markdown.',
       schema: {
         headers: ['id','title','category','tags','ingredients','steps','_updated'],
-        types:   ['text','text','select(breakfast,lunch,dinner,snack,dessert,drink,sauce,baking,other)','multiselect()','longtext','markdown','datetime']
+        types:   ['text','text','multiselect(breakfast,lunch,dinner,snack,dessert,drink,sauce,baking,other)','multiselect()','longtext','markdown','datetime']
       }
     },
     {
@@ -203,7 +203,7 @@
       description: 'Track YouTube videos with playlist grouping and offline support: title, channel, playlist, duration, watch state, rating. Paste a single video URL or a playlist URL (?list=… — needs a free Data API key in Settings) and Minerva enumerates every video, fetches durations, and groups videos by playlist. Each row gets Save offline (attach a downloaded mp4 — stored locally for distraction-free playback).',
       schema: {
         headers: ['id','title','channel','playlist','category','url','duration','published','watched','watched_at','rating','tags','notes','offline','_updated'],
-        types:   ['text','text','text','text','select(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)','link','text','date','check','datetime','rating(0..5)','multiselect()','markdown','text','datetime']
+        types:   ['text','text','text','text','multiselect(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)','link','text','date','check','datetime','rating(0..5)','multiselect()','markdown','text','datetime']
       },
       defaultSort: 'published:desc'
     },

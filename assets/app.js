@@ -1375,6 +1375,33 @@
     } catch (e) { /* ignore */ }
   }
 
+  // Per-section default-hidden columns. Aim: a clean default view that
+  // shows what users actually scan against, hiding rarely-needed columns
+  // they can re-enable with the Columns ▾ button. Returns column names.
+  function defaultHiddenCols(slug) {
+    if (slug === 'youtube') return ['url', 'tags', 'notes', 'offline', 'watched_at'];
+    if (slug === 'papers')  return ['notes'];
+    if (slug === 'library') return ['abstract', 'notes', 'pdf'];
+    if (slug === 'books')   return ['notes'];
+    if (slug === 'films')   return ['notes'];
+    if (slug === 'recipes') return ['ingredients'];
+    return [];
+  }
+  function readHiddenCols(slug) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.hiddenCols') || '{}');
+      if (raw[slug] != null) return raw[slug];
+      return defaultHiddenCols(slug);
+    } catch (e) { return defaultHiddenCols(slug); }
+  }
+  function writeHiddenCols(slug, arr) {
+    try {
+      var raw = JSON.parse(localStorage.getItem('minerva.section.hiddenCols') || '{}');
+      raw[slug] = arr;
+      localStorage.setItem('minerva.section.hiddenCols', JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+
   function readCollapsedGroups(tab) {
     try {
       var raw = JSON.parse(localStorage.getItem('minerva.section.collapsed') || '{}');
@@ -1535,7 +1562,54 @@
     if (sec.icon) titleH2.appendChild(M.render.icon(sec.icon));
     titleH2.appendChild(document.createTextNode(sec.title || sec.slug));
     header.appendChild(titleH2);
-    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, unwatchedPill, modeToggle, calNav, importWrap, addBtn);
+    // Columns ▾ menu — lets the user reveal hidden columns or hide more.
+    var columnsWrap = el('div', { class: 'columns-wrap' });
+    var columnsMenu = null;
+    var columnsBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+      title: 'Show or hide table columns',
+      onclick: function (e) {
+        e.stopPropagation();
+        if (columnsMenu) { columnsMenu.remove(); columnsMenu = null; return; }
+        if (!lastMeta || !lastMeta.headers) return;
+        columnsMenu = el('div', { class: 'columns-menu' });
+        var hidden = new Set(readHiddenCols(slug));
+        lastMeta.headers.forEach(function (h) {
+          if (M.render.isInternal(h) || h === 'id') return;
+          var lbl = el('label', { class: 'columns-menu-item' });
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = !hidden.has(h);
+          cb.addEventListener('change', function () {
+            if (cb.checked) hidden.delete(h);
+            else hidden.add(h);
+            writeHiddenCols(slug, Array.from(hidden));
+            refresh();
+          });
+          lbl.appendChild(cb);
+          lbl.appendChild(document.createTextNode(' ' + h));
+          columnsMenu.appendChild(lbl);
+        });
+        var resetBtn = el('button', { class: 'columns-menu-reset', type: 'button',
+          onclick: function () {
+            writeHiddenCols(slug, defaultHiddenCols(slug));
+            if (columnsMenu) { columnsMenu.remove(); columnsMenu = null; }
+            refresh();
+          }
+        }, 'Reset to defaults');
+        columnsMenu.appendChild(resetBtn);
+        columnsWrap.appendChild(columnsMenu);
+        var closeMenu = function (ev) {
+          if (columnsMenu && !columnsMenu.contains(ev.target) && ev.target !== columnsBtn) {
+            columnsMenu.remove(); columnsMenu = null;
+            document.removeEventListener('click', closeMenu);
+          }
+        };
+        setTimeout(function () { document.addEventListener('click', closeMenu); }, 0);
+      }
+    }, M.render.icon('columns'), ' Columns ▾');
+    columnsWrap.appendChild(columnsBtn);
+
+    var headerRight = el('div', { class: 'view-section-head-right' }, filterInput, unwatchedPill, columnsWrap, modeToggle, calNav, importWrap, addBtn);
     header.appendChild(headerRight);
     view.appendChild(header);
     view.appendChild(viewsBar);
@@ -2027,19 +2101,24 @@
 
       // Category chip-bar — driven by the first matching column in the
       // section schema: `category` is canonical; `kind` is the legacy name
-      // used by Workouts. Populated from unique non-empty values across
-      // sorted rows. Click chip → filter; click again or "All" → clear.
+      // used by Workouts. Multiselect-aware: row values are split on commas
+      // so a row tagged "tutorial,course" appears under both chips.
       var headers0 = (meta && meta.headers) || [];
       var catCol = headers0.indexOf('category') >= 0 ? 'category'
         : (headers0.indexOf('kind') >= 0 ? 'kind' : '');
+      function splitCats(v) {
+        if (!v) return [];
+        return String(v).split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+      }
       if (catCol) {
         var seen = Object.create(null);
         var cats = [];
         sorted.forEach(function (r) {
-          var v = r[catCol] && String(r[catCol]).trim();
-          if (!v || seen[v]) return;
-          seen[v] = 1;
-          cats.push(v);
+          splitCats(r[catCol]).forEach(function (val) {
+            if (seen[val]) return;
+            seen[val] = 1;
+            cats.push(val);
+          });
         });
         categoryBar.replaceChildren();
         if (cats.length) {
@@ -2072,7 +2151,7 @@
         }
         if (categoryFilter) {
           filtered = filtered.filter(function (r) {
-            return String(r[catCol] || '').trim() === categoryFilter;
+            return splitCats(r[catCol]).indexOf(categoryFilter) >= 0;
           });
         }
       } else {
@@ -2603,65 +2682,53 @@
   }
 
   // ---- YouTube schema migration ------------------------------------
-  // The youtube preset originally had no `playlist` or `offline` columns.
-  // Sections created before that change miss them, breaking playlist
-  // grouping and offline storage. maybeUpgradeYoutubeSchema appends them
-  // to the user's spreadsheet header + type rows on demand, then re-pulls.
-  // Idempotent: returns false when nothing to do.
-  async function maybeUpgradeYoutubeSchema(meta) {
-    if (!meta || !meta.headers) return false;
-    var headers = meta.headers.slice();
-    var types = (meta.types || []).slice();
-    var added = [];
-    function ensureCol(name, type, before) {
-      if (headers.indexOf(name) >= 0) return;
-      var insertAt = before ? headers.indexOf(before) : -1;
-      if (insertAt < 0) {
-        // Keep _updated last so charts and sync stay sane.
-        var upIdx = headers.indexOf('_updated');
-        if (upIdx >= 0) { insertAt = upIdx; }
-      }
-      if (insertAt < 0 || insertAt >= headers.length) {
-        headers.push(name);
-        types.push(type);
-      } else {
-        headers.splice(insertAt, 0, name);
-        types.splice(insertAt, 0, type);
-      }
-      added.push(name);
-    }
-    ensureCol('playlist',  'text', 'url');
-    ensureCol('category',  'select(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)', 'url');
-    ensureCol('published', 'date', 'watched');
-    ensureCol('offline',   'text', '_updated');
-    if (!added.length) return false;
-
-    var c = readConfig();
-    if (!c.spreadsheetId) return false;
-    var token = await M.auth.getToken(c.clientId);
-    // Write headers + type-hint row (rows 1 + 2). USER_ENTERED so any
-    // string types stay as plain text, just like the original seed.
-    await M.sheets.updateValues(token, c.spreadsheetId, 'youtube!A1', [headers, types]);
-    // Re-pull the youtube tab so the local meta and existing rows pick
-    // up the new column slots; pullTab preserves dirty rows.
-    await M.sync.pullTab(token, c.spreadsheetId, 'youtube');
-    flash(document.body, 'YouTube section upgraded: added ' + added.join(', ') + '.');
-    return true;
+  // The youtube preset gained columns over time (playlist, offline,
+  // category, published). Existing sections pick them up via the generic
+  // upgradeSectionSchema helper, which also handles type upgrades like
+  // select(category) → multiselect(category). Idempotent.
+  function maybeUpgradeYoutubeSchema(meta) {
+    return upgradeSectionSchema('youtube', meta, [
+      { name: 'playlist',  type: 'text', before: 'url' },
+      { name: 'category',  type: 'multiselect(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)', before: 'url' },
+      { name: 'published', type: 'date', before: 'watched' },
+      { name: 'offline',   type: 'text', before: '_updated' }
+    ]);
   }
 
   // Generic schema-upgrade helper. additions is a list of
-  //   { name: 'category', type: 'select(...)', before: 'read' }
+  //   { name: 'category', type: 'multiselect(...)', before: 'read' }
   // Inserts each missing column before the named anchor (or before
-  // _updated when the anchor isn't found). Idempotent. Writes both header
-  // + type rows back to the sheet, then re-pulls so local meta + rows
-  // pick up the new column slots.
+  // _updated when the anchor isn't found). When the column already
+  // exists with a single-value `select(...)` type but the desired type
+  // is `multiselect(...)`, the type is upgraded in place (preserves the
+  // option list — single-value rows still parse cleanly as one-element
+  // multi). Idempotent. Writes header + type rows back to the sheet,
+  // then re-pulls so local meta + rows pick up the new column slots.
   async function upgradeSectionSchema(slug, meta, additions) {
     if (!meta || !meta.headers) return false;
     var headers = meta.headers.slice();
     var types = (meta.types || []).slice();
     var added = [];
+    var retyped = [];
     additions.forEach(function (col) {
-      if (headers.indexOf(col.name) >= 0) return;
+      var idx = headers.indexOf(col.name);
+      if (idx >= 0) {
+        // Type upgrade: select(...) → multiselect(...) keeps the options
+        // list intact and lets old single values parse as one-elt arrays.
+        var existingType = String(types[idx] || '').trim();
+        var desired = String(col.type || '').trim();
+        if (desired.indexOf('multiselect(') === 0
+            && existingType.indexOf('select(') === 0
+            && existingType.indexOf('multiselect(') !== 0) {
+          // Preserve whichever option set is richer — the user may have
+          // edited the spreadsheet to add custom options. Default to the
+          // existing one.
+          var newType = existingType.replace(/^select\(/, 'multiselect(');
+          types[idx] = newType;
+          retyped.push(col.name);
+        }
+        return;
+      }
       var insertAt = col.before ? headers.indexOf(col.before) : -1;
       if (insertAt < 0) {
         var upIdx = headers.indexOf('_updated');
@@ -2676,35 +2743,46 @@
       }
       added.push(col.name);
     });
-    if (!added.length) return false;
+    if (!added.length && !retyped.length) return false;
     var c = readConfig();
     if (!c.spreadsheetId) return false;
     var token = await M.auth.getToken(c.clientId);
     await M.sheets.updateValues(token, c.spreadsheetId, slug + '!A1', [headers, types]);
     await M.sync.pullTab(token, c.spreadsheetId, slug);
-    flash(document.body, slug + ' section upgraded: added ' + added.join(', ') + '.');
+    var msgParts = [];
+    if (added.length) msgParts.push('added ' + added.join(', '));
+    if (retyped.length) msgParts.push('upgraded ' + retyped.join(', ') + ' to multi-value');
+    flash(document.body, slug + ' section upgraded: ' + msgParts.join('; ') + '.');
     return true;
   }
 
   function maybeUpgradePapersSchema(meta) {
     return upgradeSectionSchema('papers', meta, [
-      { name: 'category', type: 'select(method,review,dataset,benchmark,position,survey,theory,application,other)', before: 'read' },
+      // Bibliographic columns — populated by the URL Import auto-fetch
+      // (arXiv API, CrossRef DOI). Inserted in roughly bibtex order.
+      { name: 'venue',    type: 'text', before: 'url' },
+      { name: 'volume',   type: 'text', before: 'url' },
+      { name: 'pages',    type: 'text', before: 'url' },
+      { name: 'doi',      type: 'text', before: 'url' },
+      { name: 'pdf',      type: 'link', before: 'read' },
+      { name: 'abstract', type: 'markdown', before: 'read' },
+      { name: 'category', type: 'multiselect(method,review,dataset,benchmark,position,survey,theory,application,other)', before: 'read' },
       { name: 'tags',     type: 'multiselect()', before: 'read' }
     ]);
   }
   function maybeUpgradeBooksSchema(meta) {
     return upgradeSectionSchema('books', meta, [
-      { name: 'category', type: 'select(fiction,non-fiction,biography,history,science,philosophy,technical,reference,poetry,other)', before: 'started' }
+      { name: 'category', type: 'multiselect(fiction,non-fiction,biography,history,science,philosophy,technical,reference,poetry,other)', before: 'started' }
     ]);
   }
   function maybeUpgradeFilmsSchema(meta) {
     return upgradeSectionSchema('films', meta, [
-      { name: 'category', type: 'select(drama,comedy,action,thriller,sci-fi,horror,documentary,animation,romance,other)', before: 'watched' }
+      { name: 'category', type: 'multiselect(drama,comedy,action,thriller,sci-fi,horror,documentary,animation,romance,other)', before: 'watched' }
     ]);
   }
   function maybeUpgradeRecipesSchema(meta) {
     return upgradeSectionSchema('recipes', meta, [
-      { name: 'category', type: 'select(breakfast,lunch,dinner,snack,dessert,drink,sauce,baking,other)', before: 'tags' }
+      { name: 'category', type: 'multiselect(breakfast,lunch,dinner,snack,dessert,drink,sauce,baking,other)', before: 'tags' }
     ]);
   }
 
@@ -4292,11 +4370,13 @@
     if (!rows.length) {
       return el('p', { class: 'muted' }, 'No rows yet. Click ', el('em', null, '+ Add row'), ' to start, or add some in your spreadsheet then Sync.');
     }
+    var hiddenColSet = new Set(readHiddenCols(tab));
     var visibleCols = [];
     for (var i = 0; i < meta.headers.length; i++) {
       var h = meta.headers[i];
       if (M.render.isInternal(h)) continue;
       if (h === 'id') continue;
+      if (hiddenColSet.has(h)) continue;
       visibleCols.push({ name: h, type: meta.types[i] || 'text' });
     }
     var hasPlaylistCol = (meta.headers || []).indexOf('playlist') >= 0;
@@ -4713,7 +4793,7 @@
             type: 'button',
             title: cobaltOk
               ? 'Download via Cobalt for offline playback'
-              : 'Download for offline playback (needs a Cobalt endpoint — click for setup options)',
+              : 'Download for offline playback — click for yt-dlp / Cobalt / upload options',
             onclick: function (e) {
               e.preventDefault();
               e.stopPropagation();
@@ -4747,47 +4827,148 @@
     return wrap;
   }
 
-  // Modal explaining why Download requires Cobalt, with two clear paths:
-  // (1) open Settings to set up an endpoint, (2) upload a local file
-  // instead. Replaces the silent "click Download → file picker" surprise.
+  // Modal offering three download paths in priority order:
+  //   1. yt-dlp — copies a ready-to-paste command. Best for power users
+  //      who already have it; no API, no server, no extension.
+  //   2. Cobalt — one-click download via a Cobalt instance (self-hosted
+  //      or public). Requires endpoint setup in Settings.
+  //   3. Upload — pick an existing local file you downloaded yourself.
   function showOfflineSetupDialog(tab, row, refresh) {
     if (document.querySelector('.offline-setup-overlay')) return;
     var overlay = el('div', { class: 'modal-overlay offline-setup-overlay',
       onclick: function () { overlay.remove(); }
     });
+
+    var url = row.url || '';
+    var ytDlpFormat = (readConfig().ytDlpFormat || 'mp4').trim();
+    var formatSelect = document.createElement('select');
+    formatSelect.className = 'editor editor-select';
+    [
+      { v: 'mp4',                              label: 'mp4 (default)' },
+      { v: 'best',                             label: 'best (any format)' },
+      { v: 'bestvideo+bestaudio/best',         label: 'best video + audio (merge)' },
+      { v: 'bestaudio',                        label: 'audio only (m4a/opus)' },
+      { v: 'mp3',                              label: 'audio → mp3' }
+    ].forEach(function (f) {
+      var o = document.createElement('option');
+      o.value = f.v;
+      o.textContent = f.label;
+      if (f.v === ytDlpFormat) o.selected = true;
+      formatSelect.appendChild(o);
+    });
+
+    function buildYtDlpCmd() {
+      var fmt = formatSelect.value;
+      // Audio-only shortcuts use -x; video formats use -f.
+      var parts = ['yt-dlp'];
+      if (fmt === 'mp3') {
+        parts.push('-x', '--audio-format', 'mp3');
+      } else if (fmt === 'bestaudio') {
+        parts.push('-x');
+      } else if (fmt === 'mp4') {
+        parts.push('-f', 'mp4');
+      } else {
+        parts.push('-f', JSON.stringify(fmt));
+      }
+      parts.push(JSON.stringify(url));
+      return parts.join(' ');
+    }
+
+    var cmdField = document.createElement('input');
+    cmdField.type = 'text';
+    cmdField.readOnly = true;
+    cmdField.className = 'editor offline-ytdlp-cmd';
+    cmdField.value = buildYtDlpCmd();
+    cmdField.addEventListener('focus', function () { cmdField.select(); });
+
+    formatSelect.addEventListener('change', function () {
+      cmdField.value = buildYtDlpCmd();
+      writeConfig({ ytDlpFormat: formatSelect.value });
+    });
+
+    var copyBtn = el('button', { class: 'btn', type: 'button',
+      onclick: async function () {
+        try {
+          await navigator.clipboard.writeText(cmdField.value);
+          flash(panel, 'Command copied — paste it in your terminal.');
+        } catch (e) {
+          cmdField.focus(); cmdField.select();
+          flash(panel, 'Couldn\'t auto-copy — selected the text instead.', 'error');
+        }
+      }
+    });
+    copyBtn.appendChild(M.render.icon('clipboard'));
+    copyBtn.appendChild(document.createTextNode(' Copy yt-dlp command'));
+
+    var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
+
     var panel = el('div', { class: 'modal-panel offline-setup-panel',
       onclick: function (e) { e.stopPropagation(); }
     },
       el('h3', null, 'Download for offline playback'),
-      el('p', { class: 'small' },
-        'Browsers can\'t fetch YouTube videos directly — YouTube doesn\'t serve them with CORS headers. To download in one click, point Minerva at a ',
-        el('strong', null, 'Cobalt'),
-        ' instance (open-source media downloader, you can self-host or pick a public one).'
-      ),
       el('p', { class: 'small muted' },
-        'You can also attach a video file you\'ve already downloaded — same end result, just stored locally.'
+        'Browsers can\'t fetch YouTube directly (CORS). Pick a path below — yt-dlp is the lightest if you already have it.'
       ),
-      el('div', { class: 'form-actions' },
-        el('a', {
-          class: 'btn',
-          href: '#/settings',
-          onclick: function () { overlay.remove(); }
-        }, M.render.icon('settings'), ' Set up Cobalt'),
-        el('button', {
-          class: 'btn btn-ghost',
-          type: 'button',
+
+      el('div', { class: 'offline-method' },
+        el('h4', null, '1 · ', M.render.icon('terminal'), ' yt-dlp (recommended)'),
+        el('p', { class: 'small muted' },
+          'Copy the command, paste in your terminal, then click ',
+          el('em', null, 'Upload local file'),
+          ' below to attach the resulting video.'
+        ),
+        el('div', { class: 'offline-ytdlp-row' },
+          el('label', { class: 'small muted' }, 'Format'),
+          formatSelect
+        ),
+        el('div', { class: 'offline-ytdlp-row' },
+          cmdField,
+          copyBtn
+        )
+      ),
+
+      el('div', { class: 'offline-method' },
+        el('h4', null, '2 · ', M.render.icon('cloud-download'),
+          cobaltOk ? ' Cobalt — ready' : ' Cobalt'),
+        el('p', { class: 'small muted' },
+          cobaltOk
+            ? 'Endpoint configured. Click below to download via Cobalt.'
+            : 'One-click download via a self-hosted or public Cobalt instance.'
+        ),
+        cobaltOk
+          ? el('button', { class: 'btn', type: 'button',
+              onclick: function () {
+                overlay.remove();
+                downloadOfflineViaCobalt(tab, row, refresh);
+              }
+            }, M.render.icon('cloud-download'), ' Download via Cobalt')
+          : el('a', { class: 'btn btn-ghost', href: '#/settings',
+              onclick: function () { overlay.remove(); }
+            }, M.render.icon('settings'), ' Set up Cobalt')
+      ),
+
+      el('div', { class: 'offline-method' },
+        el('h4', null, '3 · ', M.render.icon('upload'), ' Upload local file'),
+        el('p', { class: 'small muted' },
+          'Already have the video on disk? Attach it directly.'
+        ),
+        el('button', { class: 'btn btn-ghost', type: 'button',
           onclick: function () {
             overlay.remove();
             pickAndSaveOfflineFile(tab, row, refresh);
           }
-        }, M.render.icon('upload'), ' Upload local file instead'),
+        }, M.render.icon('upload'), ' Pick a local file')
+      ),
+
+      el('div', { class: 'form-actions' },
         el('button', {
           class: 'btn btn-ghost',
           type: 'button',
           onclick: function () { overlay.remove(); }
-        }, 'Cancel')
+        }, 'Close')
       )
     );
+
     panel.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
     });
@@ -6600,33 +6781,89 @@
     var fetched = null;
     var debounce = null;
 
-    // Category picker — only when the section schema has a `category`
-    // column. Lists the column's select() options as a dropdown so the
-    // user can stamp every imported row with one (e.g. "science"). The
-    // selected value applies to single-row, playlist, and channel imports.
+    // Category picker — only when the section has a `category` column.
+    // Builds a multi-tag widget combining: (1) the schema's predefined
+    // options (from select(...) / multiselect(...)), (2) every category
+    // already in use across the section's rows, and (3) free-typed new
+    // ones. Each click toggles a tag in/out of the selection. The chosen
+    // set applies to single-video, playlist, and channel imports.
     var categoryColIdx = (meta.headers || []).indexOf('category');
     var categoryFieldNode = null;
-    var categorySelect = null;
+    var selectedCategories = [];
+    var renderCategoryChips = function () { /* set below */ };
     if (categoryColIdx >= 0) {
       var catType = M.render.parseType((meta.types || [])[categoryColIdx] || 'text');
-      var catOpts = (catType.options && catType.options.length)
-        ? catType.options
+      var predefined = (catType.options && catType.options.length)
+        ? catType.options.slice()
         : [];
-      categorySelect = document.createElement('select');
-      categorySelect.className = 'editor editor-select url-import-category';
-      var blank = document.createElement('option');
-      blank.value = '';
-      blank.textContent = '— no category —';
-      categorySelect.appendChild(blank);
-      catOpts.forEach(function (opt) {
-        var o = document.createElement('option');
-        o.value = opt;
-        o.textContent = opt;
-        categorySelect.appendChild(o);
+      // Auto-detect categories already in use so re-importing under an
+      // existing label is one click.
+      var existingRows = await M.db.getAllRows(tab);
+      var seenCat = Object.create(null);
+      var detected = [];
+      existingRows.forEach(function (r) {
+        if (r._deleted) return;
+        String(r.category || '').split(',').forEach(function (raw) {
+          var v = raw.trim();
+          if (!v || seenCat[v]) return;
+          seenCat[v] = 1;
+          detected.push(v);
+        });
       });
-      categoryFieldNode = el('label', { class: 'url-import-category-row small' },
-        el('span', { class: 'muted' }, 'Category'),
-        categorySelect
+      // Merge — predefined first (in declared order), then detected
+      // extras the user added themselves.
+      var allCats = predefined.slice();
+      detected.forEach(function (v) { if (allCats.indexOf(v) < 0) allCats.push(v); });
+
+      var chipsHost = el('div', { class: 'url-import-cat-chips' });
+      var newInput = document.createElement('input');
+      newInput.type = 'text';
+      newInput.className = 'editor url-import-cat-new';
+      newInput.placeholder = 'Add new category…';
+      newInput.autocomplete = 'off';
+      newInput.spellcheck = false;
+
+      function commitNew() {
+        var v = newInput.value.trim();
+        newInput.value = '';
+        if (!v) return;
+        if (allCats.indexOf(v) < 0) allCats.push(v);
+        if (selectedCategories.indexOf(v) < 0) selectedCategories.push(v);
+        renderCategoryChips();
+      }
+      newInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ',') {
+          e.preventDefault();
+          commitNew();
+        }
+      });
+      newInput.addEventListener('blur', commitNew);
+
+      renderCategoryChips = function () {
+        chipsHost.replaceChildren();
+        allCats.forEach(function (cat) {
+          var on = selectedCategories.indexOf(cat) >= 0;
+          var chip = el('button', {
+            type: 'button',
+            class: 'url-import-cat-chip' + (on ? ' is-active' : ''),
+            onclick: function () {
+              var idx = selectedCategories.indexOf(cat);
+              if (idx >= 0) selectedCategories.splice(idx, 1);
+              else selectedCategories.push(cat);
+              renderCategoryChips();
+            }
+          }, cat);
+          chipsHost.appendChild(chip);
+        });
+      };
+      renderCategoryChips();
+
+      categoryFieldNode = el('div', { class: 'url-import-category-row' },
+        el('span', { class: 'small muted url-import-cat-label' }, 'Category'),
+        el('div', { class: 'url-import-cat-stack' },
+          chipsHost,
+          newInput
+        )
       );
     }
 
@@ -6696,6 +6933,19 @@
               (data.kind === 'channel' ? 'Channel ' : 'Playlist ') + 'enumerated, but contained no playable videos.'));
             return;
           }
+          // Tally how many incoming videos already exist in this section.
+          // Cheaper to do once here than to surprise the user post-import.
+          var existingDup = await M.db.getAllRows(tab);
+          var dupSet = new Set();
+          existingDup.forEach(function (r) {
+            if (r._deleted) return;
+            var u = r.url && String(r.url).trim();
+            if (u) dupSet.add(u);
+          });
+          var dupCount = 0;
+          (data.items || []).forEach(function (it) {
+            if (it.url && dupSet.has(String(it.url).trim())) dupCount++;
+          });
           var plNodes = [];
           var sourceLabel = data.kind === 'channel'
             ? el('span', null, 'channel ', el('strong', null, data.channelTitle || data.channelId || '(unknown)'))
@@ -6714,6 +6964,13 @@
                 class: 'url-import-refresh',
                 onclick: function (e) { e.preventDefault(); lookup({ noCache: true }); }
               }, 'Refresh from YouTube')
+            ));
+          }
+          if (dupCount > 0) {
+            var newCount = n - dupCount;
+            plNodes.push(el('p', { class: 'small url-import-dup-line' + (newCount === 0 ? ' is-warning' : '') },
+              dupCount + ' of ' + n + ' already in ', el('code', null, tab),
+              newCount === 0 ? ' — nothing new to import.' : ' — only ' + newCount + ' new will be added.'
             ));
           }
           var listNode = el('div', { class: 'url-import-playlist' });
@@ -6753,7 +7010,27 @@
           return meta.headers.indexOf(k) < 0 && data[k];
         });
 
+        // Duplicate check — surface "already in section" before the user
+        // adds a second row pointing at the same URL.
+        var dupRow = null;
+        if (data.url) {
+          var rowsForDup = await M.db.getAllRows(tab);
+          var inUrl = String(data.url).trim();
+          for (var di = 0; di < rowsForDup.length; di++) {
+            var rd = rowsForDup[di];
+            if (rd._deleted) continue;
+            if (String(rd.url || '').trim() === inUrl) { dupRow = rd; break; }
+          }
+        }
+
         var nodes = [];
+        if (dupRow) {
+          nodes.push(el('p', { class: 'small url-import-dup-line is-warning' },
+            'Already in ', el('code', null, tab), ': ',
+            el('strong', null, dupRow.title || dupRow.url || dupRow.id),
+            '. Adding would create a duplicate row.'
+          ));
+        }
         var thumb = data.thumbnail
           ? (function () {
               var img = document.createElement('img');
@@ -6764,7 +7041,17 @@
             })()
           : null;
         if (thumb) nodes.push(thumb);
-        ['kind', 'title', 'authors', 'year', 'url', 'pdf', 'abstract'].forEach(function (k) {
+        // Bibliographic fields in roughly bibtex order. Only fields the
+        // current section has a column for will actually persist on Add,
+        // but we surface everything the lookup returned so the user can
+        // see what got fetched.
+        [
+          'kind', 'title', 'authors', 'year', 'month',
+          'venue', 'volume', 'pages',
+          'publisher', 'issn', 'language', 'type',
+          'doi', 'url', 'pdf',
+          'tags', 'abstract', 'comment', 'affiliation'
+        ].forEach(function (k) {
           var f = renderField(k, data[k]);
           if (f) nodes.push(f);
         });
@@ -6779,7 +7066,8 @@
         ));
 
         preview.replaceChildren.apply(preview, nodes);
-        addBtn.disabled = matches.length === 0;
+        addBtn.disabled = matches.length === 0 || !!dupRow;
+        if (dupRow) setBtnLabel('Already in ' + tab);
       } catch (err) {
         fetched = null;
         addBtn.disabled = true;
@@ -6797,7 +7085,12 @@
       if (!fetched) return;
       addBtn.disabled = true;
       var prevLabel = addBtn.textContent;
-      var chosenCategory = categorySelect ? categorySelect.value : '';
+      // Flush any partially-typed new category before reading selection.
+      if (categoryColIdx >= 0) {
+        try { document.activeElement && document.activeElement.blur && document.activeElement.blur(); }
+        catch (e) { /* ignore */ }
+      }
+      var chosenCategory = selectedCategories.length ? selectedCategories.join(',') : '';
       // Playlist / channel branch — fan out into N rows.
       if (fetched.kind === 'playlist' || fetched.kind === 'channel') {
         setBtnLabel('Importing…');

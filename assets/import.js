@@ -98,6 +98,33 @@
       function (n) { return n.textContent.trim(); }
     );
 
+    // Affiliations — first author's institution, when arXiv has it.
+    var affil = '';
+    var affNode = entry.querySelector('author > affiliation');
+    if (affNode) affil = clean(affNode.textContent || '');
+
+    // Subject categories — primary first, then any extras (cs.LG, math.PR…).
+    // The arxiv: namespace prefix isn't always preserved by DOMParser, so
+    // we walk all <category> elements and dedupe.
+    var cats = [];
+    var seenCat = Object.create(null);
+    Array.prototype.forEach.call(entry.querySelectorAll('category'), function (n) {
+      var t = (n.getAttribute('term') || '').trim();
+      if (t && !seenCat[t]) { seenCat[t] = 1; cats.push(t); }
+    });
+
+    // arXiv-specific extras (journal_ref, doi, comment) live in the
+    // arxiv: namespace. getElementsByTagNameNS with '*' is the most
+    // reliable way to dig them out across browsers.
+    function arxivField(local) {
+      var nodes = entry.getElementsByTagNameNS('*', local);
+      if (!nodes || !nodes.length) return '';
+      return clean(nodes[0].textContent || '');
+    }
+    var journalRef = arxivField('journal_ref');
+    var arxivDoi   = arxivField('doi');
+    var comment    = arxivField('comment');
+
     return {
       kind: 'paper',
       title: title,
@@ -105,7 +132,15 @@
       year: published.slice(0, 4),
       url: 'https://arxiv.org/abs/' + id,
       pdf: 'https://arxiv.org/pdf/' + id + '.pdf',
-      abstract: summary
+      abstract: summary,
+      // Newly captured fields. Only set when arXiv actually returned them
+      // — empty strings stay out of the row so manual edits aren't blown
+      // away later.
+      venue: journalRef || 'arXiv',
+      doi: arxivDoi || '',
+      tags: cats.join(', '),
+      affiliation: affil,
+      comment: comment
     };
   }
 
@@ -491,8 +526,11 @@
     var titleArr = msg.title || [];
     var title = clean(titleArr[0] || '');
     var year = '';
-    if (msg.issued && msg.issued['date-parts'] && msg.issued['date-parts'][0]) {
-      year = String(msg.issued['date-parts'][0][0] || '');
+    var month = '';
+    var dateParts = msg.issued && msg.issued['date-parts'] && msg.issued['date-parts'][0];
+    if (dateParts) {
+      year  = String(dateParts[0] || '');
+      month = dateParts[1] ? String(dateParts[1]).padStart(2, '0') : '';
     }
     var authors = (msg.author || []).map(function (a) {
       return ((a.given || '') + ' ' + (a.family || '')).trim();
@@ -503,15 +541,35 @@
       if (!pdf && l['content-type'] === 'application/pdf') pdf = l.URL;
     });
     var container = clean((msg['container-title'] || [])[0] || '');
+    var shortContainer = clean((msg['short-container-title'] || [])[0] || '');
+    // Pages may arrive as "123-145" or as numeric `page` values; CrossRef
+    // is inconsistent across publishers. Stitch the most useful form.
+    var pages = clean(msg.page || '');
+    var volume = clean(msg.volume || '');
+    var issue = clean(msg.issue || '');
+    var volumeStr = volume + (issue ? '(' + issue + ')' : '');
+    var publisher = clean(msg.publisher || '');
+    var subjects = (msg.subject || []).map(clean).filter(Boolean);
+    var issn = '';
+    if (Array.isArray(msg.ISSN) && msg.ISSN.length) issn = msg.ISSN[0];
     return {
       kind: 'paper',
       title: title,
       authors: authors,
       year: year,
+      month: month,
       url: 'https://doi.org/' + doi,
       pdf: pdf,
       abstract: abstract,
-      venue: container
+      venue: container || shortContainer,
+      publisher: publisher,
+      doi: doi,
+      volume: volumeStr,
+      pages: pages,
+      type: clean(msg.type || ''),
+      issn: issn,
+      tags: subjects.join(', '),
+      language: clean(msg.language || '')
     };
   }
 
