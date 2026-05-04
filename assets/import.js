@@ -29,6 +29,39 @@
     return String(s || '').trim().replace(/\s+/g, ' ');
   }
 
+  // Read the configured CORS proxy URL prefix from localStorage. Empty
+  // string disables the proxy entirely. The default is a public service
+  // that accepts a URL-encoded target as a query parameter.
+  function corsProxy() {
+    try {
+      var raw = localStorage.getItem('minerva.config.v1');
+      if (!raw) return DEFAULT_CORS_PROXY;
+      var c = JSON.parse(raw);
+      if (typeof c.corsProxy === 'string') return c.corsProxy.trim();
+      return DEFAULT_CORS_PROXY;
+    } catch (e) { return DEFAULT_CORS_PROXY; }
+  }
+  var DEFAULT_CORS_PROXY = 'https://corsproxy.io/?';
+
+  // Fetch wrapper that retries failed requests through the configured
+  // CORS proxy. The first attempt is direct; on TypeError (the
+  // browser's signal for blocked CORS / network failure) the request is
+  // re-issued with the proxy prefix. If the proxy is empty or also
+  // fails, the original error is rethrown so callers can surface it.
+  async function fetchCors(url, init) {
+    try {
+      return await fetch(url, init);
+    } catch (firstErr) {
+      var proxy = corsProxy();
+      if (!proxy) throw firstErr;
+      try {
+        return await fetch(proxy + encodeURIComponent(url), init);
+      } catch (secondErr) {
+        throw firstErr;
+      }
+    }
+  }
+
   // ---- localStorage cache for YouTube Data API responses --------------
   // Cuts quota use across repeated imports / refreshes. Three buckets:
   //   pl.<listId>     — playlist enumeration (TTL: 6 hours)
@@ -83,7 +116,7 @@
     var m = s.match(/(?:arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(?:v\d+)?/i);
     if (!m) return null;
     var id = m[1];
-    var resp = await fetch('https://export.arxiv.org/api/query?id_list=' + encodeURIComponent(id));
+    var resp = await fetchCors('https://export.arxiv.org/api/query?id_list=' + encodeURIComponent(id));
     if (!resp.ok) throw new Error('arXiv ' + resp.status);
     var xml = await resp.text();
     var doc = new DOMParser().parseFromString(xml, 'text/xml');
@@ -155,7 +188,7 @@
   async function youtubeLookup(input) {
     var s = String(input || '');
     if (!/youtube\.com|youtu\.be/i.test(s)) return null;
-    var resp = await fetch('https://www.youtube.com/oembed?url=' + encodeURIComponent(s) + '&format=json');
+    var resp = await fetchCors('https://www.youtube.com/oembed?url=' + encodeURIComponent(s) + '&format=json');
     if (!resp.ok) throw new Error('YouTube ' + resp.status);
     var data = await resp.json();
     var author = clean(data.author_name || '');
@@ -519,7 +552,7 @@
     var m = s.match(/(10\.\d{4,9}\/[^\s]+)/);
     if (!m) return null;
     var doi = m[1].replace(/[)\.,;]+$/, '');  // strip trailing punctuation
-    var resp = await fetch('https://api.crossref.org/works/' + encodeURIComponent(doi));
+    var resp = await fetchCors('https://api.crossref.org/works/' + encodeURIComponent(doi));
     if (!resp.ok) throw new Error('CrossRef ' + resp.status);
     var data = await resp.json();
     var msg = data.message || {};

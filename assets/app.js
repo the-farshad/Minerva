@@ -6014,6 +6014,7 @@
         cobaltEndpoint:  String(f.get('cobaltEndpoint') || '').trim(),
         cobaltApiKey:    String(f.get('cobaltApiKey') || '').trim(),
         ytDlpServer:     String(f.get('ytDlpServer') || '').trim(),
+        corsProxy:       String(f.get('corsProxy') || '').trim(),
         offlineQuality:  String(f.get('offlineQuality') || '720').trim()
       });
       flash(form, 'Saved locally.');
@@ -6053,6 +6054,13 @@
           placeholder: 'leave blank for public/self-hosted Cobalt without auth',
           value: cfg.cobaltApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
         'Some self-hosted Cobalt instances require an API key (sent as the Authorization: Api-Key header). Stored locally only.'
+      ),
+      field('CORS proxy (optional)',
+        el('input', { name: 'corsProxy', type: 'url',
+          placeholder: 'https://corsproxy.io/?',
+          value: cfg.corsProxy != null ? cfg.corsProxy : 'https://corsproxy.io/?',
+          autocomplete: 'off', spellcheck: 'false' }),
+        'Some bibliographic APIs (arXiv, CrossRef) no longer respond with CORS headers, blocking direct browser fetches. Minerva retries failed requests through the URL prefix entered here, with the target URL appended (URL-encoded). Default is corsproxy.io. Leave blank to disable the fallback.'
       ),
       field('Offline video quality',
         (function () {
