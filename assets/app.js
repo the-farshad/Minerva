@@ -59,8 +59,90 @@
     var cur = readConfig();
     var next = Object.assign({}, cur, patch);
     localStorage.setItem(STORE, JSON.stringify(next));
+    scheduleDriveConfigSync();
     return next;
   }
+
+  // ---- Drive-backed config sync ----
+  // Persists everything except the OAuth Client ID (which has to be
+  // entered locally before any API call can be made) to a single JSON
+  // file on the user's Drive. New devices fetch it after Connect Google
+  // and pre-fill Settings.
+  var DRIVE_CONFIG_FILENAME = 'minerva-config.json';
+  var driveConfigSyncTimer = null;
+  var driveConfigSyncInflight = false;
+  function configForSync() {
+    var c = readConfig();
+    var out = {};
+    [
+      'spreadsheetId', 'youtubeApiKey',
+      'cobaltEndpoint', 'cobaltApiKey',
+      'ytDlpServer', 'ytDlpFormat',
+      'corsProxy', 'offlineQuality'
+    ].forEach(function (k) { if (c[k] != null) out[k] = c[k]; });
+    return out;
+  }
+  function scheduleDriveConfigSync() {
+    if (driveConfigSyncTimer) clearTimeout(driveConfigSyncTimer);
+    driveConfigSyncTimer = setTimeout(function () {
+      driveConfigSyncTimer = null;
+      runDriveConfigSync().catch(function (err) {
+        console.warn('[Minerva drive-config-sync]', err);
+      });
+    }, 1500);
+  }
+  async function runDriveConfigSync() {
+    if (driveConfigSyncInflight) return;
+    var c = readConfig();
+    if (!c.clientId) return;
+    if (!M.auth || !M.sheets) return;
+    driveConfigSyncInflight = true;
+    try {
+      var token = await M.auth.getToken(c.clientId);
+      var existing = await M.sheets.findDriveFile(token, DRIVE_CONFIG_FILENAME, 'application/json');
+      var fileId = existing && existing.files && existing.files[0] && existing.files[0].id;
+      var body = JSON.stringify({
+        version: 1,
+        savedAt: new Date().toISOString(),
+        config: configForSync()
+      });
+      await M.sheets.uploadDriveFile(token, DRIVE_CONFIG_FILENAME, 'application/json', body, fileId);
+    } finally {
+      driveConfigSyncInflight = false;
+    }
+  }
+  async function loadDriveConfigIfPresent() {
+    var c = readConfig();
+    if (!c.clientId) return false;
+    if (!M.auth || !M.sheets) return false;
+    var token;
+    try { token = await M.auth.getToken(c.clientId); }
+    catch (e) { return false; }
+    var existing;
+    try { existing = await M.sheets.findDriveFile(token, DRIVE_CONFIG_FILENAME, 'application/json'); }
+    catch (e) { return false; }
+    var file = existing && existing.files && existing.files[0];
+    if (!file) return false;
+    var raw;
+    try { raw = await M.sheets.getDriveFileContent(token, file.id); }
+    catch (e) { return false; }
+    var parsed;
+    try { parsed = JSON.parse(raw); }
+    catch (e) { return false; }
+    if (!parsed || !parsed.config) return false;
+    var current = readConfig();
+    var merged = Object.assign({}, parsed.config, current);
+    // Local values win for any keys the user already set on this device,
+    // so re-running the load doesn't clobber a fresh local edit before
+    // the next outbound sync writes back.
+    localStorage.setItem(STORE, JSON.stringify(merged));
+    return true;
+  }
+  window.Minerva = window.Minerva || {};
+  window.Minerva.driveConfigSync = {
+    save: runDriveConfigSync,
+    load: loadDriveConfigIfPresent
+  };
 
   // ---- theme + font picker ----
 
@@ -240,6 +322,102 @@
       input,
       hint ? el('p', { class: 'hint' }, hint) : null
     );
+  }
+
+  // Variant of field() that pairs the input with a "Test" button. The
+  // test function receives the current input value and returns a
+  // promise resolving to a string (success message) or rejecting with
+  // an error. Outcome is rendered inline above the hint.
+  function fieldWithTest(label, input, testFn, hint) {
+    var id = 'f-' + Math.random().toString(36).slice(2, 8);
+    input.id = id;
+    var status = el('p', { class: 'small field-test-status', hidden: true });
+    var btn = el('button', { class: 'btn btn-ghost field-test-btn', type: 'button',
+      onclick: async function (e) {
+        e.preventDefault();
+        status.hidden = false;
+        status.classList.remove('is-ok', 'is-err');
+        status.textContent = 'Testing…';
+        btn.disabled = true;
+        try {
+          var ok = await testFn(input.value.trim());
+          status.classList.add('is-ok');
+          status.textContent = '✓ ' + (ok || 'OK');
+        } catch (err) {
+          status.classList.add('is-err');
+          status.textContent = '✗ ' + (err && err.message || err);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+    }, 'Test');
+    var row = el('div', { class: 'field-test-row' }, input, btn);
+    return el('div', { class: 'field' },
+      el('label', { for: id }, label),
+      row,
+      status,
+      hint ? el('p', { class: 'hint' }, hint) : null
+    );
+  }
+
+  // ---- Settings field probes ----
+
+  async function testYoutubeApiKey(key) {
+    if (!key) throw new Error('Empty key');
+    var url = 'https://www.googleapis.com/youtube/v3/videos'
+      + '?part=id&id=dQw4w9WgXcQ&key=' + encodeURIComponent(key);
+    var resp = await fetch(url);
+    if (resp.status === 400 || resp.status === 403) {
+      var body = await resp.json().catch(function () { return {}; });
+      throw new Error((body.error && body.error.message) || ('HTTP ' + resp.status));
+    }
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var data = await resp.json();
+    if (!data.items) throw new Error('Unexpected response shape');
+    return 'API key accepted by YouTube Data API v3';
+  }
+
+  async function testYtDlpServer(endpoint) {
+    if (!endpoint) throw new Error('Empty URL');
+    var base = endpoint.replace(/\/+$/, '');
+    var resp;
+    try { resp = await fetch(base + '/health'); }
+    catch (e) { throw new Error('Cannot reach server (' + (e.message || e) + ')'); }
+    if (!resp.ok) throw new Error('Server returned HTTP ' + resp.status);
+    var data;
+    try { data = await resp.json(); }
+    catch (e) { throw new Error('Server response is not JSON — verify this is a Minerva yt-dlp server'); }
+    if (!data || data.ok !== true) throw new Error('Health check did not report ok:true');
+    return 'Server reachable (' + (data.service || 'yt-dlp') + ')';
+  }
+
+  async function testCobaltEndpoint(endpoint) {
+    if (!endpoint) throw new Error('Empty URL');
+    var base = endpoint.replace(/\/+$/, '');
+    // Cobalt's root returns a JSON manifest with version + commit info.
+    var resp;
+    try { resp = await fetch(base + '/'); }
+    catch (e) { throw new Error('Cannot reach Cobalt (' + (e.message || e) + ')'); }
+    if (!resp.ok) throw new Error('Cobalt returned HTTP ' + resp.status);
+    var data;
+    try { data = await resp.json(); }
+    catch (e) { throw new Error('Response is not JSON — verify the URL points at a Cobalt API'); }
+    var ver = (data && (data.cobalt && data.cobalt.version || data.version)) || '?';
+    return 'Cobalt instance reachable (version ' + ver + ')';
+  }
+
+  async function testCorsProxy(prefix) {
+    if (!prefix) throw new Error('Empty prefix — leave blank to disable instead of testing');
+    var probeTarget = 'https://api.crossref.org/works/10.1038/nature14539';
+    var resp;
+    try { resp = await fetch(prefix + encodeURIComponent(probeTarget)); }
+    catch (e) { throw new Error('Cannot reach proxy (' + (e.message || e) + ')'); }
+    if (!resp.ok) throw new Error('Proxy returned HTTP ' + resp.status);
+    var data;
+    try { data = await resp.json(); }
+    catch (e) { throw new Error('Proxy response not parseable as JSON'); }
+    if (!data || !data.message) throw new Error('Proxy returned data but not the expected CrossRef shape');
+    return 'Proxy reaches CrossRef and returns CORS-friendly JSON';
   }
 
   function callout(title, body) {
@@ -6095,22 +6273,25 @@
           value: cfg.spreadsheetId || '', autocomplete: 'off', spellcheck: 'false' }),
         'Found in your Sheet URL: docs.google.com/spreadsheets/d/<this-part>/edit'
       ),
-      field('YouTube API key (optional)',
+      fieldWithTest('YouTube API key (optional)',
         el('input', { name: 'youtubeApiKey', type: 'password',
           placeholder: 'AIza…',
           value: cfg.youtubeApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
+        testYoutubeApiKey,
         'Only needed for playlist imports + duration auto-fill. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.'
       ),
-      field('yt-dlp server (recommended)',
+      fieldWithTest('yt-dlp server (recommended)',
         el('input', { name: 'ytDlpServer', type: 'url',
           placeholder: 'http://localhost:8080',
           value: cfg.ytDlpServer || '', autocomplete: 'off', spellcheck: 'false' }),
-        'Run a tiny local Python server (see docs/yt-dlp-server.py) and put its URL here. Click Download → Minerva POSTs the video URL to your server, the server runs yt-dlp, and the file streams back into offline storage. No API needed. If both this and Cobalt are set, yt-dlp takes precedence.'
+        testYtDlpServer,
+        'Run a tiny local Python server (see docs/setup-yt-dlp.md) and put its URL here. Click Download → Minerva POSTs the video URL to your server, the server runs yt-dlp, and the file streams back into offline storage. No API needed. If both this and Cobalt are set, yt-dlp takes precedence.'
       ),
-      field('Cobalt downloader endpoint (optional)',
+      fieldWithTest('Cobalt downloader endpoint (optional)',
         el('input', { name: 'cobaltEndpoint', type: 'url',
           placeholder: 'https://api.cobalt.tools/  or  https://your-cobalt.example.com/',
           value: cfg.cobaltEndpoint || '', autocomplete: 'off', spellcheck: 'false' }),
+        testCobaltEndpoint,
         'Alternative one-click download path via a Cobalt instance — github.com/imputnet/cobalt. Used as a fallback when no yt-dlp server is configured.'
       ),
       field('Cobalt API key (optional)',
@@ -6119,12 +6300,13 @@
           value: cfg.cobaltApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
         'Some self-hosted Cobalt instances require an API key (sent as the Authorization: Api-Key header). Stored locally only.'
       ),
-      field('CORS proxy (optional)',
+      fieldWithTest('CORS proxy (optional)',
         el('input', { name: 'corsProxy', type: 'url',
           placeholder: 'https://corsproxy.io/?',
           value: cfg.corsProxy != null ? cfg.corsProxy : 'https://corsproxy.io/?',
           autocomplete: 'off', spellcheck: 'false' }),
-        'Some bibliographic APIs (arXiv, CrossRef) no longer respond with CORS headers, blocking direct browser fetches. Minerva retries failed requests through the URL prefix entered here, with the target URL appended (URL-encoded). Default is corsproxy.io. Leave blank to disable the fallback.'
+        testCorsProxy,
+        'Some bibliographic APIs (arXiv, CrossRef) do not respond with CORS headers, blocking direct browser fetches. Minerva retries failed requests through the URL prefix entered here, with the target URL appended (URL-encoded). Default is corsproxy.io; for full self-hosting see docs/setup-cors-proxy.md. Leave blank to disable the fallback.'
       ),
       field('Offline video quality',
         (function () {
@@ -6308,13 +6490,25 @@
         paintStatus('bootstrap');
         var bs = await M.bootstrap(token);
         writeConfig({ spreadsheetId: bs.spreadsheetId });
+        // After auth + spreadsheet bootstrap, attempt to pull any
+        // previously-synced settings from Drive so a fresh device
+        // inherits the user's API keys / endpoints / preferences.
+        var loaded = false;
+        try { loaded = await loadDriveConfigIfPresent(); }
+        catch (e) { console.warn('[Minerva drive-config-load]', e); }
         paintStatus('syncing');
         await M.sync.pullAll(token, bs.spreadsheetId);
         await refreshConfig();
         paintStatus();
         await paintLocal();
         renderNav(navActive());
-        flash(status, bs.fresh ? 'Spreadsheet created, seeded, and pulled.' : 'Connected and synced.');
+        var msg = bs.fresh ? 'Spreadsheet created, seeded, and pulled.' : 'Connected and synced.';
+        if (loaded) msg += ' Settings restored from Drive.';
+        flash(status, msg);
+        // Push a fresh copy of the local config back to Drive so any
+        // values typed before connect (typically just the spreadsheet
+        // id) become part of the canonical Drive snapshot.
+        scheduleDriveConfigSync();
       } catch (err) {
         paintStatus();
         flash(status, 'Connect failed: ' + (err && err.message ? err.message : err), 'error');
@@ -7023,12 +7217,95 @@
         renderVersionBadge()
       ),
       el('p', { class: 'lead' },
-        'Minerva keeps no secrets in its repo. You bring your own Google OAuth client; Minerva remembers it locally. ',
+        'Minerva keeps no secrets in its repo. The OAuth client is yours; remembered in this browser. ',
         el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough')
       ),
+      renderSetupChecklist(cfg),
       el('div', { class: 'settings-layout' },
         toc,
         body
+      )
+    );
+  }
+
+  // Numbered first-run checklist for the Settings page. Required steps
+  // sit at the top; optional ones (downloads, metadata fetch) follow.
+  // Each entry shows a status pill (Done / Optional / Pending) computed
+  // from the current config so the page is self-describing.
+  function renderSetupChecklist(cfg) {
+    function step(n, statusClass, statusLabel, title, body) {
+      return el('li', { class: 'setup-step ' + statusClass },
+        el('span', { class: 'setup-step-num' }, String(n)),
+        el('div', { class: 'setup-step-body' },
+          el('div', { class: 'setup-step-title' },
+            el('strong', null, title),
+            el('span', { class: 'setup-step-status' }, statusLabel)
+          ),
+          el('div', { class: 'setup-step-detail small muted' }, body)
+        )
+      );
+    }
+    var connected = !!(cfg.clientId && cfg.spreadsheetId);
+    var hasYtKey = !!(cfg.youtubeApiKey || '').trim();
+    var hasYtDlp = !!(cfg.ytDlpServer || '').trim();
+    var hasCors = (cfg.corsProxy != null) ? !!String(cfg.corsProxy).trim() : true;
+
+    return el('details', { class: 'setup-checklist', open: !connected ? '' : null },
+      el('summary', null, 'Setup checklist',
+        el('span', { class: 'small muted' },
+          ' — ' + (connected ? 'connected' : 'not connected'))
+      ),
+      el('ol', { class: 'setup-steps' },
+        step(1,
+          connected ? 'is-done' : 'is-pending',
+          connected ? 'Done' : 'Required',
+          'Connect Google',
+          el('span', null,
+            'Paste your OAuth ',
+            el('a', { href: '#oauth' }, 'Client ID'),
+            ' below, click Save, then Connect Google. ',
+            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'How to get one'),
+            '. The Client ID is the only credential that has to be entered on each new device — every other setting below syncs to your Drive once connected.'
+          )
+        ),
+        step(2,
+          hasYtDlp ? 'is-done' : 'is-optional',
+          hasYtDlp ? 'Done' : 'Optional · for offline downloads',
+          'Run a yt-dlp server',
+          el('span', null,
+            'Click Download on a YouTube row → file streams into offline storage. Run ',
+            el('code', null, 'python docs/yt-dlp-server.py'),
+            ' on your machine, then paste ',
+            el('code', null, 'http://localhost:8080'),
+            ' below. ',
+            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-yt-dlp.md', target: '_blank', rel: 'noopener' }, 'Full guide'),
+            '.'
+          )
+        ),
+        step(3,
+          hasYtKey ? 'is-done' : 'is-optional',
+          hasYtKey ? 'Done' : 'Optional · for playlists',
+          'YouTube Data API key',
+          el('span', null,
+            'Required only when importing whole playlists or @channels. Without it, single-video import still works. Get one in ~3 minutes from ',
+            el('a', { href: 'https://console.cloud.google.com/apis/api/youtube.googleapis.com', target: '_blank', rel: 'noopener' }, 'Google Cloud Console'),
+            '.'
+          )
+        ),
+        step(4,
+          hasCors ? 'is-done' : 'is-optional',
+          hasCors ? 'Done' : 'Optional · for arXiv / DOI',
+          'CORS proxy',
+          el('span', null,
+            'Required when adding papers from arXiv or DOI — those APIs do not return CORS headers, so a proxy is needed. The default ',
+            el('code', null, 'https://corsproxy.io/?'),
+            ' works out of the box. To self-host, run ',
+            el('code', null, 'python docs/cors-proxy.py'),
+            ' (',
+            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-cors-proxy.md', target: '_blank', rel: 'noopener' }, 'guide'),
+            ').'
+          )
+        )
       )
     );
   }
@@ -8017,10 +8294,36 @@
         addBtn.disabled = matches.length === 0 || !!dupRow;
         if (dupRow) setBtnLabel('Already in ' + tab);
       } catch (err) {
-        fetched = null;
-        addBtn.disabled = true;
-        preview.replaceChildren(el('p', { class: 'error small' },
-          'Lookup failed: ' + (err && err.message ? err.message : err)));
+        // Soft-fail: surface the error inline but still let the user
+        // save the row with whatever they typed. The fallback record
+        // carries only the URL (no metadata); the user fills the rest
+        // by hand. A CORS-proxy hint is shown when the failure looks
+        // like a network / CORS problem so the user knows the obvious
+        // recovery path.
+        var raw = input.value.trim();
+        var errMsg = (err && err.message ? err.message : String(err));
+        var looksLikeCors = /NetworkError|Failed to fetch|CORS|TypeError/i.test(errMsg);
+        fetched = /^https?:\/\//i.test(raw)
+          ? { kind: 'article', url: raw }
+          : null;
+        addBtn.disabled = !fetched;
+        if (fetched) setBtnLabel('Add to ' + tab + ' (URL only)');
+        preview.replaceChildren(
+          el('p', { class: 'error small' }, 'Lookup failed: ' + errMsg),
+          looksLikeCors
+            ? el('p', { class: 'small muted' },
+                'Looks like a CORS / network issue. Set a CORS proxy in ',
+                el('a', { href: '#/settings', onclick: function () { overlay.remove(); } }, 'Settings'),
+                ' (default https://corsproxy.io/? works) and try again.'
+              )
+            : null,
+          fetched
+            ? el('p', { class: 'small muted' },
+                'Metadata couldn\'t be fetched. You can still save the URL and fill the row by hand — click ',
+                el('strong', null, 'Add to ' + tab + ' (URL only)'), '.'
+              )
+            : null
+        );
       }
     }
 
@@ -9497,6 +9800,10 @@
 
     registerServiceWorker();
     await refreshConfig();
+    // Best-effort restore of synced settings from Drive on every boot.
+    // Silent failure when no token / no file / network — local config
+    // remains authoritative.
+    loadDriveConfigIfPresent().catch(function () { /* ignore */ });
 
     // Restore last view if the user landed on a bare URL.
     if (!location.hash || location.hash === '' || location.hash === '#') {

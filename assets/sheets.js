@@ -124,9 +124,39 @@
     return resp.json();
   }
 
+  // Generic Drive lookup by exact filename + optional mimeType. Visible
+  // only to files the app itself created (drive.file scope).
+  function findDriveFile(token, name, mimeType) {
+    var qParts = ["name='" + name.replace(/'/g, "\\'") + "'", 'trashed=false'];
+    if (mimeType) qParts.push("mimeType='" + mimeType + "'");
+    var q = qParts.join(' and ');
+    var url = 'https://www.googleapis.com/drive/v3/files' +
+              '?q=' + encodeURIComponent(q) +
+              '&fields=' + encodeURIComponent('files(id,name,modifiedTime)');
+    return api(token, 'GET', url);
+  }
+
+  // Read the raw byte content of a Drive file (alt=media). Returns the
+  // response text — callers parse JSON / decode as needed.
+  async function getDriveFileContent(token, fileId) {
+    var url = 'https://www.googleapis.com/drive/v3/files/' +
+              encodeURIComponent(fileId) + '?alt=media';
+    var resp = await fetch(url, {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if (!resp.ok) {
+      var err = new Error('Drive read ' + resp.status);
+      err.status = resp.status;
+      throw err;
+    }
+    return resp.text();
+  }
+
   window.Minerva = window.Minerva || {};
   window.Minerva.sheets = {
     findByName: findByName,
+    findDriveFile: findDriveFile,
+    getDriveFileContent: getDriveFileContent,
     createSpreadsheet: createSpreadsheet,
     getSpreadsheet: getSpreadsheet,
     batchUpdate: batchUpdate,

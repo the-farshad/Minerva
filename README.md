@@ -186,6 +186,8 @@ docs/setup-google-oauth.md   detailed OAuth client walkthrough + troubleshooting
 docs/setup-telegram.md       Telegram bot setup + always-on bridge sketch
 docs/setup-yt-dlp.md         offline-video downloader server (one-click Download)
 docs/yt-dlp-server.py        Flask reference server for the above (~100 lines)
+docs/setup-cors-proxy.md     self-hosted CORS proxy for arXiv / DOI metadata fetches
+docs/cors-proxy.py           Flask reference proxy for the above (~80 lines)
 docs/assets/minerva-logo.png 512x512 PNG logo for the OAuth consent screen
 docs/assets/minerva-logo.svg source SVG of the logo
 

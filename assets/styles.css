@@ -521,6 +521,19 @@ button.btn {
   font-family: var(--font);
 }
 .hint { margin: 0; font-size: 0.82rem; color: var(--muted); }
+.field-test-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.field-test-row > input { flex: 1; min-width: 0; }
+.field-test-btn { flex: 0 0 auto; padding: 0 0.85rem; font-size: 0.82rem; }
+.field-test-status {
+  margin: 0.3rem 0 0;
+  font-size: 0.82rem;
+}
+.field-test-status.is-ok  { color: var(--ok); }
+.field-test-status.is-err { color: var(--error); }
 .form-actions {
   display: flex;
   gap: 0.6rem;
@@ -879,6 +892,75 @@ code {
 }
 .settings-head h2 { margin: 0; }
 .settings-head .version-badge { margin-left: auto; }
+
+.setup-checklist {
+  margin: 1rem 0 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0.7rem 1rem;
+}
+.setup-checklist > summary {
+  cursor: pointer;
+  font-weight: 500;
+  list-style: none;
+}
+.setup-checklist > summary::-webkit-details-marker { display: none; }
+.setup-checklist > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 0.45rem;
+  color: var(--muted);
+  transition: transform .12s;
+}
+.setup-checklist[open] > summary::before { transform: rotate(90deg); }
+.setup-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0.6rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.setup-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.setup-step.is-done    { background: color-mix(in srgb, var(--ok) 8%, var(--surface-2)); }
+.setup-step.is-pending { background: color-mix(in srgb, var(--error) 6%, var(--surface-2)); }
+.setup-step-num {
+  flex: 0 0 auto;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.setup-step.is-done .setup-step-num { background: var(--ok); color: var(--bg); border-color: var(--ok); }
+.setup-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.setup-step-title { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.setup-step-status {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.setup-step.is-done .setup-step-status { color: var(--ok); border-color: var(--ok); }
+.setup-step.is-pending .setup-step-status { color: var(--error); border-color: var(--error); }
+.setup-step-detail { line-height: 1.45; }
+.setup-step-detail code { background: var(--bg); padding: 0 0.3rem; border-radius: 3px; }
 
 /* Landing variant — bigger hero, calmer color */
 .view-home-landing .home-hero-greet {
