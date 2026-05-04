@@ -1860,8 +1860,16 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 .tile-action svg { width: 1em; height: 1em; }
 .tile-watch { background: rgba(40, 130, 60, 0.85); }
 .tile-watch:hover { background: var(--ok, #2c8c3e); }
+.tile-drive { background: rgba(45, 90, 200, 0.85); }
+.tile-drive:hover { background: rgba(30, 70, 180, 1); }
 .tile-remove:hover { background: var(--error); }
 .tile.tile-has-offline { box-shadow: 0 0 0 1px var(--ok) inset; }
+.tiles-group-dl {
+  margin-left: auto;
+  color: var(--muted);
+}
+.tiles-group-dl:hover { color: var(--accent); }
+.tiles-group-dl svg { width: 0.95em; height: 0.95em; }
 .tile-thumb img {
   width: 100%;
   height: 100%;
@@ -3130,21 +3138,30 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   padding: 0;
   overflow: hidden;
 }
-.preview-overlay-yt { align-items: center !important; }
-.preview-panel.preview-panel-yt {
-  max-width: min(1280px, calc(100vw - 2rem));
-  height: auto;
+.preview-overlay-yt,
+.preview-overlay-video { align-items: center !important; }
+.preview-panel.preview-panel-yt,
+.preview-panel.preview-panel-video {
+  max-width: min(1280px, calc(100vw - 2rem)) !important;
+  width: 100% !important;
+  height: auto !important;
   aspect-ratio: 16 / 9;
   max-height: calc(100vh - 4rem);
 }
-.preview-panel.preview-panel-yt .preview-frame-host {
-  aspect-ratio: 16 / 9;
+.preview-panel.preview-panel-yt .preview-frame-host,
+.preview-panel.preview-panel-video .preview-frame-host {
   flex: 1 1 auto;
+  min-height: 0;
 }
 .preview-panel.preview-panel-yt .preview-frame {
   width: 100%;
   height: 100%;
   display: block;
+}
+.preview-panel.preview-panel-video .preview-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 /* PDF dark mode: invert the iframe contents so the native viewer

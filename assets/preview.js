@@ -420,7 +420,7 @@
     if (!opts.url) return;
     if (document.querySelector('.preview-overlay')) return;
     var overlay = document.createElement('div');
-    overlay.className = 'modal-overlay preview-overlay';
+    overlay.className = 'modal-overlay preview-overlay preview-overlay-video';
     overlay.addEventListener('click', function () { close(); });
 
     var panel = document.createElement('div');

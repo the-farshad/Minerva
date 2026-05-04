@@ -5322,10 +5322,15 @@
 
       // Per-card offline controls. The set of buttons depends on
       // whether a cached blob already exists for this row:
-      //   • cached  → Watch offline + Remove
+      //   • cached  → Watch offline + Remove (+ Open in Drive when
+      //               the offline column carries a drive:<id> token)
       //   • absent  → Download (yt-dlp server → Cobalt → clipboard
       //               fallback; shift-click opens full options)
       var rowHasBlob = offlineIds && offlineIds.has(r.id);
+      // Extract the Drive fileId left in the offline column by the
+      // mirror-to-Drive flow (format: "yt-dlp · 12.3 MB · drive:1abc…").
+      var driveIdMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
+      var driveFileId = driveIdMatch ? driveIdMatch[1] : '';
       if (hasOffline && hasUrl && url) {
         var actionsHost = el('div', { class: 'tile-actions' });
         if (rowHasBlob) {
@@ -5351,6 +5356,24 @@
           });
           watchBtn.appendChild(M.render.icon('play-circle'));
           actionsHost.appendChild(watchBtn);
+
+          // Open in Drive — visible only when the row carries a
+          // drive:<fileId> breadcrumb. Plain click opens the file in
+          // a new tab; the Watch button (above) stays the primary
+          // action for in-app playback.
+          if (driveFileId) {
+            var driveBtn = el('a', {
+              class: 'tile-action tile-drive',
+              href: 'https://drive.google.com/file/d/' + encodeURIComponent(driveFileId) + '/view',
+              target: '_blank',
+              rel: 'noopener',
+              title: 'Open in Google Drive',
+              'aria-label': 'Open in Drive',
+              onclick: function (e) { e.stopPropagation(); }
+            });
+            driveBtn.appendChild(M.render.icon('cloud'));
+            actionsHost.appendChild(driveBtn);
+          }
 
           var rmBtn = el('button', {
             type: 'button',
@@ -5420,12 +5443,29 @@
       if (meta2) body.appendChild(el('div', { class: 'tile-meta small muted' }, meta2));
       tile.appendChild(body);
 
-      tile.addEventListener('click', function (e) {
-        // Modifier-clicks defer to native link / OS behavior. Clicks
-        // on the per-card Download button stop propagation upstream.
+      tile.addEventListener('click', async function (e) {
+        // Modifier-clicks defer to native link / OS behavior. Per-card
+        // action buttons (Download / Watch / Remove) stop propagation
+        // before this handler runs.
         if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-        if (e.target.closest('.tile-download')) return;
+        if (e.target.closest('.tile-action')) return;
         e.preventDefault();
+        // Prefer the locally-cached blob over re-fetching the URL when
+        // both are available. Falls through to the URL preview if the
+        // lookup races or the blob has been removed since render.
+        if (rowHasBlob && M.db && M.preview && M.preview.showVideoBlob) {
+          try {
+            var rec = await M.db.getVideo(tab, r.id);
+            if (rec && rec.blob) {
+              M.preview.showVideoBlob({
+                url: URL.createObjectURL(rec.blob),
+                title: r.title || (titleCol && r[titleCol]) || 'Offline video',
+                sourceUrl: url
+              });
+              return;
+            }
+          } catch (err) { /* fall through to URL preview */ }
+        }
         if (url && window.Minerva && Minerva.preview) {
           Minerva.preview.show(url);
         } else {
@@ -5464,6 +5504,60 @@
         head.appendChild(caret);
         head.appendChild(el('span', { class: 'tiles-group-title' }, key));
         head.appendChild(el('span', { class: 'small muted' }, ' · ' + groupRows.length));
+
+        // Per-group Download-all — same routing as the table view's
+        // group head, mirrored here so the grid view has parity. Skips
+        // rows that already have a cached blob.
+        if (hasOffline && hasUrl) {
+          var groupRowsClosure = groupRows;
+          var dlAllBtn = el('button', {
+            type: 'button',
+            class: 'icon-btn row-group-dl tiles-group-dl',
+            title: 'Download every video in "' + key + '"',
+            onclick: async function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              var withUrl = groupRowsClosure.filter(function (rr) {
+                return rr.url && (!offlineIds || !offlineIds.has(rr.id));
+              });
+              if (!withUrl.length) {
+                flash(document.body, 'Nothing new to download in this group.');
+                return;
+              }
+              var gcfg = readConfig();
+              var gytDlpOk = !!(gcfg.ytDlpServer || '').trim();
+              var gCobaltOk = !!(gcfg.cobaltEndpoint || '').trim();
+              if (gytDlpOk || gCobaltOk) {
+                flash(document.body, 'Downloading ' + withUrl.length + ' video' + (withUrl.length === 1 ? '' : 's') + '…');
+                for (var i = 0; i < withUrl.length; i++) {
+                  try {
+                    if (gytDlpOk) await downloadOfflineViaYtDlp(tab, withUrl[i], null);
+                    else await downloadOfflineViaCobalt(tab, withUrl[i], null);
+                  } catch (er) { console.warn('[Minerva grid-group-dl]', er); }
+                }
+                if (refresh) await refresh();
+                return;
+              }
+              var fmt = gcfg.ytDlpFormat || 'mp4';
+              var parts = ['yt-dlp'];
+              if (fmt === 'mp3') parts.push('-x', '--audio-format', 'mp3');
+              else if (fmt === 'bestaudio') parts.push('-x');
+              else if (fmt === 'mp4') parts.push('-f', 'mp4');
+              else parts.push('-f', JSON.stringify(fmt));
+              withUrl.forEach(function (rr) { parts.push(JSON.stringify(rr.url)); });
+              var cmd = parts.join(' ');
+              try {
+                await navigator.clipboard.writeText(cmd);
+                flash(document.body, 'yt-dlp command for ' + withUrl.length + ' video' + (withUrl.length === 1 ? '' : 's') + ' copied. Paste in terminal.');
+              } catch (er) {
+                console.log(cmd);
+                flash(document.body, 'Clipboard blocked — yt-dlp command in console.', 'error');
+              }
+            }
+          });
+          dlAllBtn.appendChild(M.render.icon('download'));
+          head.appendChild(dlAllBtn);
+        }
         wrap.appendChild(head);
         if (!isCol) {
           var grid = el('div', { class: 'tiles-grid' });
