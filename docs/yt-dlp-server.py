@@ -122,6 +122,39 @@ def health():
     return jsonify({"ok": True, "service": "minerva-ytdlp"})
 
 
+@app.route("/", methods=["GET"])
+def index():
+    # Plain GET to / lands here. Confirms the server is alive and
+    # documents the only protocol it speaks.
+    return (
+        """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Minerva yt-dlp server</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px;
+           margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+    code { background: #f3f3f3; padding: 0.1rem 0.4rem; border-radius: 4px; }
+    .ok { color: #2c8c3e; }
+  </style>
+</head>
+<body>
+  <h1>Minerva yt-dlp server <span class="ok">ok</span></h1>
+  <p>This process accepts <code>POST /download</code> with a JSON body
+  <code>{ "url": "...", "format": "mp4" }</code> and streams the
+  resulting media bytes back.</p>
+  <p>Wire it into Minerva at
+  <em>Settings &rarr; yt-dlp server</em> with the URL of this host
+  (e.g. <code>http://localhost:8080</code>).</p>
+  <p>Health check: <a href="/health">/health</a>.</p>
+</body>
+</html>""",
+        200,
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
+
+
 if __name__ == "__main__":
     host = os.environ.get("MINERVA_YTDL_HOST", "127.0.0.1")
     port = int(os.environ.get("MINERVA_YTDL_PORT", "8080"))

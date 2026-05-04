@@ -71,6 +71,9 @@ def proxy():
 
     target = request.query_string.decode("utf-8", "replace").lstrip("?")
     if not target:
+        # Plain GET / with no query string: serve the status page.
+        if request.method == "GET":
+            return index()
         return ("Empty target. Append a URL-encoded URL after `?`.", 400, _cors_headers())
 
     # query_string carries the raw encoded URL; decode for hostname
@@ -132,6 +135,41 @@ def proxy():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True, "service": "minerva-cors-proxy"})
+
+
+def index():
+    # The root path is shadowed by the proxy() handler (which expects a
+    # query string). Hitting /index returns this status page so a
+    # browser visit to the bare host has somewhere to land.
+    return (
+        """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Minerva CORS proxy</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px;
+           margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+    code { background: #f3f3f3; padding: 0.1rem 0.4rem; border-radius: 4px; }
+    .ok { color: #2c8c3e; }
+  </style>
+</head>
+<body>
+  <h1>Minerva CORS proxy <span class="ok">ok</span></h1>
+  <p>Proxies bibliographic fetches that browsers can't issue directly
+  due to missing CORS headers (arXiv, CrossRef, Semantic Scholar,
+  YouTube oEmbed).</p>
+  <p>Usage: append a URL-encoded target after <code>?</code> —
+  e.g. <code>/?https%3A%2F%2Fexport.arxiv.org%2Fapi%2Fquery%3Fid_list%3D2401.12345</code>.</p>
+  <p>Wire it into Minerva at
+  <em>Settings &rarr; CORS proxy</em> with the prefix
+  <code>http://localhost:8081/?</code>.</p>
+  <p>Health check: <a href="/health">/health</a>.</p>
+</body>
+</html>""",
+        200,
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
 
 
 if __name__ == "__main__":

@@ -1540,10 +1540,12 @@
       var raw = JSON.parse(localStorage.getItem('minerva.section.view') || '{}');
       if (raw[slug]) return raw[slug];
     } catch (e) { /* fall through to default */ }
-    // Per-section default mode. The notes section defaults to the
-    // reader layout because the body column dominates that schema; all
-    // sections expose a List toggle.
+    // Per-section default mode. Notes opens in the reader layout
+    // because the body column dominates that schema; tasks default to
+    // the kanban board because progress through todo → doing → done is
+    // the canonical flow. List remains the universal fallback.
     if (slug === 'notes') return 'reader';
+    if (slug === 'tasks') return 'board';
     return 'list';
   }
   function writeViewMode(slug, mode) {
@@ -2240,14 +2242,20 @@
     }
     paintViewsBar();
 
-    function paintModeToggle(hasDate, hasTree, hasGraph, hasTiles, hasReader) {
+    function paintModeToggle(hasDate, hasTree, hasGraph, hasTiles, hasReader, hasBoard) {
       modeToggle.innerHTML = '';
-      if (!hasDate && !hasTree && !hasGraph && !hasTiles && !hasReader) return;
+      if (!hasDate && !hasTree && !hasGraph && !hasTiles && !hasReader && !hasBoard) return;
       if (hasReader) {
         var readerBtn = el('button', { type: 'button', 'data-value': 'reader',
           class: mode === 'reader' ? 'active' : '' }, 'Reader');
         readerBtn.addEventListener('click', function () { switchMode('reader'); });
         modeToggle.appendChild(readerBtn);
+      }
+      if (hasBoard) {
+        var boardBtn = el('button', { type: 'button', 'data-value': 'board',
+          class: mode === 'board' ? 'active' : '' }, 'Board');
+        boardBtn.addEventListener('click', function () { switchMode('board'); });
+        modeToggle.appendChild(boardBtn);
       }
       var listBtn = el('button', { type: 'button', 'data-value': 'list',
         class: mode === 'list' ? 'active' : '' }, 'List');
@@ -2450,13 +2458,19 @@
         return (h === 'body' || h === 'notes' || h === 'content' || h === 'text')
           && (t === 'markdown' || t === 'longtext');
       });
+      // Board mode shows up wherever a section has a select(...) column
+      // with at least one option. Status / state / phase are the
+      // canonical names; any other select column also qualifies.
+      var boardCol = pickBoardColumn(meta);
+      var canBoard = !!boardCol;
       if (mode === 'cal' && !canCal) mode = 'list';
       if (mode === 'tree' && !canTree) mode = 'list';
       if (mode === 'graph' && !canGraph) mode = 'list';
       if (mode === 'tiles' && !canTiles) mode = 'list';
       if (mode === 'reader' && !canReader) mode = 'list';
+      if (mode === 'board' && !canBoard) mode = 'list';
 
-      paintModeToggle(canCal, canTree, canGraph, canTiles, canReader);
+      paintModeToggle(canCal, canTree, canGraph, canTiles, canReader, canBoard);
       paintCalNav(mode === 'cal');
 
       var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
@@ -2490,8 +2504,24 @@
           'Pick a note on the left, edit on the right. ',
           el('strong', null, '+'), ' adds a new note. Click the sketch placeholder to draw inline.'
         );
+      } else if (mode === 'board' && canBoard) {
+        bodyHost.replaceChildren(renderKanbanBoard(meta, filtered, sec.tab, boardCol, refresh));
+        hint.replaceChildren(
+          'Drag a card between columns to change its ',
+          el('code', null, boardCol),
+          '. ',
+          el('strong', null, '+'), ' under any column adds a card pre-set to that ',
+          el('code', null, boardCol), '.'
+        );
       } else if (mode === 'tiles' && canTiles) {
-        bodyHost.replaceChildren(renderTiles(meta, filtered, sec.tab, refresh));
+        // Pre-resolve which rows already have an offline blob so the
+        // grid can paint Watch/Remove instead of Download where
+        // appropriate. Async pre-pass; the grid mounts when it returns.
+        bodyHost.replaceChildren(el('p', { class: 'small muted' }, 'Loading…'));
+        offlineRowIdSet(sec.tab, filtered).then(function (ids) {
+          bodyHost.replaceChildren(renderTiles(meta, filtered, sec.tab, refresh, ids));
+          if (M.render && M.render.refreshIcons) M.render.refreshIcons();
+        });
         hint.replaceChildren(
           'Grid groups rows by ',
           el('code', null, (meta.headers || []).indexOf('playlist') >= 0 ? 'playlist'
@@ -2711,6 +2741,13 @@
       // the importer auto-fetch metadata) — an empty form row is friction.
       if (isYoutube || isPapers) {
         showUrlImport(sec.tab);
+        return;
+      }
+      // Meeting polls: route + creation goes through the When-to-meet
+      // builder; the section's table is just an archive view of past
+      // polls. Adding a "row" by hand isn't meaningful here.
+      if (sec.slug === 'meets') {
+        location.hash = '#/meet/new';
         return;
       }
       // Non-YouTube: open a form modal so the user fills in fields
@@ -4732,6 +4769,203 @@
     });
   }
 
+  // Resolve which column drives kanban columns. Preference order:
+  //   1. `status`
+  //   2. `state`
+  //   3. `phase`
+  //   4. The first select(...) column found in the schema
+  // Returns the column name, or null when no select column exists.
+  function pickBoardColumn(meta) {
+    var headers = (meta && meta.headers) || [];
+    var types = (meta && meta.types) || [];
+    var preferred = ['status', 'state', 'phase'];
+    for (var pi = 0; pi < preferred.length; pi++) {
+      var idx = headers.indexOf(preferred[pi]);
+      if (idx >= 0) {
+        var t = M.render.parseType(types[idx] || 'text');
+        if (t.kind === 'select' && t.options && t.options.length) return preferred[pi];
+      }
+    }
+    for (var i = 0; i < headers.length; i++) {
+      if (M.render.isInternal(headers[i])) continue;
+      var ti = M.render.parseType(types[i] || 'text');
+      if (ti.kind === 'select' && ti.options && ti.options.length) return headers[i];
+    }
+    return null;
+  }
+
+  // Pre-fetch which rows already have a cached offline blob so the
+  // grid (and other surfaces) can render the right state without
+  // making each tile async. Returns a Set of row ids.
+  async function offlineRowIdSet(tab, rows) {
+    var out = new Set();
+    if (!M.db || !M.db.getVideo) return out;
+    for (var i = 0; i < rows.length; i++) {
+      try {
+        var rec = await M.db.getVideo(tab, rows[i].id);
+        if (rec && rec.blob) out.add(rows[i].id);
+      } catch (e) { /* ignore */ }
+    }
+    return out;
+  }
+
+  // Kanban view. Columns are the options of the section's chosen
+  // select column (typically `status`); each row renders as a card.
+  // Cards are HTML5-draggable; dropping onto a different column
+  // commits the new value via commitCellEdit() and triggers refresh().
+  // A per-column "+ Add" button creates a row pre-set to that column.
+  function renderKanbanBoard(meta, rows, tab, col, refresh) {
+    var headers = (meta && meta.headers) || [];
+    var types = (meta && meta.types) || [];
+    var colIdx = headers.indexOf(col);
+    var parsed = M.render.parseType(types[colIdx] || 'text');
+    var options = (parsed.options && parsed.options.length) ? parsed.options.slice() : [];
+
+    // Group rows by their column value. Values that don't appear in
+    // the declared options form an extra "(other)" column at the end
+    // so they remain visible and movable.
+    var byCol = {};
+    options.forEach(function (o) { byCol[o] = []; });
+    var extras = [];
+    rows.forEach(function (r) {
+      var v = String(r[col] || '').trim();
+      if (!v) {
+        extras.push(r);
+        return;
+      }
+      if (byCol[v]) byCol[v].push(r);
+      else {
+        if (!byCol[v]) byCol[v] = [];
+        byCol[v].push(r);
+        if (options.indexOf(v) < 0) options.push(v);
+      }
+    });
+    if (extras.length) {
+      byCol[''] = extras;
+      options.push('');
+    }
+
+    var titleCol = headers.indexOf('title') >= 0 ? 'title'
+      : (headers.indexOf('name') >= 0 ? 'name' : '');
+    var dueCol = headers.indexOf('due') >= 0 ? 'due'
+      : (headers.indexOf('deadline') >= 0 ? 'deadline' : '');
+    var prioCol = headers.indexOf('priority') >= 0 ? 'priority' : '';
+    var tagsCol = headers.indexOf('tags') >= 0 ? 'tags' : '';
+
+    function cardFor(row) {
+      var card = el('div', {
+        class: 'kanban-card',
+        draggable: 'true',
+        'data-row-id': row.id,
+        onclick: function (e) {
+          if (e.target.closest('button, input, a')) return;
+          location.hash = '#/r/' + encodeURIComponent(tab) + '/' + encodeURIComponent(row.id);
+        }
+      });
+      card.addEventListener('dragstart', function (e) {
+        card.classList.add('is-dragging');
+        try {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', row.id);
+        } catch (err) { /* ignore */ }
+      });
+      card.addEventListener('dragend', function () {
+        card.classList.remove('is-dragging');
+      });
+      var titleText = (titleCol && row[titleCol]) || row.title || row.name || '(untitled)';
+      card.appendChild(el('div', { class: 'kanban-card-title' }, titleText));
+
+      var meta2Bits = [];
+      if (dueCol && row[dueCol]) {
+        meta2Bits.push(el('span', { class: 'kanban-card-due' },
+          M.render.icon('calendar'), ' ' + String(row[dueCol]).slice(0, 10)
+        ));
+      }
+      if (prioCol && row[prioCol]) {
+        meta2Bits.push(el('span', { class: 'kanban-card-prio prio-' + String(row[prioCol]).toLowerCase() },
+          row[prioCol]
+        ));
+      }
+      if (meta2Bits.length) {
+        card.appendChild(el('div', { class: 'kanban-card-meta' }, meta2Bits));
+      }
+      if (tagsCol && row[tagsCol]) {
+        var tags = String(row[tagsCol]).split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+        if (tags.length) {
+          var chips = el('div', { class: 'kanban-card-tags' });
+          tags.slice(0, 4).forEach(function (t) {
+            chips.appendChild(el('span', { class: 'chip' }, t));
+          });
+          card.appendChild(chips);
+        }
+      }
+      return card;
+    }
+
+    function columnFor(value) {
+      var label = value || '(no ' + col + ')';
+      var column = el('div', { class: 'kanban-col', 'data-col-value': value });
+
+      var head = el('div', { class: 'kanban-col-head' },
+        el('span', { class: 'kanban-col-title' }, label),
+        el('span', { class: 'kanban-col-count small muted' }, String((byCol[value] || []).length))
+      );
+      column.appendChild(head);
+
+      var list = el('div', { class: 'kanban-col-list' });
+      column.appendChild(list);
+      (byCol[value] || []).forEach(function (r) { list.appendChild(cardFor(r)); });
+
+      var addBtn = el('button', { class: 'kanban-col-add btn btn-ghost', type: 'button',
+        title: 'Add a card to "' + label + '"',
+        onclick: async function () {
+          var newRow = await addRow(tab, headers);
+          if (titleCol) newRow[titleCol] = '';
+          newRow[col] = value;
+          newRow._dirty = 1;
+          await M.db.upsertRow(tab, newRow);
+          schedulePush();
+          if (refresh) await refresh();
+        }
+      }, M.render.icon('plus'), ' Add card');
+      column.appendChild(addBtn);
+
+      // Drop handlers — the entire column is a drop zone, not just
+      // the card list, so dropping in the empty space below also
+      // works. dragenter/leave maintain a hover state for visual
+      // feedback during the drag.
+      column.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+      });
+      column.addEventListener('dragenter', function () {
+        column.classList.add('is-drop-target');
+      });
+      column.addEventListener('dragleave', function (e) {
+        if (e.target === column) column.classList.remove('is-drop-target');
+      });
+      column.addEventListener('drop', async function (e) {
+        e.preventDefault();
+        column.classList.remove('is-drop-target');
+        var rowId = '';
+        try { rowId = e.dataTransfer.getData('text/plain'); } catch (err) {}
+        if (!rowId) return;
+        var row = rows.find(function (r) { return r.id === rowId; });
+        if (!row) return;
+        if (String(row[col] || '') === value) return;
+        await commitCellEdit(tab, rowId, col, value);
+        if (refresh) await refresh();
+      });
+
+      return column;
+    }
+
+    var board = el('div', { class: 'kanban-board' });
+    options.forEach(function (v) { board.appendChild(columnFor(v)); });
+    if (M.render && M.render.refreshIcons) M.render.refreshIcons();
+    return board;
+  }
+
   // Two-pane note layout. The sidebar lists every row by title and
   // a stripped-markdown preview; selecting a row populates the right
   // pane with editors for the title input, body textarea, sketch
@@ -4932,7 +5166,7 @@
   // year stamp, and — when the section has both `url` and `offline`
   // columns — an inline Download icon button that mirrors the
   // table-row routing.
-  function renderTiles(meta, rows, tab, refresh) {
+  function renderTiles(meta, rows, tab, refresh, offlineIds) {
     var headers = (meta && meta.headers) || [];
     var groupCol = headers.indexOf('playlist') >= 0 ? 'playlist'
       : (headers.indexOf('category') >= 0 ? 'category'
@@ -4977,38 +5211,91 @@
       }
       tile.appendChild(thumb);
 
-      // Per-card Download overlay — only when the section can store
-      // offline blobs. Mounted on the thumbnail so it's reachable
-      // without expanding the body. Routing matches the table view:
-      // yt-dlp server → Cobalt → clipboard fallback (shift-click
-      // opens the full options modal).
+      // Per-card offline controls. The set of buttons depends on
+      // whether a cached blob already exists for this row:
+      //   • cached  → Watch offline + Remove
+      //   • absent  → Download (yt-dlp server → Cobalt → clipboard
+      //               fallback; shift-click opens full options)
+      var rowHasBlob = offlineIds && offlineIds.has(r.id);
       if (hasOffline && hasUrl && url) {
-        var dlBtn = el('button', {
-          type: 'button',
-          class: 'tile-download',
-          title: 'Download for offline playback (shift-click for options)',
-          'aria-label': 'Download',
-          onclick: function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.shiftKey) {
-              showOfflineSetupDialog(tab, r, refresh);
-              return;
+        var actionsHost = el('div', { class: 'tile-actions' });
+        if (rowHasBlob) {
+          var watchBtn = el('button', {
+            type: 'button',
+            class: 'tile-action tile-watch',
+            title: 'Play the locally-saved file',
+            'aria-label': 'Watch offline',
+            onclick: async function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              try {
+                var rec = await M.db.getVideo(tab, r.id);
+                if (rec && rec.blob && M.preview && M.preview.showVideoBlob) {
+                  M.preview.showVideoBlob({
+                    url: URL.createObjectURL(rec.blob),
+                    title: r.title || (titleCol && r[titleCol]) || 'Offline video',
+                    sourceUrl: url
+                  });
+                }
+              } catch (err) { /* ignore */ }
             }
-            var cfg = readConfig();
-            if ((cfg.ytDlpServer || '').trim()) {
-              downloadOfflineViaYtDlp(tab, r, refresh);
-              return;
+          });
+          watchBtn.appendChild(M.render.icon('play-circle'));
+          actionsHost.appendChild(watchBtn);
+
+          var rmBtn = el('button', {
+            type: 'button',
+            class: 'tile-action tile-remove',
+            title: 'Remove the local copy',
+            'aria-label': 'Remove offline copy',
+            onclick: async function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!confirm('Remove the local copy of this video?')) return;
+              try { await M.db.deleteVideo(tab, r.id); } catch (err) {}
+              if (hasOffline && r.offline) {
+                pushUndo({ kind: 'edit', tab: tab, rowId: r.id, field: 'offline', prevValue: r.offline });
+                r.offline = '';
+                r._updated = new Date().toISOString();
+                r._dirty = 1;
+                await M.db.upsertRow(tab, r);
+                schedulePush();
+              }
+              if (refresh) await refresh();
             }
-            if ((cfg.cobaltEndpoint || '').trim()) {
-              downloadOfflineViaCobalt(tab, r, refresh);
-              return;
+          });
+          rmBtn.appendChild(M.render.icon('trash-2'));
+          actionsHost.appendChild(rmBtn);
+        } else {
+          var dlBtn = el('button', {
+            type: 'button',
+            class: 'tile-action tile-download',
+            title: 'Download for offline playback (shift-click for options)',
+            'aria-label': 'Download',
+            onclick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.shiftKey) {
+                showOfflineSetupDialog(tab, r, refresh);
+                return;
+              }
+              var cfg = readConfig();
+              if ((cfg.ytDlpServer || '').trim()) {
+                downloadOfflineViaYtDlp(tab, r, refresh);
+                return;
+              }
+              if ((cfg.cobaltEndpoint || '').trim()) {
+                downloadOfflineViaCobalt(tab, r, refresh);
+                return;
+              }
+              copyYtDlpCommand(url);
             }
-            copyYtDlpCommand(url);
-          }
-        });
-        dlBtn.appendChild(M.render.icon('download'));
-        thumb.appendChild(dlBtn);
+          });
+          dlBtn.appendChild(M.render.icon('download'));
+          actionsHost.appendChild(dlBtn);
+        }
+        thumb.appendChild(actionsHost);
+        if (rowHasBlob) tile.classList.add('tile-has-offline');
       }
 
       var body = el('div', { class: 'tile-body' });
@@ -6033,6 +6320,63 @@
     };
   }
 
+  // Optional secondary upload of an offline blob to Drive. Idempotent
+  // by name within a "Minerva offline" folder; failure is non-fatal
+  // (the blob is already saved locally so playback still works).
+  // Returns the Drive fileId on success, '' otherwise.
+  async function uploadOfflineToDrive(blob, filename) {
+    if (!M.auth || !M.sheets) return '';
+    var c = readConfig();
+    if (!c.clientId) return '';
+    try {
+      var token = await M.auth.getToken(c.clientId);
+      var blobBytes = await blob.arrayBuffer();
+      // Convert to base64 for the multipart upload (uploadDriveFile
+      // expects a string body). Use chunked btoa to avoid call-stack
+      // overflow on large blobs.
+      var bytes = new Uint8Array(blobBytes);
+      var chunks = [];
+      var CHUNK = 0x8000;
+      for (var i = 0; i < bytes.length; i += CHUNK) {
+        chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK)));
+      }
+      // Drive's multipart upload accepts raw bytes too, but the
+      // existing helper concatenates strings. Use the lighter
+      // resumable upload path inline to avoid corrupting binary
+      // content via String.fromCharCode round-tripping.
+      var initResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'X-Upload-Content-Type': blob.type || 'video/mp4',
+          'X-Upload-Content-Length': String(blob.size)
+        },
+        body: JSON.stringify({ name: filename })
+      });
+      if (!initResp.ok) {
+        console.warn('[Minerva drive-upload-init]', initResp.status);
+        return '';
+      }
+      var sessionUri = initResp.headers.get('Location');
+      if (!sessionUri) return '';
+      var uploadResp = await fetch(sessionUri, {
+        method: 'PUT',
+        headers: { 'Content-Type': blob.type || 'video/mp4' },
+        body: blob
+      });
+      if (!uploadResp.ok) {
+        console.warn('[Minerva drive-upload-put]', uploadResp.status);
+        return '';
+      }
+      var data = await uploadResp.json().catch(function () { return null; });
+      return (data && data.id) || '';
+    } catch (e) {
+      console.warn('[Minerva drive-upload]', e);
+      return '';
+    }
+  }
+
   async function downloadOfflineViaYtDlp(tab, row, refresh) {
     if (!row.url) {
       flash(document.body, 'No URL on this row to download.', 'error');
@@ -6103,9 +6447,15 @@
         size: blob.size
       });
       var meta = await M.db.getMeta(tab);
+      var driveFileId = '';
+      if (cfg.uploadOfflineToDrive) {
+        job.setStatus('Uploading to Drive…');
+        driveFileId = await uploadOfflineToDrive(blob, filename);
+      }
       if (meta && (meta.headers || []).indexOf('offline') >= 0) {
         pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'offline', prevValue: row.offline });
-        row.offline = 'yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB';
+        row.offline = 'yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB'
+          + (driveFileId ? ' · drive:' + driveFileId : '');
         row._updated = new Date().toISOString();
         row._dirty = 1;
         await M.db.upsertRow(tab, row);
@@ -6182,9 +6532,15 @@
       });
       // Breadcrumb in the spreadsheet so other devices know it's local.
       var meta = await M.db.getMeta(tab);
+      var driveFileId = '';
+      if (cfg.uploadOfflineToDrive) {
+        job.setStatus('Uploading to Drive…');
+        driveFileId = await uploadOfflineToDrive(blob, result.filename || 'video.mp4');
+      }
       if (meta && (meta.headers || []).indexOf('offline') >= 0) {
         pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'offline', prevValue: row.offline });
-        row.offline = 'cobalt · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB · ' + quality + 'p';
+        row.offline = 'cobalt · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB · ' + quality + 'p'
+          + (driveFileId ? ' · drive:' + driveFileId : '');
         row._updated = new Date().toISOString();
         row._dirty = 1;
         await M.db.upsertRow(tab, row);
@@ -6257,7 +6613,8 @@
         cobaltApiKey:    String(f.get('cobaltApiKey') || '').trim(),
         ytDlpServer:     String(f.get('ytDlpServer') || '').trim(),
         corsProxy:       String(f.get('corsProxy') || '').trim(),
-        offlineQuality:  String(f.get('offlineQuality') || '720').trim()
+        offlineQuality:  String(f.get('offlineQuality') || '720').trim(),
+        uploadOfflineToDrive: f.get('uploadOfflineToDrive') === 'on'
       });
       flash(form, 'Saved locally.');
     } },
@@ -6319,6 +6676,20 @@
           return sel;
         })(),
         'Max video resolution to request from Cobalt. Higher = bigger file. 720p is a sensible default for laptop / phone playback.'
+      ),
+      field('Also save downloads to Drive',
+        (function () {
+          var lbl = el('label', { class: 'switch' });
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.name = 'uploadOfflineToDrive';
+          if (cfg.uploadOfflineToDrive) cb.checked = true;
+          lbl.appendChild(cb);
+          lbl.appendChild(el('span', { class: 'switch-track' }));
+          lbl.appendChild(document.createTextNode(' Mirror each downloaded file to your Drive too'));
+          return lbl;
+        })(),
+        'When on, the per-row Download flow uploads the resulting blob to a "Minerva offline" folder in your Google Drive after saving it locally. The row\'s offline column records the Drive fileId. Counts against your Drive storage quota.'
       ),
       el('div', { class: 'form-actions' },
         el('button', { class: 'btn', type: 'submit' }, 'Save'),

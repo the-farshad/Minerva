@@ -301,9 +301,13 @@
 
       // Adjust the panel aspect to the content kind. YouTube embeds
       // are 16:9 and look squashed in the tall PDF-shaped panel; PDFs
-      // keep the original full-height layout.
+      // keep the original full-height layout. The class is applied to
+      // both overlay and panel so align-items overrides reliably win
+      // without depending on :has() selector support.
       panel.classList.toggle('preview-panel-yt', isYt);
       panel.classList.toggle('preview-panel-pdf', isPdfNow);
+      overlay.classList.toggle('preview-overlay-yt', isYt);
+      overlay.classList.toggle('preview-overlay-pdf', isPdfNow);
 
       while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
       var resumeAt = isYt ? readVideoResume(url) : 0;

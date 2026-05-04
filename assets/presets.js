@@ -178,7 +178,7 @@
       slug: 'meets',
       title: 'Meeting polls',
       icon: 'users',
-      description: 'When-to-meet group polls. The "When to meet" form on the Schedule page saves each poll here so you can find it later, see the response link, and copy/share again.',
+      description: 'Archive of When-to-meet group polls you have created. The + button opens the When-to-meet builder; saved polls show up here with their response URL so you can re-share later.',
       schema: {
         headers: ['id','title','url','days','slots','responses','status','note','created','_updated'],
         types:   ['text','text','link','text','text','number','select(open,closed)','markdown','datetime','datetime']
