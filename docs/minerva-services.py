@@ -243,8 +243,25 @@ def health():
     return jsonify({
         "ok": True,
         "service": "minerva-services",
-        "endpoints": ["/download", "/proxy", "/health", "/"],
+        "endpoints": ["/download", "/proxy", "/health", "/shutdown", "/"],
     })
+
+
+@app.route("/shutdown", methods=["POST", "OPTIONS"])
+def shutdown():
+    # Soft remote stop. Accepts only loopback connections by default;
+    # set MINERVA_ALLOW_REMOTE_SHUTDOWN=1 to opt into accepting LAN
+    # requests too. The actual exit is delayed by a thread so the
+    # response can flush back to the client.
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    remote = request.remote_addr or ""
+    allow_remote = os.environ.get("MINERVA_ALLOW_REMOTE_SHUTDOWN") == "1"
+    if not allow_remote and remote not in ("127.0.0.1", "::1", "localhost"):
+        return ("Shutdown is restricted to loopback callers.", 403, _cors_dict())
+    import threading
+    threading.Timer(0.2, lambda: os._exit(0)).start()
+    return jsonify({"ok": True, "stopping": True})
 
 
 @app.route("/", methods=["GET"])

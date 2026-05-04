@@ -335,6 +335,29 @@
     input.id = id;
     var status = el('p', { class: 'small field-test-status', hidden: true });
     var pill = el('span', { class: 'svc-pill is-unset' }, 'not set');
+
+    // Open: launches the configured URL in a new tab. The opener
+    // remains so the user can switch back. Hidden when no URL is
+    // entered. The base URL is the field as-is (browsers handle
+    // trailing `?` for the CORS proxy field gracefully).
+    var openLink = el('a', { class: 'btn btn-ghost field-test-btn',
+      target: '_blank', rel: 'noopener', title: 'Open in a new tab' },
+      M.render.icon('external-link'), ' Open');
+    function refreshOpenHref() {
+      var v = input.value.trim();
+      if (!v) {
+        openLink.style.display = 'none';
+        openLink.removeAttribute('href');
+      } else {
+        openLink.style.display = '';
+        // Strip a trailing `?` (used by CORS proxy prefixes) so the
+        // browser doesn't load an empty-target proxy request.
+        openLink.href = v.replace(/\/+\?$/, '/');
+      }
+    }
+    refreshOpenHref();
+    input.addEventListener('input', refreshOpenHref);
+
     var btn = el('button', { class: 'btn btn-ghost field-test-btn', type: 'button',
       onclick: async function (e) {
         e.preventDefault();
@@ -357,10 +380,41 @@
         }
       }
     }, 'Test');
-    var row = el('div', { class: 'field-test-row' }, input, pill, btn);
+
+    // Stop: POST /shutdown to the configured URL. Only minerva-services
+    // accepts this; other endpoints will 404 quietly.
+    var stopBtn = opts.canStop !== false ? el('button', {
+      class: 'btn btn-ghost field-test-btn', type: 'button',
+      title: 'Send /shutdown to the configured server',
+      onclick: async function (e) {
+        e.preventDefault();
+        var v = input.value.trim();
+        if (!v) return;
+        var url = v.replace(/\/+$/, '') + '/shutdown';
+        stopBtn.disabled = true;
+        try {
+          var r = await fetch(url, { method: 'POST' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          status.hidden = false;
+          status.classList.remove('is-err');
+          status.classList.add('is-ok');
+          status.textContent = '✓ Stop request accepted';
+          pill.className = 'svc-pill is-down';
+          pill.textContent = 'offline';
+        } catch (err) {
+          status.hidden = false;
+          status.classList.remove('is-ok');
+          status.classList.add('is-err');
+          status.textContent = '✗ Stop failed: ' + (err && err.message || err)
+            + ' (only the combined minerva-services script supports /shutdown)';
+        } finally {
+          stopBtn.disabled = false;
+        }
+      }
+    }, M.render.icon('square'), ' Stop') : null;
+
+    var row = el('div', { class: 'field-test-row' }, input, pill, openLink, btn, stopBtn);
     if (opts.healthPath !== false) {
-      // Probe on render so the pill is meaningful before the user hits
-      // Test. Skips when the field is empty or the caller opted out.
       setTimeout(function () { attachStatusPill(pill, input.value.trim(), opts.healthPath); }, 0);
     }
     return el('div', { class: 'field' },
@@ -372,7 +426,7 @@
   }
 
   // Trigger a browser download of a helper script bundled with the
-  // deployed app (e.g. docs/yt-dlp-server.py). The file is fetched
+  // deployed app (e.g. docs/minerva-services.py). The file is fetched
   // relative to the current path so it works for any host. A flash
   // surfaces the next step the user should take.
   async function downloadHelperScript(relPath, suggestedName, nextStep) {
@@ -6091,7 +6145,7 @@
         el('p', { class: 'small muted' },
           ytDlpOk
             ? ('Configured at ' + (dcfg.ytDlpServer || '') + '. Click below for a one-shot download.')
-            : 'Run a tiny Python server on your machine (see docs/yt-dlp-server.py), set its URL in Settings, and Minerva will POST the video URL → server runs yt-dlp → file streams back into offline storage. No API needed.'
+            : 'Run a tiny Python server on your machine (see docs/minerva-services.py), set its URL in Settings, and Minerva will POST the video URL → server runs yt-dlp → file streams back into offline storage. No API needed.'
         ),
         ytDlpOk
           ? el('button', { class: 'btn', type: 'button',
@@ -6304,7 +6358,7 @@
   //                             best, mp3, etc.)
   //   200 OK with the raw video bytes streamed back. Filename comes
   //   from the optional Content-Disposition header.
-  // The reference Flask server in docs/yt-dlp-server.py implements this.
+  // The reference Flask server in docs/minerva-services.py implements this.
   // Multi-job downloads tray. Stacks one card per concurrent download
   // bottom-right; each card has its own progress bar + status. Success
   // cards auto-dismiss after 4 s (12 s when an action button is
@@ -7786,17 +7840,19 @@
           )
         ),
         step(2,
-          hasYtDlp ? 'is-done' : 'is-optional',
-          hasYtDlp ? 'Done' : 'Optional · for offline downloads',
-          'Run a yt-dlp server',
+          (hasYtDlp || hasCors) ? 'is-done' : 'is-optional',
+          (hasYtDlp || hasCors) ? 'Done' : 'Optional · for downloads + papers',
+          'Run minerva-services',
           el('span', null,
-            'Click Download on a YouTube row → file streams into offline storage. Run ',
-            el('code', null, 'python docs/yt-dlp-server.py'),
-            ' on your machine, then paste ',
-            el('code', null, 'http://localhost:8080'),
-            ' below. ',
-            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-yt-dlp.md', target: '_blank', rel: 'noopener' }, 'Full guide'),
-            '.'
+            'One Python script (or one Docker container) runs both the yt-dlp downloader and the CORS proxy. Run ',
+            el('code', null, 'python docs/minerva-services.py'),
+            ', then paste ',
+            el('code', null, 'http://localhost:8765'),
+            ' into the yt-dlp server field and ',
+            el('code', null, 'http://localhost:8765/proxy?'),
+            ' into the CORS proxy field below. ',
+            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-local-services.md', target: '_blank', rel: 'noopener' }, 'Full guide'),
+            ' (Python / Docker / systemd / launchd).'
           )
         ),
         step(3,
@@ -7807,20 +7863,6 @@
             'Required only when importing whole playlists or @channels. Without it, single-video import still works. Get one in ~3 minutes from ',
             el('a', { href: 'https://console.cloud.google.com/apis/api/youtube.googleapis.com', target: '_blank', rel: 'noopener' }, 'Google Cloud Console'),
             '.'
-          )
-        ),
-        step(4,
-          hasCors ? 'is-done' : 'is-optional',
-          hasCors ? 'Done' : 'Optional · for arXiv / DOI',
-          'CORS proxy',
-          el('span', null,
-            'Required when adding papers from arXiv or DOI — those APIs do not return CORS headers, so a proxy is needed. The default ',
-            el('code', null, 'https://corsproxy.io/?'),
-            ' works out of the box. To self-host, run ',
-            el('code', null, 'python docs/cors-proxy.py'),
-            ' (',
-            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-cors-proxy.md', target: '_blank', rel: 'noopener' }, 'guide'),
-            ').'
           )
         )
       )

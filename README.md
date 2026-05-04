@@ -66,7 +66,7 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 ### Offline / install
 - **PWA** — installable from your browser's *Install* / *Add to Home Screen*, with a service worker that caches the static shell. Read your data offline; edits queue and flush automatically when you reconnect.
 - **Undo** — `⌘/Ctrl+Z` reverses the last edit / add / delete (50-deep stack in `localStorage`).
-- **Per-row offline video** — a Download button on every YouTube row. Wire it to a tiny local **yt-dlp server** (see [`docs/setup-yt-dlp.md`](docs/setup-yt-dlp.md)) for one-click downloads with a progress bar, or to a [Cobalt](https://github.com/imputnet/cobalt) instance, or upload a file you already have. Saved videos live in IndexedDB; the row gets a **Watch offline** button that plays the local copy with resume-where-you-left-off.
+- **Per-row offline video** — a Download button on every YouTube row. Wire it to a tiny local **helper service** (see [`docs/setup-local-services.md`](docs/setup-local-services.md)) — one Python script (or one Docker container) that runs yt-dlp downloads + a CORS proxy from the same process — for one-click downloads with a progress bar, or to a [Cobalt](https://github.com/imputnet/cobalt) instance, or upload a file you already have. Saved videos live in IndexedDB; the row gets a **Watch offline** button that plays the local copy with resume-where-you-left-off.
 
 ### YouTube tracker
 - **Tiles view** — visual card grid grouped by playlist or category, with thumbnails. Toggle from the section header.
@@ -184,10 +184,10 @@ assets/app.js          hash router, all views (home, section, share, settings, .
 
 docs/setup-google-oauth.md   detailed OAuth client walkthrough + troubleshooting
 docs/setup-telegram.md       Telegram bot setup + always-on bridge sketch
-docs/setup-yt-dlp.md         offline-video downloader server (one-click Download)
-docs/yt-dlp-server.py        Flask reference server for the above (~100 lines)
-docs/setup-cors-proxy.md     self-hosted CORS proxy for arXiv / DOI metadata fetches
-docs/cors-proxy.py           Flask reference proxy for the above (~80 lines)
+docs/setup-local-services.md combined setup guide for the local helper services
+docs/minerva-services.py     self-bootstrapping Flask server: yt-dlp + CORS proxy on one port
+docs/Dockerfile              container image for the helper services
+docs/docker-compose.yml      docker compose wrapper for the same image
 docs/assets/minerva-logo.png 512x512 PNG logo for the OAuth consent screen
 docs/assets/minerva-logo.svg source SVG of the logo
 
