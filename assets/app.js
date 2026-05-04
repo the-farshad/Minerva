@@ -1358,8 +1358,12 @@
   function readViewMode(slug) {
     try {
       var raw = JSON.parse(localStorage.getItem('minerva.section.view') || '{}');
-      return raw[slug] || 'list';
-    } catch (e) { return 'list'; }
+      if (raw[slug]) return raw[slug];
+    } catch (e) { /* fall through to default */ }
+    // Per-section default mode. Notes opens in the reader (iPad-Notes
+    // shape) by default — table is still one click away.
+    if (slug === 'notes') return 'reader';
+    return 'list';
   }
   function writeViewMode(slug, mode) {
     try {
@@ -2054,9 +2058,15 @@
     }
     paintViewsBar();
 
-    function paintModeToggle(hasDate, hasTree, hasGraph, hasTiles) {
+    function paintModeToggle(hasDate, hasTree, hasGraph, hasTiles, hasReader) {
       modeToggle.innerHTML = '';
-      if (!hasDate && !hasTree && !hasGraph && !hasTiles) return;
+      if (!hasDate && !hasTree && !hasGraph && !hasTiles && !hasReader) return;
+      if (hasReader) {
+        var readerBtn = el('button', { type: 'button', 'data-value': 'reader',
+          class: mode === 'reader' ? 'active' : '' }, 'Reader');
+        readerBtn.addEventListener('click', function () { switchMode('reader'); });
+        modeToggle.appendChild(readerBtn);
+      }
       var listBtn = el('button', { type: 'button', 'data-value': 'list',
         class: mode === 'list' ? 'active' : '' }, 'List');
       listBtn.addEventListener('click', function () { switchMode('list'); });
@@ -2250,12 +2260,21 @@
         var t = M.render.parseType((meta.types || [])[i] || 'text').kind;
         return h === 'url' || h === 'pdf' || t === 'link' || t === 'drawing';
       });
+      // Reader mode shows up wherever a section has a markdown/long-text
+      // "body" or "notes"-style column — i.e. anywhere a row genuinely
+      // has a long-form body to read. Notes is the canonical case.
+      var canReader = (meta && meta.headers || []).some(function (h, i) {
+        var t = M.render.parseType((meta.types || [])[i] || 'text').kind;
+        return (h === 'body' || h === 'notes' || h === 'content' || h === 'text')
+          && (t === 'markdown' || t === 'longtext');
+      });
       if (mode === 'cal' && !canCal) mode = 'list';
       if (mode === 'tree' && !canTree) mode = 'list';
       if (mode === 'graph' && !canGraph) mode = 'list';
       if (mode === 'tiles' && !canTiles) mode = 'list';
+      if (mode === 'reader' && !canReader) mode = 'list';
 
-      paintModeToggle(canCal, canTree, canGraph, canTiles);
+      paintModeToggle(canCal, canTree, canGraph, canTiles, canReader);
       paintCalNav(mode === 'cal');
 
       var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
@@ -2282,6 +2301,12 @@
           ' field. ', el('strong', null, '+'), ' adds a subtask · ',
           el('strong', null, '↺'),
           ' shows incoming refs from other sections. Click ▸/▾ to expand.'
+        );
+      } else if (mode === 'reader' && canReader) {
+        bodyHost.replaceChildren(renderNotesReader(meta, filtered, sec.tab, refresh));
+        hint.replaceChildren(
+          'Pick a note on the left, edit on the right. ',
+          el('strong', null, '+'), ' adds a new note. Click the sketch placeholder to draw inline.'
         );
       } else if (mode === 'tiles' && canTiles) {
         bodyHost.replaceChildren(renderTiles(meta, filtered, sec.tab, refresh));
@@ -4525,6 +4550,198 @@
     });
   }
 
+  // Notes reader — iPad-Notes-style sidebar + reading pane. Sidebar
+  // lists titles + previews; selecting a note loads its body, sketch,
+  // and tag chips into the right pane for inline editing. Auto-saves
+  // on blur of any field. Selected id persists per tab so navigating
+  // away and back doesn't lose your place.
+  function renderNotesReader(meta, rows, tab, refresh) {
+    var headers = (meta && meta.headers) || [];
+    var bodyCol = headers.indexOf('body') >= 0 ? 'body'
+      : (headers.indexOf('notes') >= 0 ? 'notes'
+        : (headers.indexOf('content') >= 0 ? 'content' : 'text'));
+    var titleCol = headers.indexOf('title') >= 0 ? 'title'
+      : (headers.indexOf('name') >= 0 ? 'name' : '');
+    var sketchCol = headers.indexOf('sketch') >= 0 ? 'sketch' : '';
+    var tagsCol = headers.indexOf('tags') >= 0 ? 'tags' : '';
+
+    // Restore last-selected id (per-tab) so navigation feels sticky.
+    var SEL_KEY = 'minerva.reader.sel';
+    function readSel() {
+      try { var raw = JSON.parse(localStorage.getItem(SEL_KEY) || '{}'); return raw[tab] || ''; }
+      catch (e) { return ''; }
+    }
+    function writeSel(id) {
+      try {
+        var raw = JSON.parse(localStorage.getItem(SEL_KEY) || '{}');
+        if (id) raw[tab] = id; else delete raw[tab];
+        localStorage.setItem(SEL_KEY, JSON.stringify(raw));
+      } catch (e) { /* ignore */ }
+    }
+    var selectedId = readSel();
+    if (!rows.some(function (r) { return r.id === selectedId; })) {
+      selectedId = rows.length ? rows[0].id : '';
+    }
+
+    var wrap = el('div', { class: 'notes-reader' });
+
+    // ---- left: sidebar list -----------------------------------------
+    var sidebar = el('div', { class: 'notes-reader-side' });
+    var newBtn = el('button', { class: 'btn', type: 'button',
+      onclick: async function () {
+        var newRow = await addRow(tab, headers);
+        if (titleCol) newRow[titleCol] = '';
+        if (headers.indexOf('created') >= 0) newRow.created = new Date().toISOString();
+        newRow._dirty = 1;
+        await M.db.upsertRow(tab, newRow);
+        schedulePush();
+        writeSel(newRow.id);
+        if (refresh) await refresh();
+      }
+    }, M.render.icon('plus'), ' New note');
+    sidebar.appendChild(el('div', { class: 'notes-reader-side-head' },
+      el('span', { class: 'small muted' }, rows.length + ' note' + (rows.length === 1 ? '' : 's')),
+      newBtn
+    ));
+    var sideList = el('div', { class: 'notes-reader-list' });
+    rows.forEach(function (r) {
+      var rawTitle = (titleCol && r[titleCol]) || '';
+      var rawBody = (r[bodyCol] || '').toString();
+      // Strip markdown markers for the preview line — readable at a glance.
+      var preview = rawBody.replace(/[#*_`>~\[\]\(\)]/g, '').replace(/\s+/g, ' ').trim();
+      var item = el('button', {
+        type: 'button',
+        class: 'notes-reader-item' + (r.id === selectedId ? ' is-active' : ''),
+        onclick: function () {
+          selectedId = r.id;
+          writeSel(r.id);
+          paint();
+        }
+      },
+        el('div', { class: 'notes-reader-item-title' }, rawTitle || '(untitled)'),
+        el('div', { class: 'notes-reader-item-preview' }, preview ? preview.slice(0, 120) : '(empty)')
+      );
+      sideList.appendChild(item);
+    });
+    sidebar.appendChild(sideList);
+    wrap.appendChild(sidebar);
+
+    // ---- right: reading / editing pane ------------------------------
+    var pane = el('div', { class: 'notes-reader-pane' });
+    wrap.appendChild(pane);
+
+    function paint() {
+      // Reflect the selection in the sidebar without a full re-render.
+      Array.prototype.forEach.call(sideList.querySelectorAll('.notes-reader-item'), function (n, i) {
+        n.classList.toggle('is-active', rows[i] && rows[i].id === selectedId);
+      });
+      pane.replaceChildren();
+      var row = rows.find(function (r) { return r.id === selectedId; });
+      if (!row) {
+        pane.appendChild(el('p', { class: 'muted' }, 'No notes yet. Click ', el('em', null, '+ New note'), ' to start.'));
+        return;
+      }
+
+      // Title — single-line input, auto-saves on blur.
+      var titleInput = document.createElement('input');
+      titleInput.type = 'text';
+      titleInput.className = 'notes-reader-title';
+      titleInput.value = (titleCol && row[titleCol]) || '';
+      titleInput.placeholder = 'Title';
+      titleInput.addEventListener('blur', async function () {
+        if (!titleCol) return;
+        var v = titleInput.value;
+        if (v === row[titleCol]) return;
+        row[titleCol] = v;
+        row._updated = new Date().toISOString();
+        row._dirty = 1;
+        await M.db.upsertRow(tab, row);
+        schedulePush();
+        if (refresh) refresh();
+      });
+      pane.appendChild(titleInput);
+
+      // Optional small meta line: created date.
+      if (row.created) {
+        pane.appendChild(el('div', { class: 'small muted notes-reader-meta' },
+          new Date(row.created).toLocaleString()
+        ));
+      }
+
+      // Body — large textarea, auto-saves on blur. Markdown renders to a
+      // preview block beneath when the user isn't focused, so it feels
+      // like reading without the markup.
+      var bodyTa = document.createElement('textarea');
+      bodyTa.className = 'notes-reader-body';
+      bodyTa.value = row[bodyCol] || '';
+      bodyTa.placeholder = 'Type your note. Markdown supported.';
+      bodyTa.addEventListener('blur', async function () {
+        var v = bodyTa.value;
+        if (v === row[bodyCol]) return;
+        row[bodyCol] = v;
+        row._updated = new Date().toISOString();
+        row._dirty = 1;
+        await M.db.upsertRow(tab, row);
+        schedulePush();
+        if (refresh) refresh();
+      });
+      pane.appendChild(bodyTa);
+
+      // Sketch — inline drawing thumbnail with click-to-edit. When the
+      // sketch is empty the placeholder reads "Tap to draw" so the
+      // affordance is obvious.
+      if (sketchCol) {
+        var sketchHost = el('div', { class: 'notes-reader-sketch' });
+        var raw = (row[sketchCol] || '').toString().trim();
+        if (raw && raw !== 'pending') {
+          var img = document.createElement('img');
+          img.alt = '';
+          img.src = /^(https?:|data:)/i.test(raw)
+            ? raw
+            : ('https://drive.google.com/thumbnail?id=' + encodeURIComponent(raw) + '&sz=w800');
+          sketchHost.appendChild(img);
+        } else {
+          sketchHost.classList.add('is-empty');
+          sketchHost.appendChild(el('span', null, M.render.icon('pencil-line'), ' Tap to draw'));
+        }
+        sketchHost.addEventListener('click', function () {
+          location.hash = '#/draw/' + encodeURIComponent(tab) +
+            '/' + encodeURIComponent(row.id) +
+            '?col=' + encodeURIComponent(sketchCol);
+        });
+        pane.appendChild(sketchHost);
+      }
+
+      // Tag chips — display only here; full editing remains in List
+      // mode where the multiselect editor lives.
+      if (tagsCol && row[tagsCol]) {
+        var chips = el('div', { class: 'notes-reader-tags' });
+        String(row[tagsCol]).split(',').forEach(function (t) {
+          var v = t.trim(); if (!v) return;
+          chips.appendChild(el('span', { class: 'chip' }, v));
+        });
+        pane.appendChild(chips);
+      }
+
+      // Footer actions — delete sits on the right with the danger style.
+      var actions = el('div', { class: 'notes-reader-actions' });
+      var delBtn = el('button', { class: 'btn btn-ghost btn-danger', type: 'button',
+        onclick: async function () {
+          if (!confirm('Delete this note?')) return;
+          await deleteRow(tab, row.id);
+          writeSel('');
+          if (refresh) await refresh();
+        }
+      }, M.render.icon('trash-2'), ' Delete');
+      actions.appendChild(delBtn);
+      pane.appendChild(actions);
+
+      M.render.refreshIcons();
+    }
+    paint();
+    return wrap;
+  }
+
   // Tiles view — visual cards grouped by playlist / category / kind
   // (whichever the section has). Designed for "scan a library and pick
   // something to watch / read" rather than the spreadsheet feel of the
@@ -5522,6 +5739,71 @@
   //   200 OK with the raw video bytes streamed back. Filename comes
   //   from the optional Content-Disposition header.
   // The reference Flask server in docs/yt-dlp-server.py implements this.
+  // Multi-job downloads tray. Stacks one card per concurrent download
+  // bottom-right; each card has its own progress bar + status. Cards
+  // auto-collapse 4 s after success; failures stick around with a
+  // close button so the user can read the error.
+  function getDownloadsTray() {
+    var tray = document.querySelector('.downloads-tray');
+    if (tray) return tray;
+    tray = el('div', { class: 'downloads-tray', role: 'region', 'aria-label': 'Downloads' });
+    document.body.appendChild(tray);
+    return tray;
+  }
+  function addDownloadJob(opts) {
+    var tray = getDownloadsTray();
+    var title = (opts && opts.title) || 'Downloading';
+    var card = el('div', { class: 'dl-job is-running' },
+      el('div', { class: 'dl-job-head' },
+        el('span', { class: 'dl-job-title' }, title),
+        el('button', { class: 'icon-btn dl-job-close', type: 'button',
+          title: 'Dismiss',
+          onclick: function () { try { card.remove(); } catch (e) {} }
+        }, '×')
+      ),
+      el('div', { class: 'dl-job-status small muted' }, 'Starting…'),
+      el('div', { class: 'dl-job-bar' }, el('span', { class: 'dl-job-fill' }))
+    );
+    tray.appendChild(card);
+    var statusEl = card.querySelector('.dl-job-status');
+    var fillEl = card.querySelector('.dl-job-fill');
+    return {
+      el: card,
+      setStatus: function (text) { statusEl.textContent = text; },
+      setProgress: function (received, total) {
+        if (total > 0) {
+          var pct = Math.round(100 * received / total);
+          fillEl.style.width = pct + '%';
+          statusEl.textContent = pct + '% · '
+            + (received / (1024*1024)).toFixed(1) + ' / '
+            + (total / (1024*1024)).toFixed(1) + ' MB';
+        } else {
+          statusEl.textContent = (received / (1024*1024)).toFixed(1) + ' MB';
+        }
+      },
+      done: function (text, action) {
+        card.classList.remove('is-running');
+        card.classList.add('is-done');
+        fillEl.style.width = '100%';
+        statusEl.textContent = text || 'Done';
+        if (action) {
+          var btn = el('button', { class: 'btn dl-job-action', type: 'button',
+            onclick: function () { try { action.run(); } catch (e) {} card.remove(); }
+          }, M.render.icon(action.icon || 'play'), ' ' + action.label);
+          card.appendChild(btn);
+        }
+        setTimeout(function () {
+          if (card.classList.contains('is-done')) try { card.remove(); } catch (e) {}
+        }, action ? 12000 : 4000);
+      },
+      fail: function (text) {
+        card.classList.remove('is-running');
+        card.classList.add('is-error');
+        statusEl.textContent = text;
+      }
+    };
+  }
+
   async function downloadOfflineViaYtDlp(tab, row, refresh) {
     if (!row.url) {
       flash(document.body, 'No URL on this row to download.', 'error');
@@ -5534,17 +5816,8 @@
       return;
     }
     var fmt = cfg.ytDlpFormat || 'mp4';
-
-    var progressBar = el('div', { class: 'cobalt-progress' },
-      el('span', { class: 'cobalt-progress-label' }, 'Asking yt-dlp server…'),
-      el('span', { class: 'cobalt-progress-bar' },
-        el('span', { class: 'cobalt-progress-fill' })
-      )
-    );
-    document.body.appendChild(progressBar);
-    var label = progressBar.querySelector('.cobalt-progress-label');
-    var fill = progressBar.querySelector('.cobalt-progress-fill');
-    function cleanup() { try { progressBar.remove(); } catch (e) {} }
+    var job = addDownloadJob({ title: row.title || row.url });
+    job.setStatus('Asking yt-dlp server…');
 
     try {
       var resp = await fetch(endpoint + '/download', {
@@ -5556,7 +5829,7 @@
         var body = await resp.text().catch(function () { return ''; });
         throw new Error('server ' + resp.status + (body ? ': ' + body.slice(0, 200) : ''));
       }
-      label.textContent = 'Downloading…';
+      job.setStatus('Downloading…');
       var total = parseInt(resp.headers.get('Content-Length') || '0', 10) || 0;
       var disposition = resp.headers.get('Content-Disposition') || '';
       var filename = (disposition.match(/filename="?([^"]+)"?/) || [])[1] || 'video.' + (fmt === 'mp3' ? 'mp3' : 'mp4');
@@ -5571,13 +5844,7 @@
           if (step.done) break;
           chunks.push(step.value);
           received += step.value.length;
-          if (total > 0) {
-            var pct = Math.round(100 * received / total);
-            fill.style.width = pct + '%';
-            label.textContent = 'Downloading… ' + pct + '% (' + (received / (1024*1024)).toFixed(1) + ' / ' + (total / (1024*1024)).toFixed(1) + ' MB)';
-          } else {
-            label.textContent = 'Downloading… ' + (received / (1024*1024)).toFixed(1) + ' MB';
-          }
+          job.setProgress(received, total);
         }
       } else {
         // No streaming — load whole blob.
@@ -5587,7 +5854,7 @@
       }
       var blob = new Blob(chunks, { type: contentType });
 
-      label.textContent = 'Saving locally…';
+      job.setStatus('Saving locally…');
       await M.db.putVideo(tab, row.id, {
         blob: blob,
         name: filename,
@@ -5603,13 +5870,25 @@
         await M.db.upsertRow(tab, row);
         schedulePush();
       }
-      cleanup();
-      flash(document.body, 'Downloaded ' + (blob.size / (1024*1024)).toFixed(1) + ' MB via yt-dlp.');
+      job.done('Saved ' + (blob.size / (1024*1024)).toFixed(1) + ' MB', {
+        label: 'Watch offline',
+        icon: 'play-circle',
+        run: function () {
+          M.db.getVideo(tab, row.id).then(function (rec) {
+            if (rec && rec.blob && M.preview && M.preview.showVideoBlob) {
+              M.preview.showVideoBlob({
+                url: URL.createObjectURL(rec.blob),
+                title: row.title || filename,
+                sourceUrl: row.url || ''
+              });
+            }
+          }).catch(function () {});
+        }
+      });
       if (refresh) await refresh();
     } catch (err) {
-      cleanup();
       var msg = (err && err.message) || String(err);
-      flash(document.body, 'yt-dlp download failed: ' + msg + ' — make sure your yt-dlp server is running at ' + endpoint, 'error');
+      job.fail('yt-dlp failed: ' + msg + ' — is your server running at ' + endpoint + '?');
     }
   }
 
@@ -5624,19 +5903,8 @@
       return;
     }
     var quality = (cfg.offlineQuality || '720');
-
-    // Show a progress flash with a cancel-on-Escape hint.
-    var progressBar = el('div', { class: 'cobalt-progress' },
-      el('span', { class: 'cobalt-progress-label' }, 'Resolving via Cobalt…'),
-      el('span', { class: 'cobalt-progress-bar' },
-        el('span', { class: 'cobalt-progress-fill' })
-      )
-    );
-    document.body.appendChild(progressBar);
-    var label = progressBar.querySelector('.cobalt-progress-label');
-    var fill = progressBar.querySelector('.cobalt-progress-fill');
-
-    function cleanup() { try { progressBar.remove(); } catch (e) {} }
+    var job = addDownloadJob({ title: row.title || row.url });
+    job.setStatus('Resolving via Cobalt…');
 
     try {
       var result = await callCobalt(cfg.cobaltEndpoint, cfg.cobaltApiKey, {
@@ -5646,27 +5914,16 @@
         filenameStyle: 'classic'
       });
       if (result.status === 'redirect') {
-        // Browsers can't fetch googlevideo redirects (no CORS). Open it
-        // in a new tab so the user can save manually, and surface a
-        // suggestion to use a tunnel-mode instance.
-        cleanup();
-        flash(document.body,
-          'Cobalt returned a direct YouTube URL (CORS-blocked). The browser can\'t fetch it. Self-host Cobalt or use an instance that returns tunnel URLs.',
-          'error');
+        // Browsers can't fetch googlevideo redirects (no CORS).
+        job.fail('Cobalt returned a direct YouTube URL (CORS-blocked). Self-host Cobalt or use a tunnel-mode instance.');
         try { window.open(result.url, '_blank'); } catch (e) {}
         return;
       }
-      label.textContent = 'Downloading…';
+      job.setStatus('Downloading…');
       var blob = await fetchAsBlobWithProgress(result.url, function (received, total) {
-        if (total > 0) {
-          var pct = Math.round(100 * received / total);
-          fill.style.width = pct + '%';
-          label.textContent = 'Downloading… ' + pct + '% (' + (received / (1024*1024)).toFixed(1) + ' / ' + (total / (1024*1024)).toFixed(1) + ' MB)';
-        } else {
-          label.textContent = 'Downloading… ' + (received / (1024*1024)).toFixed(1) + ' MB';
-        }
+        job.setProgress(received, total);
       });
-      label.textContent = 'Saving locally…';
+      job.setStatus('Saving locally…');
       await M.db.putVideo(tab, row.id, {
         blob: blob,
         name: result.filename || 'video.mp4',
@@ -5683,15 +5940,25 @@
         await M.db.upsertRow(tab, row);
         schedulePush();
       }
-      cleanup();
-      flash(document.body, 'Downloaded ' + (blob.size / (1024*1024)).toFixed(1) + ' MB.');
+      job.done('Saved ' + (blob.size / (1024*1024)).toFixed(1) + ' MB', {
+        label: 'Watch offline',
+        icon: 'play-circle',
+        run: function () {
+          M.db.getVideo(tab, row.id).then(function (rec) {
+            if (rec && rec.blob && M.preview && M.preview.showVideoBlob) {
+              M.preview.showVideoBlob({
+                url: URL.createObjectURL(rec.blob),
+                title: row.title || (result.filename || 'video'),
+                sourceUrl: row.url || ''
+              });
+            }
+          }).catch(function () {});
+        }
+      });
       if (refresh) await refresh();
     } catch (err) {
-      cleanup();
       var msg = (err && err.message) || String(err);
-      // Common failure mode: CORS / network. Offer the manual upload as
-      // a fallback so the user isn't stuck.
-      flash(document.body, 'Cobalt download failed: ' + msg + ' — try the upload button to pick a file manually.', 'error');
+      job.fail('Cobalt failed: ' + msg + ' — try the upload button to pick a file manually.');
     }
   }
 
