@@ -26,8 +26,8 @@
   --ok: #1f7a3e;
   --shadow: 0 2px 14px rgba(0, 0, 0, 0.08);
   --radius: 10px;
-  --maxw: 980px;
-  --readw: 720px;
+  --maxw: 1200px;
+  --readw: 880px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -536,6 +536,20 @@ button.btn {
   color: var(--ok);
   font-size: 0.85rem;
 }
+/* Body-rooted flashes float bottom-right so feedback is always visible.
+   Otherwise they flow at the page bottom and disappear under the fold. */
+body > .flash {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 9000;
+  margin: 0;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  max-width: min(520px, calc(100vw - 2rem));
+  animation: flash-in .15s ease-out;
+}
+@keyframes flash-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* --- share view --------------------------------------------- */
 
@@ -1450,6 +1464,11 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   content: '';
   position: absolute;
 }
+/* Drawing cell discoverability — empty placeholder needs a hint that
+   clicking opens the editor, otherwise it looks like a dead em-dash. */
+table.rows td.cell-drawing-host { cursor: pointer; }
+table.rows td.cell-drawing-host:hover { background: var(--surface); }
+table.rows td.cell-drawing-host:hover .muted { color: var(--accent); }
 
 /* preview head — fullscreen + page jumper */
 .preview-fs-btn { color: var(--muted); }

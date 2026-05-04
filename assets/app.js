@@ -1852,12 +1852,17 @@
               if (r && r.url) rows.push(r);
             }
             if (!rows.length) { flash(view, 'No URLs in selection.', 'error'); return; }
-            var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
-            if (cobaltOk) {
-              flash(view, 'Downloading ' + rows.length + ' video' + (rows.length === 1 ? '' : 's') + ' via Cobalt — see progress bar.');
+            var bcfg = readConfig();
+            var bytDlpOk = !!(bcfg.ytDlpServer || '').trim();
+            var bCobaltOk = !!(bcfg.cobaltEndpoint || '').trim();
+            if (bytDlpOk || bCobaltOk) {
+              var via = bytDlpOk ? 'yt-dlp' : 'Cobalt';
+              flash(view, 'Downloading ' + rows.length + ' video' + (rows.length === 1 ? '' : 's') + ' via ' + via + ' — see progress bar.');
               for (var j = 0; j < rows.length; j++) {
-                try { await downloadOfflineViaCobalt(sec.tab, rows[j], null); }
-                catch (e) { console.warn('[Minerva bulk-cobalt]', e); }
+                try {
+                  if (bytDlpOk) await downloadOfflineViaYtDlp(sec.tab, rows[j], null);
+                  else await downloadOfflineViaCobalt(sec.tab, rows[j], null);
+                } catch (e) { console.warn('[Minerva bulk-dl]', e); }
               }
               await refresh();
               flash(view, 'Bulk download finished.');
@@ -4785,14 +4790,28 @@
           td.classList.add('cell-rating-host');
         } else {
           td.appendChild(M.render.renderCell(row[c.name], c.type));
+          // Drawing cells route directly to the canvas editor — clicking
+          // a thumbnail (or the empty em-dash placeholder) is what users
+          // expect, not a text-edit modal.
+          var openDrawEditor = function () {
+            location.hash = '#/draw/' + encodeURIComponent(tab) +
+              '/' + encodeURIComponent(row.id) +
+              '?col=' + encodeURIComponent(c.name);
+          };
+          if (parsed.kind === 'drawing') {
+            td.classList.add('cell-drawing-host');
+            td.title = 'Click to draw';
+          }
           td.addEventListener('click', function (e) {
             // Don't hijack clicks on our own controls (preview/play/etc).
             if (e.target.closest('.cell-preview, .cell-yt-play, .cell-yt-link, .cell-link, a, button, input, textarea, select, .star-btn')) return;
+            if (parsed.kind === 'drawing') { openDrawEditor(); return; }
             startEdit(td, row, c, tab, refresh);
           });
           td.addEventListener('keydown', function (e) {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
+              if (parsed.kind === 'drawing') { openDrawEditor(); return; }
               startEdit(td, row, c, tab, refresh);
             }
           });
@@ -4953,12 +4972,17 @@
               e.stopPropagation();
               var withUrl = groupRowsClosure.filter(function (r) { return r.url; });
               if (!withUrl.length) { flash(document.body, 'No URLs in this group.', 'error'); return; }
-              var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
-              if (cobaltOk) {
-                flash(document.body, 'Downloading ' + withUrl.length + ' via Cobalt…');
+              var gcfg = readConfig();
+              var gytDlpOk = !!(gcfg.ytDlpServer || '').trim();
+              var gCobaltOk = !!(gcfg.cobaltEndpoint || '').trim();
+              if (gytDlpOk || gCobaltOk) {
+                var gvia = gytDlpOk ? 'yt-dlp' : 'Cobalt';
+                flash(document.body, 'Downloading ' + withUrl.length + ' via ' + gvia + '…');
                 for (var i = 0; i < withUrl.length; i++) {
-                  try { await downloadOfflineViaCobalt(tab, withUrl[i], null); }
-                  catch (er) { console.warn('[Minerva group-cobalt]', er); }
+                  try {
+                    if (gytDlpOk) await downloadOfflineViaYtDlp(tab, withUrl[i], null);
+                    else await downloadOfflineViaCobalt(tab, withUrl[i], null);
+                  } catch (er) { console.warn('[Minerva group-dl]', er); }
                 }
                 if (refresh) await refresh();
                 return;
@@ -5104,24 +5128,31 @@
           wrap.appendChild(watchBtn);
           wrap.appendChild(rmBtn);
         } else {
-          var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
-          // Primary action: act immediately, no dialog.
-          //   • Cobalt configured → fetch via Cobalt
-          //   • Otherwise → copy a yt-dlp command and surface a toast
-          //     with "Run in terminal, then click ⬆ Upload"
-          // Long-press / shift-click opens the full-options modal for
-          // anyone who wants to switch format or set up Cobalt.
+          var cfgRO = readConfig();
+          var ytDlpOk = !!(cfgRO.ytDlpServer || '').trim();
+          var cobaltOk = !!(cfgRO.cobaltEndpoint || '').trim();
+          // Priority order on click:
+          //   1. yt-dlp server (preferred — actual file download)
+          //   2. Cobalt instance (fallback)
+          //   3. Copy yt-dlp command + visible toast (no backend at all)
+          // Shift-click opens the options modal.
           var saveBtn = el('button', {
             class: 'btn btn-ghost offline-save',
             type: 'button',
-            title: cobaltOk
-              ? 'Download via Cobalt for offline playback (shift-click for options)'
-              : 'Copy yt-dlp command for offline playback (shift-click for options)',
+            title: ytDlpOk
+              ? 'Download via your yt-dlp server (shift-click for options)'
+              : (cobaltOk
+                ? 'Download via Cobalt (shift-click for options)'
+                : 'Copy yt-dlp command (shift-click for options — set up a yt-dlp server for one-click downloads)'),
             onclick: function (e) {
               e.preventDefault();
               e.stopPropagation();
               if (e.shiftKey) {
                 showOfflineSetupDialog(tab, row, refresh);
+                return;
+              }
+              if (ytDlpOk && row.url) {
+                downloadOfflineViaYtDlp(tab, row, refresh);
                 return;
               }
               if (cobaltOk && row.url) {
@@ -5259,22 +5290,44 @@
     copyBtn.appendChild(M.render.icon('clipboard'));
     copyBtn.appendChild(document.createTextNode(' Copy yt-dlp command'));
 
-    var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
+    var dcfg = readConfig();
+    var ytDlpOk = !!(dcfg.ytDlpServer || '').trim();
+    var cobaltOk = !!(dcfg.cobaltEndpoint || '').trim();
 
     var panel = el('div', { class: 'modal-panel offline-setup-panel',
       onclick: function (e) { e.stopPropagation(); }
     },
       el('h3', null, 'Download for offline playback'),
       el('p', { class: 'small muted' },
-        'Browsers can\'t fetch YouTube directly (CORS). Pick a path below — yt-dlp is the lightest if you already have it.'
+        'Browsers can\'t fetch YouTube directly (CORS). Pick a path below — yt-dlp server is the most direct.'
       ),
 
       el('div', { class: 'offline-method' },
-        el('h4', null, '1 · ', M.render.icon('terminal'), ' yt-dlp (recommended)'),
+        el('h4', null, '1 · ', M.render.icon('server'),
+          ytDlpOk ? ' yt-dlp server — ready' : ' yt-dlp server (recommended)'),
         el('p', { class: 'small muted' },
-          'Copy the command, paste in your terminal, then click ',
+          ytDlpOk
+            ? ('Configured at ' + (dcfg.ytDlpServer || '') + '. Click below for a one-shot download.')
+            : 'Run a tiny Python server on your machine (see docs/yt-dlp-server.py), set its URL in Settings, and Minerva will POST the video URL → server runs yt-dlp → file streams back into offline storage. No API needed.'
+        ),
+        ytDlpOk
+          ? el('button', { class: 'btn', type: 'button',
+              onclick: function () {
+                overlay.remove();
+                downloadOfflineViaYtDlp(tab, row, refresh);
+              }
+            }, M.render.icon('download'), ' Download via yt-dlp server')
+          : el('a', { class: 'btn btn-ghost', href: '#/settings',
+              onclick: function () { overlay.remove(); }
+            }, M.render.icon('settings'), ' Set up yt-dlp server')
+      ),
+
+      el('div', { class: 'offline-method' },
+        el('h4', null, '2 · ', M.render.icon('terminal'), ' yt-dlp command (manual)'),
+        el('p', { class: 'small muted' },
+          'Don\'t want to run a server? Copy the command, paste in your terminal, then ',
           el('em', null, 'Upload local file'),
-          ' below to attach the resulting video.'
+          ' below.'
         ),
         el('div', { class: 'offline-ytdlp-row' },
           el('label', { class: 'small muted' }, 'Format'),
@@ -5287,12 +5340,12 @@
       ),
 
       el('div', { class: 'offline-method' },
-        el('h4', null, '2 · ', M.render.icon('cloud-download'),
-          cobaltOk ? ' Cobalt — ready' : ' Cobalt'),
+        el('h4', null, '3 · ', M.render.icon('cloud-download'),
+          cobaltOk ? ' Cobalt — ready' : ' Cobalt (alternative)'),
         el('p', { class: 'small muted' },
           cobaltOk
             ? 'Endpoint configured. Click below to download via Cobalt.'
-            : 'One-click download via a self-hosted or public Cobalt instance.'
+            : 'Alternative one-click download via a self-hosted or public Cobalt instance.'
         ),
         cobaltOk
           ? el('button', { class: 'btn', type: 'button',
@@ -5307,7 +5360,7 @@
       ),
 
       el('div', { class: 'offline-method' },
-        el('h4', null, '3 · ', M.render.icon('upload'), ' Upload local file'),
+        el('h4', null, '4 · ', M.render.icon('upload'), ' Upload local file'),
         el('p', { class: 'small muted' },
           'Already have the video on disk? Attach it directly.'
         ),
@@ -5462,6 +5515,104 @@
     return new Blob(chunks, { type: resp.headers.get('Content-Type') || 'video/mp4' });
   }
 
+  // Stream a download from a user-run yt-dlp HTTP wrapper. Protocol:
+  //   POST <server>/download  Content-Type: application/json
+  //   body: { url, format }     where format mirrors yt-dlp's -f (mp4,
+  //                             best, mp3, etc.)
+  //   200 OK with the raw video bytes streamed back. Filename comes
+  //   from the optional Content-Disposition header.
+  // The reference Flask server in docs/yt-dlp-server.py implements this.
+  async function downloadOfflineViaYtDlp(tab, row, refresh) {
+    if (!row.url) {
+      flash(document.body, 'No URL on this row to download.', 'error');
+      return;
+    }
+    var cfg = readConfig();
+    var endpoint = String(cfg.ytDlpServer || '').trim().replace(/\/+$/, '');
+    if (!endpoint) {
+      flash(document.body, 'Set a yt-dlp server URL in Settings first.', 'error');
+      return;
+    }
+    var fmt = cfg.ytDlpFormat || 'mp4';
+
+    var progressBar = el('div', { class: 'cobalt-progress' },
+      el('span', { class: 'cobalt-progress-label' }, 'Asking yt-dlp server…'),
+      el('span', { class: 'cobalt-progress-bar' },
+        el('span', { class: 'cobalt-progress-fill' })
+      )
+    );
+    document.body.appendChild(progressBar);
+    var label = progressBar.querySelector('.cobalt-progress-label');
+    var fill = progressBar.querySelector('.cobalt-progress-fill');
+    function cleanup() { try { progressBar.remove(); } catch (e) {} }
+
+    try {
+      var resp = await fetch(endpoint + '/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: row.url, format: fmt })
+      });
+      if (!resp.ok) {
+        var body = await resp.text().catch(function () { return ''; });
+        throw new Error('server ' + resp.status + (body ? ': ' + body.slice(0, 200) : ''));
+      }
+      label.textContent = 'Downloading…';
+      var total = parseInt(resp.headers.get('Content-Length') || '0', 10) || 0;
+      var disposition = resp.headers.get('Content-Disposition') || '';
+      var filename = (disposition.match(/filename="?([^"]+)"?/) || [])[1] || 'video.' + (fmt === 'mp3' ? 'mp3' : 'mp4');
+      var contentType = resp.headers.get('Content-Type') || 'video/mp4';
+
+      var reader = resp.body && resp.body.getReader ? resp.body.getReader() : null;
+      var chunks = [];
+      var received = 0;
+      if (reader) {
+        while (true) {
+          var step = await reader.read();
+          if (step.done) break;
+          chunks.push(step.value);
+          received += step.value.length;
+          if (total > 0) {
+            var pct = Math.round(100 * received / total);
+            fill.style.width = pct + '%';
+            label.textContent = 'Downloading… ' + pct + '% (' + (received / (1024*1024)).toFixed(1) + ' / ' + (total / (1024*1024)).toFixed(1) + ' MB)';
+          } else {
+            label.textContent = 'Downloading… ' + (received / (1024*1024)).toFixed(1) + ' MB';
+          }
+        }
+      } else {
+        // No streaming — load whole blob.
+        var direct = await resp.blob();
+        chunks = [direct];
+        received = direct.size;
+      }
+      var blob = new Blob(chunks, { type: contentType });
+
+      label.textContent = 'Saving locally…';
+      await M.db.putVideo(tab, row.id, {
+        blob: blob,
+        name: filename,
+        mime: contentType,
+        size: blob.size
+      });
+      var meta = await M.db.getMeta(tab);
+      if (meta && (meta.headers || []).indexOf('offline') >= 0) {
+        pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'offline', prevValue: row.offline });
+        row.offline = 'yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB';
+        row._updated = new Date().toISOString();
+        row._dirty = 1;
+        await M.db.upsertRow(tab, row);
+        schedulePush();
+      }
+      cleanup();
+      flash(document.body, 'Downloaded ' + (blob.size / (1024*1024)).toFixed(1) + ' MB via yt-dlp.');
+      if (refresh) await refresh();
+    } catch (err) {
+      cleanup();
+      var msg = (err && err.message) || String(err);
+      flash(document.body, 'yt-dlp download failed: ' + msg + ' — make sure your yt-dlp server is running at ' + endpoint, 'error');
+    }
+  }
+
   async function downloadOfflineViaCobalt(tab, row, refresh) {
     if (!row.url) {
       flash(document.body, 'No URL on this row to download.', 'error');
@@ -5587,6 +5738,7 @@
         youtubeApiKey:   String(f.get('youtubeApiKey') || '').trim(),
         cobaltEndpoint:  String(f.get('cobaltEndpoint') || '').trim(),
         cobaltApiKey:    String(f.get('cobaltApiKey') || '').trim(),
+        ytDlpServer:     String(f.get('ytDlpServer') || '').trim(),
         offlineQuality:  String(f.get('offlineQuality') || '720').trim()
       });
       flash(form, 'Saved locally.');
@@ -5609,11 +5761,17 @@
           value: cfg.youtubeApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
         'Only needed for playlist imports + duration auto-fill. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.'
       ),
+      field('yt-dlp server (recommended)',
+        el('input', { name: 'ytDlpServer', type: 'url',
+          placeholder: 'http://localhost:8080',
+          value: cfg.ytDlpServer || '', autocomplete: 'off', spellcheck: 'false' }),
+        'Run a tiny local Python server (see docs/yt-dlp-server.py) and put its URL here. Click Download → Minerva POSTs the video URL to your server, the server runs yt-dlp, and the file streams back into offline storage. No API needed. If both this and Cobalt are set, yt-dlp takes precedence.'
+      ),
       field('Cobalt downloader endpoint (optional)',
         el('input', { name: 'cobaltEndpoint', type: 'url',
           placeholder: 'https://api.cobalt.tools/  or  https://your-cobalt.example.com/',
           value: cfg.cobaltEndpoint || '', autocomplete: 'off', spellcheck: 'false' }),
-        'Enables the per-row "Save offline" button to actually download videos (instead of asking you to pick a file). Cobalt is a free open-source media downloader — github.com/imputnet/cobalt. Self-hosting is recommended; the public instance at api.cobalt.tools may rate-limit. Leave blank to fall back to manual file pick.'
+        'Alternative one-click download path via a Cobalt instance — github.com/imputnet/cobalt. Used as a fallback when no yt-dlp server is configured.'
       ),
       field('Cobalt API key (optional)',
         el('input', { name: 'cobaltApiKey', type: 'password',
