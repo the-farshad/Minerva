@@ -4,6 +4,9 @@ LOG.md
 # Long-form roadmap stays local
 ROADMAP.md
 
+# Local Claude Code config (subagents, project settings) — never commit
+.claude/
+
 # Editor / OS noise
 .DS_Store
 Thumbs.db
