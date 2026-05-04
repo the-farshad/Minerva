@@ -1,37 +1,85 @@
 #!/usr/bin/env python3
 """
-Minimal yt-dlp HTTP wrapper for Minerva's one-click Download.
+Minerva yt-dlp server — self-bootstrapping.
 
-Usage:
-    pip install flask yt-dlp
-    python yt-dlp-server.py
-    # → listens on http://localhost:8080
+Run with the system Python:
+    python3 yt-dlp-server.py
 
-Then in Minerva → Settings → "yt-dlp server (recommended)":
-    http://localhost:8080
+On first run the script creates a virtual environment under
+~/.minerva-ytdlp, installs Flask + yt-dlp into it, then re-executes
+itself inside that venv. Subsequent runs reuse the venv and start
+immediately.
 
-When you click Download on a YouTube row, Minerva POSTs to /download with
-{url, format}. This server runs yt-dlp on the URL, then streams the
-resulting file straight back. The browser saves the bytes into IndexedDB
-as the row's offline copy.
+Override the venv location with the MINERVA_YTDL_VENV environment
+variable. Bind address / port via MINERVA_YTDL_HOST and
+MINERVA_YTDL_PORT.
 
-Protocol:
-    POST /download   Content-Type: application/json
-    body: { "url": "<video-url>", "format": "mp4" | "best" | "mp3" | ... }
-    200 OK with the video bytes; Content-Disposition carries the filename.
-    400 / 500 with a plain-text error otherwise.
-
-CORS is wide-open (allow any origin) so a browser-side Minerva can talk
-to it. Bind to 127.0.0.1 by default — keep it that way unless you want
-neighbors on your LAN to be able to download through your machine.
+Once running, point Minerva → Settings → "yt-dlp server" at
+http://localhost:8080 (or whatever port). Click Test to confirm.
 """
 
 import os
+import pathlib
 import shutil
+import subprocess
+import sys
 import tempfile
-from flask import Flask, request, send_file, jsonify, after_this_request
+import venv as _venv
 
-import yt_dlp
+# ---------------------------------------------------------------------------
+# Bootstrap: create a venv with Flask + yt-dlp the first time we run.
+# ---------------------------------------------------------------------------
+
+REQUIREMENTS = ("flask", "yt-dlp")
+VENV_DIR = pathlib.Path(
+    os.environ.get("MINERVA_YTDL_VENV") or (pathlib.Path.home() / ".minerva-ytdlp")
+).expanduser()
+
+
+def _venv_python() -> pathlib.Path:
+    if os.name == "nt":
+        return VENV_DIR / "Scripts" / "python.exe"
+    return VENV_DIR / "bin" / "python"
+
+
+def _bootstrap_and_reexec() -> None:
+    target = _venv_python()
+    current = pathlib.Path(sys.executable).resolve()
+    if target.exists() and current == target.resolve():
+        return  # Already running inside the venv — nothing to do.
+
+    if not target.exists():
+        print(f"[minerva-ytdl] creating venv at {VENV_DIR} …", file=sys.stderr)
+        _venv.create(VENV_DIR, with_pip=True, symlinks=os.name != "nt")
+
+    # Install deps with whatever pip the venv has (always via -m pip so
+    # the right interpreter wins).
+    print(f"[minerva-ytdl] installing {', '.join(REQUIREMENTS)} into venv …", file=sys.stderr)
+    proc = subprocess.run(
+        [str(target), "-m", "pip", "install", "--upgrade", "--quiet", *REQUIREMENTS],
+        check=False,
+    )
+    if proc.returncode != 0:
+        print(
+            "[minerva-ytdl] pip install failed — re-run manually with verbose output: "
+            f"{target} -m pip install {' '.join(REQUIREMENTS)}",
+            file=sys.stderr,
+        )
+        sys.exit(proc.returncode)
+
+    # Re-exec the same script through the venv interpreter so the rest
+    # of the file runs with the right imports available.
+    os.execv(str(target), [str(target), os.path.abspath(__file__), *sys.argv[1:]])
+
+
+_bootstrap_and_reexec()
+
+# ---------------------------------------------------------------------------
+# Server (only reached once we're inside the venv with deps installed).
+# ---------------------------------------------------------------------------
+
+import yt_dlp  # noqa: E402  (post-bootstrap import)
+from flask import Flask, request, send_file, jsonify, after_this_request  # noqa: E402
 
 app = Flask(__name__)
 
@@ -39,7 +87,7 @@ app = Flask(__name__)
 def _cors_headers(resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS, GET"
     return resp
 
 
@@ -59,7 +107,6 @@ def download():
     if not url:
         return ("Missing 'url' in request body.", 400)
 
-    # Build yt-dlp options from the requested format.
     tmpdir = tempfile.mkdtemp(prefix="minerva-ytdl-")
     out_template = os.path.join(tmpdir, "%(id)s.%(ext)s")
     ydl_opts = {
@@ -81,27 +128,24 @@ def download():
     elif fmt == "bestvideo+bestaudio/best":
         ydl_opts["format"] = "bestvideo+bestaudio/best"
     else:
-        # default & explicit "mp4"
         ydl_opts["format"] = "mp4"
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             path = ydl.prepare_filename(info)
-            # Postprocessor may have changed the extension (e.g. mp3).
             if not os.path.exists(path):
                 base, _ = os.path.splitext(path)
                 for ext in (".mp3", ".m4a", ".webm", ".mkv", ".mp4"):
                     if os.path.exists(base + ext):
                         path = base + ext
                         break
-    except Exception as exc:  # noqa: BLE001 — surface any yt-dlp error
+    except Exception as exc:  # noqa: BLE001
         shutil.rmtree(tmpdir, ignore_errors=True)
         return (f"yt-dlp failed: {exc}", 500)
 
     @after_this_request
     def _cleanup(resp):
-        # Drop the temp dir once the response is fully sent.
         try:
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:
@@ -109,12 +153,7 @@ def download():
         return resp
 
     filename = os.path.basename(path)
-    return send_file(
-        path,
-        as_attachment=True,
-        download_name=filename,
-        conditional=False,
-    )
+    return send_file(path, as_attachment=True, download_name=filename, conditional=False)
 
 
 @app.route("/health", methods=["GET"])
@@ -124,8 +163,6 @@ def health():
 
 @app.route("/", methods=["GET"])
 def index():
-    # Plain GET to / lands here. Confirms the server is alive and
-    # documents the only protocol it speaks.
     return (
         """<!doctype html>
 <html lang="en">
@@ -144,9 +181,8 @@ def index():
   <p>This process accepts <code>POST /download</code> with a JSON body
   <code>{ "url": "...", "format": "mp4" }</code> and streams the
   resulting media bytes back.</p>
-  <p>Wire it into Minerva at
-  <em>Settings &rarr; yt-dlp server</em> with the URL of this host
-  (e.g. <code>http://localhost:8080</code>).</p>
+  <p>Wire it into Minerva at <em>Settings &rarr; yt-dlp server</em>
+  with the URL of this host (e.g. <code>http://localhost:8080</code>).</p>
   <p>Health check: <a href="/health">/health</a>.</p>
 </body>
 </html>""",
@@ -158,5 +194,5 @@ def index():
 if __name__ == "__main__":
     host = os.environ.get("MINERVA_YTDL_HOST", "127.0.0.1")
     port = int(os.environ.get("MINERVA_YTDL_PORT", "8080"))
-    print(f"Minerva yt-dlp server listening at http://{host}:{port}")
+    print(f"[minerva-ytdl] listening at http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

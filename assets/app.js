@@ -324,14 +324,17 @@
     );
   }
 
-  // Variant of field() that pairs the input with a "Test" button. The
-  // test function receives the current input value and returns a
-  // promise resolving to a string (success message) or rejecting with
-  // an error. Outcome is rendered inline above the hint.
-  function fieldWithTest(label, input, testFn, hint) {
+  // Variant of field() that pairs the input with a Test button and a
+  // live status pill. The test function receives the current input
+  // value and returns a promise resolving to a string (success
+  // message) or rejecting with an error. The pill polls /health on
+  // initial render so users see the current state without clicking.
+  function fieldWithTest(label, input, testFn, hint, opts) {
+    opts = opts || {};
     var id = 'f-' + Math.random().toString(36).slice(2, 8);
     input.id = id;
     var status = el('p', { class: 'small field-test-status', hidden: true });
+    var pill = el('span', { class: 'svc-pill is-unset' }, 'not set');
     var btn = el('button', { class: 'btn btn-ghost field-test-btn', type: 'button',
       onclick: async function (e) {
         e.preventDefault();
@@ -343,21 +346,54 @@
           var ok = await testFn(input.value.trim());
           status.classList.add('is-ok');
           status.textContent = '✓ ' + (ok || 'OK');
+          attachStatusPill(pill, input.value.trim(), opts.healthPath);
         } catch (err) {
           status.classList.add('is-err');
           status.textContent = '✗ ' + (err && err.message || err);
+          pill.className = 'svc-pill is-down';
+          pill.textContent = 'offline';
         } finally {
           btn.disabled = false;
         }
       }
     }, 'Test');
-    var row = el('div', { class: 'field-test-row' }, input, btn);
+    var row = el('div', { class: 'field-test-row' }, input, pill, btn);
+    if (opts.healthPath !== false) {
+      // Probe on render so the pill is meaningful before the user hits
+      // Test. Skips when the field is empty or the caller opted out.
+      setTimeout(function () { attachStatusPill(pill, input.value.trim(), opts.healthPath); }, 0);
+    }
     return el('div', { class: 'field' },
       el('label', { for: id }, label),
       row,
       status,
       hint ? el('p', { class: 'hint' }, hint) : null
     );
+  }
+
+  // Trigger a browser download of a helper script bundled with the
+  // deployed app (e.g. docs/yt-dlp-server.py). The file is fetched
+  // relative to the current path so it works for any host. A flash
+  // surfaces the next step the user should take.
+  async function downloadHelperScript(relPath, suggestedName, nextStep) {
+    try {
+      var resp = await fetch(relPath, { cache: 'no-cache' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      var blob = await resp.blob();
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = suggestedName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+      flash(document.body, suggestedName + ' downloaded — ' + nextStep);
+    } catch (err) {
+      flash(document.body,
+        'Couldn\'t fetch ' + relPath + ': ' + (err && err.message || err)
+        + ' — copy it manually from the GitHub repo.', 'error');
+    }
   }
 
   // ---- Settings field probes ----
@@ -2450,13 +2486,14 @@
         var t = M.render.parseType((meta.types || [])[i] || 'text').kind;
         return h === 'url' || h === 'pdf' || t === 'link' || t === 'drawing';
       });
-      // Reader mode shows up wherever a section has a markdown/long-text
-      // "body" or "notes"-style column — i.e. anywhere a row genuinely
-      // has a long-form body to read. Notes is the canonical case.
+      // Reader mode shows up wherever a section has at least one
+      // markdown / longtext column — i.e. any row with a long-form
+      // body worth reading on its own. Notes is the canonical case;
+      // Decisions, Recipes, Inbox, Journal, Proposals all qualify.
       var canReader = (meta && meta.headers || []).some(function (h, i) {
+        if (M.render.isInternal(h) || h === 'id') return false;
         var t = M.render.parseType((meta.types || [])[i] || 'text').kind;
-        return (h === 'body' || h === 'notes' || h === 'content' || h === 'text')
-          && (t === 'markdown' || t === 'longtext');
+        return t === 'markdown' || t === 'longtext';
       });
       // Board mode shows up wherever a section has a select(...) column
       // with at least one option. Status / state / phase are the
@@ -4973,9 +5010,17 @@
   // selected row id is persisted per tab in localStorage.
   function renderNotesReader(meta, rows, tab, refresh) {
     var headers = (meta && meta.headers) || [];
-    var bodyCol = headers.indexOf('body') >= 0 ? 'body'
-      : (headers.indexOf('notes') >= 0 ? 'notes'
-        : (headers.indexOf('content') >= 0 ? 'content' : 'text'));
+    var types = (meta && meta.types) || [];
+    // Collect every markdown / longtext column. Multi-section
+    // schemas (Decisions: context / options / decision / outcome /
+    // reflection) get one editor per column in declared order.
+    var bodyCols = [];
+    headers.forEach(function (h, i) {
+      if (M.render.isInternal(h) || h === 'id') return;
+      var t = M.render.parseType(types[i] || 'text').kind;
+      if (t === 'markdown' || t === 'longtext') bodyCols.push(h);
+    });
+    var primaryBodyCol = bodyCols[0] || 'body';
     var titleCol = headers.indexOf('title') >= 0 ? 'title'
       : (headers.indexOf('name') >= 0 ? 'name' : '');
     var sketchCol = headers.indexOf('sketch') >= 0 ? 'sketch' : '';
@@ -5014,15 +5059,15 @@
         writeSel(newRow.id);
         if (refresh) await refresh();
       }
-    }, M.render.icon('plus'), ' New note');
+    }, M.render.icon('plus'), ' New');
     sidebar.appendChild(el('div', { class: 'notes-reader-side-head' },
-      el('span', { class: 'small muted' }, rows.length + ' note' + (rows.length === 1 ? '' : 's')),
+      el('span', { class: 'small muted' }, rows.length + ' item' + (rows.length === 1 ? '' : 's')),
       newBtn
     ));
     var sideList = el('div', { class: 'notes-reader-list' });
     rows.forEach(function (r) {
       var rawTitle = (titleCol && r[titleCol]) || '';
-      var rawBody = (r[bodyCol] || '').toString();
+      var rawBody = (r[primaryBodyCol] || '').toString();
       // Strip markdown markers for the preview line — readable at a glance.
       var preview = rawBody.replace(/[#*_`>~\[\]\(\)]/g, '').replace(/\s+/g, ' ').trim();
       var item = el('button', {
@@ -5054,7 +5099,7 @@
       pane.replaceChildren();
       var row = rows.find(function (r) { return r.id === selectedId; });
       if (!row) {
-        pane.appendChild(el('p', { class: 'muted' }, 'No notes yet. Click ', el('em', null, '+ New note'), ' to start.'));
+        pane.appendChild(el('p', { class: 'muted' }, 'Nothing here yet. Click ', el('em', null, '+ New'), ' to add an item.'));
         return;
       }
 
@@ -5084,24 +5129,34 @@
         ));
       }
 
-      // Body — large textarea, auto-saves on blur. Markdown renders to a
-      // preview block beneath when the user isn't focused, so it feels
-      // like reading without the markup.
-      var bodyTa = document.createElement('textarea');
-      bodyTa.className = 'notes-reader-body';
-      bodyTa.value = row[bodyCol] || '';
-      bodyTa.placeholder = 'Type your note. Markdown supported.';
-      bodyTa.addEventListener('blur', async function () {
-        var v = bodyTa.value;
-        if (v === row[bodyCol]) return;
-        row[bodyCol] = v;
-        row._updated = new Date().toISOString();
-        row._dirty = 1;
-        await M.db.upsertRow(tab, row);
-        schedulePush();
-        if (refresh) refresh();
+      // One editor per markdown / longtext column in the schema. Each
+      // editor commits on blur. Multi-section schemas (Decisions:
+      // context / options / decision / outcome / reflection) get a
+      // labelled stack of textareas instead of a single squashed body.
+      bodyCols.forEach(function (colName) {
+        var section = el('div', { class: 'notes-reader-section' });
+        if (bodyCols.length > 1) {
+          section.appendChild(el('div', { class: 'notes-reader-section-label small muted' }, colName));
+        }
+        var ta = document.createElement('textarea');
+        ta.className = 'notes-reader-body';
+        ta.value = row[colName] || '';
+        ta.placeholder = bodyCols.length > 1
+          ? colName.charAt(0).toUpperCase() + colName.slice(1) + '…'
+          : 'Type here. Markdown supported.';
+        ta.addEventListener('blur', async function () {
+          var v = ta.value;
+          if (v === row[colName]) return;
+          row[colName] = v;
+          row._updated = new Date().toISOString();
+          row._dirty = 1;
+          await M.db.upsertRow(tab, row);
+          schedulePush();
+          if (refresh) refresh();
+        });
+        section.appendChild(ta);
+        pane.appendChild(section);
       });
-      pane.appendChild(bodyTa);
 
       // Sketch — inline drawing thumbnail with click-to-edit. When the
       // sketch is empty the placeholder reads "Tap to draw" so the
@@ -6320,6 +6375,28 @@
     };
   }
 
+  // Fetch a paper PDF and upload it to Drive. Tries direct fetch
+  // first; falls back to the configured CORS proxy on failure (arXiv
+  // PDFs typically lack CORS headers). Returns the resulting Drive
+  // fileId on success, '' on any failure.
+  async function uploadPaperPdfToDrive(pdfUrl, suggestedName) {
+    if (!pdfUrl) return '';
+    var resp;
+    try {
+      resp = await fetch(pdfUrl);
+      if (!resp.ok) throw new Error('direct ' + resp.status);
+    } catch (e) {
+      var prefix = (readConfig().corsProxy || '').trim();
+      if (!prefix) throw new Error('PDF fetch blocked by CORS and no proxy configured');
+      resp = await fetch(prefix + encodeURIComponent(pdfUrl));
+      if (!resp.ok) throw new Error('proxy ' + resp.status);
+    }
+    var blob = await resp.blob();
+    var name = String(suggestedName || 'paper').replace(/[^\w.\- ]+/g, '_').slice(0, 80);
+    if (!/\.pdf$/i.test(name)) name += '.pdf';
+    return await uploadOfflineToDrive(blob, name);
+  }
+
   // Optional secondary upload of an offline blob to Drive. Idempotent
   // by name within a "Minerva offline" folder; failure is non-fatal
   // (the blob is already saved locally so playback still works).
@@ -6614,7 +6691,8 @@
         ytDlpServer:     String(f.get('ytDlpServer') || '').trim(),
         corsProxy:       String(f.get('corsProxy') || '').trim(),
         offlineQuality:  String(f.get('offlineQuality') || '720').trim(),
-        uploadOfflineToDrive: f.get('uploadOfflineToDrive') === 'on'
+        uploadOfflineToDrive: f.get('uploadOfflineToDrive') === 'on',
+        uploadPapersToDrive:  f.get('uploadPapersToDrive') === 'on'
       });
       flash(form, 'Saved locally.');
     } },
@@ -6642,7 +6720,19 @@
           placeholder: 'http://localhost:8080',
           value: cfg.ytDlpServer || '', autocomplete: 'off', spellcheck: 'false' }),
         testYtDlpServer,
-        'Run a tiny local Python server (see docs/setup-yt-dlp.md) and put its URL here. Click Download → Minerva POSTs the video URL to your server, the server runs yt-dlp, and the file streams back into offline storage. No API needed. If both this and Cobalt are set, yt-dlp takes precedence.'
+        el('span', null,
+          'Local Python server for one-click YouTube downloads. ',
+          el('button', { type: 'button', class: 'btn btn-ghost btn-inline',
+            onclick: function (e) {
+              e.preventDefault();
+              downloadHelperScript('docs/minerva-services.py', 'minerva-services.py',
+                'Save it anywhere, then run: python3 minerva-services.py — first run creates a venv and installs Flask + yt-dlp + requests automatically. The same script also serves the CORS proxy.');
+            }
+          }, M.render.icon('download'), ' Download minerva-services.py'),
+          ' (combined yt-dlp + CORS proxy in one script). Run with ',
+          el('code', null, 'python3 minerva-services.py'),
+          ' — first run creates a venv and installs deps automatically. The status pill above turns green once the server answers /health.'
+        )
       ),
       fieldWithTest('Cobalt downloader endpoint (optional)',
         el('input', { name: 'cobaltEndpoint', type: 'url',
@@ -6663,7 +6753,22 @@
           value: cfg.corsProxy != null ? cfg.corsProxy : 'https://corsproxy.io/?',
           autocomplete: 'off', spellcheck: 'false' }),
         testCorsProxy,
-        'Some bibliographic APIs (arXiv, CrossRef) do not respond with CORS headers, blocking direct browser fetches. Minerva retries failed requests through the URL prefix entered here, with the target URL appended (URL-encoded). Default is corsproxy.io; for full self-hosting see docs/setup-cors-proxy.md. Leave blank to disable the fallback.'
+        el('span', null,
+          'Bibliographic APIs (arXiv, CrossRef) do not return CORS headers. Failed direct fetches retry through this prefix (URL-encoded target appended). Default ',
+          el('code', null, 'https://corsproxy.io/?'),
+          ' is a public service. To self-host, ',
+          el('button', { type: 'button', class: 'btn btn-ghost btn-inline',
+            onclick: function (e) {
+              e.preventDefault();
+              downloadHelperScript('docs/minerva-services.py', 'minerva-services.py',
+                'Save it anywhere, then run: python3 minerva-services.py — it auto-creates a venv and installs Flask + yt-dlp + requests on first run, then exposes both yt-dlp and the CORS proxy on one port.');
+            }
+          }, M.render.icon('download'), ' download minerva-services.py'),
+          ' and run ',
+          el('code', null, 'python3 minerva-services.py'),
+          ' (one script for both services). Leave blank to disable the fallback.'
+        ),
+        { healthPath: false }
       ),
       field('Offline video quality',
         (function () {
@@ -6690,6 +6795,20 @@
           return lbl;
         })(),
         'When on, the per-row Download flow uploads the resulting blob to a "Minerva offline" folder in your Google Drive after saving it locally. The row\'s offline column records the Drive fileId. Counts against your Drive storage quota.'
+      ),
+      field('Also save imported papers to Drive',
+        (function () {
+          var lbl = el('label', { class: 'switch' });
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.name = 'uploadPapersToDrive';
+          if (cfg.uploadPapersToDrive) cb.checked = true;
+          lbl.appendChild(cb);
+          lbl.appendChild(el('span', { class: 'switch-track' }));
+          lbl.appendChild(document.createTextNode(' Upload each paper PDF to a Minerva folder in Drive on import'));
+          return lbl;
+        })(),
+        'When on, every URL-imported paper that resolves to a PDF (arXiv, CrossRef when available) is fetched via your CORS proxy and uploaded to Drive. Counts against your Drive quota.'
       ),
       el('div', { class: 'form-actions' },
         el('button', { class: 'btn', type: 'submit' }, 'Save'),
@@ -7597,6 +7716,33 @@
         body
       )
     );
+  }
+
+  // Periodic health probe for the configured local services. Updates a
+  // small status pill in place: ●  reachable / ○  offline / spinner
+  // while in flight. The probe is a single GET to the endpoint's
+  // /health (yt-dlp / cors-proxy / minerva-services all expose it).
+  function attachStatusPill(pill, endpoint, healthPath) {
+    if (!endpoint) {
+      pill.className = 'svc-pill is-unset';
+      pill.title = 'Not configured';
+      pill.textContent = 'not set';
+      return;
+    }
+    pill.className = 'svc-pill is-checking';
+    pill.title = 'Pinging ' + endpoint + ' …';
+    pill.textContent = 'checking…';
+    var url = endpoint.replace(/\/+$/, '') + (healthPath || '/health');
+    fetch(url, { cache: 'no-cache' }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      pill.className = 'svc-pill is-ok';
+      pill.title = endpoint + ' is reachable';
+      pill.textContent = 'online';
+    }).catch(function () {
+      pill.className = 'svc-pill is-down';
+      pill.title = endpoint + ' is not responding — start the server first';
+      pill.textContent = 'offline';
+    });
   }
 
   // Numbered first-run checklist for the Settings page. Required steps
@@ -8741,6 +8887,20 @@
         schedulePush();
         overlay.remove();
         flash(document.body, 'Added: ' + (fetched.title || fetched.url || 'row'));
+        // Mirror the PDF to Drive when the user opted in. Best-effort:
+        // failures are surfaced as a quiet flash so the row save still
+        // counts. Uses fetchCors() (configured proxy) to dodge arXiv's
+        // missing CORS headers.
+        if (readConfig().uploadPapersToDrive
+            && fetched.kind === 'paper' && fetched.pdf) {
+          uploadPaperPdfToDrive(fetched.pdf, fetched.title || row.id)
+            .then(function (fid) {
+              if (fid) flash(document.body, 'PDF saved to Drive (' + fid + ').');
+            })
+            .catch(function (err) {
+              flash(document.body, 'Drive upload skipped: ' + (err && err.message || err), 'error');
+            });
+        }
         await route();
       } catch (err) {
         flash(preview, 'Add failed: ' + (err && err.message ? err.message : err), 'error');

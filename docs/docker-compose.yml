@@ -1,0 +1,33 @@
+# Minerva local services — one container, two endpoints.
+#
+# Usage from this directory:
+#     docker compose up           # build + run
+#     docker compose up -d        # background
+#     docker compose down         # stop
+#
+# In Minerva → Settings:
+#     yt-dlp server   http://localhost:8765
+#     CORS proxy      http://localhost:8765/proxy?
+#
+# Override the bind port by setting MINERVA_PORT in the environment
+# before `docker compose up`.
+
+services:
+  minerva-services:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: minerva-services:latest
+    container_name: minerva-services
+    restart: unless-stopped
+    ports:
+      - "${MINERVA_PORT:-8765}:8765"
+    environment:
+      MINERVA_HOST: "0.0.0.0"
+      MINERVA_PORT: "8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

@@ -528,6 +528,35 @@ button.btn {
 }
 .field-test-row > input { flex: 1; min-width: 0; }
 .field-test-btn { flex: 0 0 auto; padding: 0 0.85rem; font-size: 0.82rem; }
+.svc-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.svc-pill::before {
+  content: '';
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.svc-pill.is-checking { color: var(--muted); }
+.svc-pill.is-checking::before { background: var(--muted); animation: svc-blink 1.2s ease-in-out infinite; }
+.svc-pill.is-ok    { color: var(--ok); border-color: var(--ok); }
+.svc-pill.is-ok::before    { background: var(--ok); }
+.svc-pill.is-down  { color: var(--error); border-color: var(--error); }
+.svc-pill.is-down::before  { background: var(--error); }
+.svc-pill.is-unset { opacity: 0.6; }
+@keyframes svc-blink { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
 .field-test-status {
   margin: 0.3rem 0 0;
   font-size: 0.82rem;
@@ -546,6 +575,20 @@ button.btn {
   user-select: none;
 }
 .switch input { accent-color: var(--accent); transform: scale(1.1); }
+
+/* Compact ghost button used inline within hint text. Vertically
+   centered with surrounding inline content; smaller padding than
+   the standard btn rule so it doesn't break the line height. */
+.btn.btn-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.05rem 0.5rem;
+  font-size: inherit;
+  vertical-align: baseline;
+  line-height: 1.4;
+}
+.btn.btn-inline svg { width: 0.9em; height: 0.9em; }
 .form-actions {
   display: flex;
   gap: 0.6rem;
@@ -1571,9 +1614,8 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 .notes-reader-title:focus { border-bottom: 1px solid var(--accent); }
 .notes-reader-meta { margin: 0; }
 .notes-reader-body {
-  flex: 1;
-  min-height: 16rem;
   width: 100%;
+  min-height: 8rem;
   resize: vertical;
   font: inherit;
   font-family: var(--font);
@@ -1584,6 +1626,27 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   color: var(--fg);
   padding: 0.4rem 0;
   outline: none;
+}
+.notes-reader-section { display: flex; flex-direction: column; gap: 0.2rem; }
+.notes-reader-section-label {
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.45rem;
+  margin-top: 0.2rem;
+}
+.notes-reader-section:first-of-type .notes-reader-section-label {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+/* When there is exactly one body column, give it more vertical room
+   so the editor still feels like Notes-on-iPad rather than a stub. */
+.notes-reader-pane > .notes-reader-section:only-of-type .notes-reader-body {
+  min-height: 16rem;
+  flex: 1;
 }
 .notes-reader-sketch {
   border: 1px dashed var(--border);
@@ -3082,6 +3145,23 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   width: 100%;
   height: 100%;
   display: block;
+}
+
+/* PDF dark mode: invert the iframe contents so the native viewer
+   matches the active theme. The hue-rotate compensates for inverted
+   colours, keeping coloured figures roughly recognisable. The native
+   Ctrl-F search inside the iframe keeps working because we are only
+   filtering the visual output, not modifying the document. */
+[data-theme="dark"] .preview-panel.preview-panel-pdf .preview-frame,
+[data-theme="sepia"] .preview-panel.preview-panel-pdf .preview-frame {
+  filter: invert(0.92) hue-rotate(180deg);
+  background: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] .preview-panel.preview-panel-pdf .preview-frame {
+    filter: invert(0.92) hue-rotate(180deg);
+    background: #fff;
+  }
 }
 .preview-head {
   display: flex;

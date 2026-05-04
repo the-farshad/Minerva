@@ -1,56 +1,89 @@
 #!/usr/bin/env python3
 """
-Minimal CORS proxy for Minerva's bibliographic fetches.
+Minerva CORS proxy — self-bootstrapping.
 
-Some upstream APIs Minerva consumes (export.arxiv.org, api.crossref.org,
-youtube.com/oembed) no longer return Access-Control-Allow-Origin
-headers, so direct browser fetches are blocked. This server forwards
-the request server-side and re-emits the response with permissive CORS
-headers.
+Run with the system Python:
+    python3 cors-proxy.py
 
-Usage:
-    pip install flask requests           # or: uv pip install flask requests
-    python cors-proxy.py
-    # → listens on http://127.0.0.1:8081
+On first run the script creates a virtual environment under
+~/.minerva-cors, installs Flask + requests into it, then re-executes
+itself inside the venv. Subsequent runs reuse the venv and start
+immediately.
 
-Then in Minerva → Settings → "CORS proxy":
+Override the venv location with the MINERVA_CORS_VENV environment
+variable. Bind via MINERVA_CORS_HOST and MINERVA_CORS_PORT.
+
+In Minerva → Settings → "CORS proxy" paste:
     http://localhost:8081/?
-
-Protocol:
-    GET  /?<url-encoded-target>          → proxies the GET, streams
-                                            the upstream body back.
-    POST /?<url-encoded-target>          → forwards the POST body.
-    OPTIONS /                            → CORS preflight, returns 204.
-
-The trailing `?` after the host matters — Minerva appends the URL-
-encoded target to whatever prefix you paste, so the prefix has to end
-with the query separator.
+(the trailing `?` matters — the prefix is concatenated with a
+URL-encoded target).
 """
 
 import os
+import pathlib
+import subprocess
 import sys
-from urllib.parse import unquote
+import venv as _venv
 
-try:
-    import requests
-    from flask import Flask, request, Response, jsonify
-except ImportError:
-    print("Install dependencies first: pip install flask requests", file=sys.stderr)
-    sys.exit(1)
+# ---------------------------------------------------------------------------
+# Bootstrap — venv + deps before importing anything not in the stdlib.
+# ---------------------------------------------------------------------------
+
+REQUIREMENTS = ("flask", "requests")
+VENV_DIR = pathlib.Path(
+    os.environ.get("MINERVA_CORS_VENV") or (pathlib.Path.home() / ".minerva-cors")
+).expanduser()
+
+
+def _venv_python() -> pathlib.Path:
+    if os.name == "nt":
+        return VENV_DIR / "Scripts" / "python.exe"
+    return VENV_DIR / "bin" / "python"
+
+
+def _bootstrap_and_reexec() -> None:
+    target = _venv_python()
+    current = pathlib.Path(sys.executable).resolve()
+    if target.exists() and current == target.resolve():
+        return
+
+    if not target.exists():
+        print(f"[minerva-cors] creating venv at {VENV_DIR} …", file=sys.stderr)
+        _venv.create(VENV_DIR, with_pip=True, symlinks=os.name != "nt")
+
+    print(f"[minerva-cors] installing {', '.join(REQUIREMENTS)} into venv …", file=sys.stderr)
+    proc = subprocess.run(
+        [str(target), "-m", "pip", "install", "--upgrade", "--quiet", *REQUIREMENTS],
+        check=False,
+    )
+    if proc.returncode != 0:
+        print(
+            "[minerva-cors] pip install failed — re-run manually with verbose output: "
+            f"{target} -m pip install {' '.join(REQUIREMENTS)}",
+            file=sys.stderr,
+        )
+        sys.exit(proc.returncode)
+
+    os.execv(str(target), [str(target), os.path.abspath(__file__), *sys.argv[1:]])
+
+
+_bootstrap_and_reexec()
+
+# ---------------------------------------------------------------------------
+# Proxy server (only reached once the venv has Flask + requests).
+# ---------------------------------------------------------------------------
+
+from urllib.parse import unquote, urlparse  # noqa: E402
+
+import requests  # noqa: E402
+from flask import Flask, request, Response, jsonify  # noqa: E402
 
 app = Flask(__name__)
 
 ALLOWED_HOSTS = {
-    # arXiv
-    "export.arxiv.org",
-    "arxiv.org",
-    # CrossRef
+    "export.arxiv.org", "arxiv.org",
     "api.crossref.org",
-    # YouTube oEmbed
-    "www.youtube.com",
-    "youtube.com",
-    "youtu.be",
-    # Semantic Scholar (alternate metadata source)
+    "www.youtube.com", "youtube.com", "youtu.be",
     "api.semanticscholar.org",
 }
 
@@ -64,83 +97,7 @@ def _cors_headers():
     }
 
 
-@app.route("/", methods=["GET", "POST", "OPTIONS"])
-def proxy():
-    if request.method == "OPTIONS":
-        return ("", 204, _cors_headers())
-
-    target = request.query_string.decode("utf-8", "replace").lstrip("?")
-    if not target:
-        # Plain GET / with no query string: serve the status page.
-        if request.method == "GET":
-            return index()
-        return ("Empty target. Append a URL-encoded URL after `?`.", 400, _cors_headers())
-
-    # query_string carries the raw encoded URL; decode for hostname
-    # validation but pass the decoded string to requests so the
-    # upstream sees the canonical query.
-    try:
-        decoded = unquote(target)
-    except Exception:  # pragma: no cover
-        return ("Bad target encoding.", 400, _cors_headers())
-
-    # Block anything outside the allowlist — the proxy is meant only
-    # for Minerva's bibliographic upstreams. Loosen this list if you
-    # know what you are doing.
-    from urllib.parse import urlparse
-    host = urlparse(decoded).hostname or ""
-    if host not in ALLOWED_HOSTS:
-        return (
-            f"Host '{host}' is not in the allow-list. Edit ALLOWED_HOSTS in cors-proxy.py to permit it.",
-            403,
-            _cors_headers(),
-        )
-
-    # Forward selected headers (skip hop-by-hop and host).
-    fwd_headers = {}
-    for h in ("Accept", "Accept-Language", "Content-Type", "User-Agent"):
-        v = request.headers.get(h)
-        if v:
-            fwd_headers[h] = v
-
-    try:
-        if request.method == "GET":
-            upstream = requests.get(decoded, headers=fwd_headers, stream=True, timeout=30)
-        else:  # POST
-            upstream = requests.post(
-                decoded,
-                headers=fwd_headers,
-                data=request.get_data(),
-                stream=True,
-                timeout=30,
-            )
-    except requests.RequestException as exc:
-        return (f"Upstream fetch failed: {exc}", 502, _cors_headers())
-
-    # Re-emit the body and the upstream's content-type, but always with
-    # our CORS headers (the upstream's are usually missing, which is
-    # the whole reason this proxy exists).
-    out_headers = dict(_cors_headers())
-    for h in ("Content-Type", "Content-Length", "Cache-Control"):
-        if h in upstream.headers:
-            out_headers[h] = upstream.headers[h]
-
-    return Response(
-        upstream.iter_content(chunk_size=8192),
-        status=upstream.status_code,
-        headers=out_headers,
-    )
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"ok": True, "service": "minerva-cors-proxy"})
-
-
 def index():
-    # The root path is shadowed by the proxy() handler (which expects a
-    # query string). Hitting /index returns this status page so a
-    # browser visit to the bare host has somewhere to land.
     return (
         """<!doctype html>
 <html lang="en">
@@ -159,10 +116,9 @@ def index():
   <p>Proxies bibliographic fetches that browsers can't issue directly
   due to missing CORS headers (arXiv, CrossRef, Semantic Scholar,
   YouTube oEmbed).</p>
-  <p>Usage: append a URL-encoded target after <code>?</code> —
-  e.g. <code>/?https%3A%2F%2Fexport.arxiv.org%2Fapi%2Fquery%3Fid_list%3D2401.12345</code>.</p>
-  <p>Wire it into Minerva at
-  <em>Settings &rarr; CORS proxy</em> with the prefix
+  <p>Usage: append a URL-encoded target after <code>?</code>, e.g.
+  <code>/?https%3A%2F%2Fexport.arxiv.org%2Fapi%2Fquery%3Fid_list%3D2401.12345</code>.</p>
+  <p>Wire it into Minerva at <em>Settings &rarr; CORS proxy</em>:
   <code>http://localhost:8081/?</code>.</p>
   <p>Health check: <a href="/health">/health</a>.</p>
 </body>
@@ -172,8 +128,62 @@ def index():
     )
 
 
+@app.route("/", methods=["GET", "POST", "OPTIONS"])
+def proxy():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_headers())
+
+    target = request.query_string.decode("utf-8", "replace").lstrip("?")
+    if not target:
+        if request.method == "GET":
+            return index()
+        return ("Empty target. Append a URL-encoded URL after `?`.", 400, _cors_headers())
+
+    decoded = unquote(target)
+    host = urlparse(decoded).hostname or ""
+    if host not in ALLOWED_HOSTS:
+        return (
+            f"Host '{host}' is not in the allow-list. Edit ALLOWED_HOSTS in cors-proxy.py to permit it.",
+            403,
+            _cors_headers(),
+        )
+
+    fwd_headers = {
+        h: request.headers[h]
+        for h in ("Accept", "Accept-Language", "Content-Type", "User-Agent")
+        if h in request.headers
+    }
+
+    try:
+        if request.method == "GET":
+            upstream = requests.get(decoded, headers=fwd_headers, stream=True, timeout=30)
+        else:
+            upstream = requests.post(
+                decoded, headers=fwd_headers, data=request.get_data(),
+                stream=True, timeout=30,
+            )
+    except requests.RequestException as exc:
+        return (f"Upstream fetch failed: {exc}", 502, _cors_headers())
+
+    out_headers = dict(_cors_headers())
+    for h in ("Content-Type", "Content-Length", "Cache-Control"):
+        if h in upstream.headers:
+            out_headers[h] = upstream.headers[h]
+
+    return Response(
+        upstream.iter_content(chunk_size=8192),
+        status=upstream.status_code,
+        headers=out_headers,
+    )
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"ok": True, "service": "minerva-cors-proxy"})
+
+
 if __name__ == "__main__":
     host = os.environ.get("MINERVA_CORS_HOST", "127.0.0.1")
     port = int(os.environ.get("MINERVA_CORS_PORT", "8081"))
-    print(f"Minerva CORS proxy listening at http://{host}:{port}")
+    print(f"[minerva-cors] listening at http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)
