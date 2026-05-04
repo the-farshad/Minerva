@@ -60,8 +60,12 @@
       rows: []
     },
     notes: {
-      headers: ['id','title','body','tags','created','_updated'],
-      types:   ['text','text','markdown','multiselect()','datetime','datetime'],
+      // Combined notes + sketches — every note row can carry a markdown
+      // body and an optional hand-drawn sketch (drawing type → Drive
+      // fileId or data: URL). The sketches preset is kept for back-compat
+      // but new sections route both into notes.
+      headers: ['id','title','body','sketch','tags','created','_updated'],
+      types:   ['text','text','markdown','drawing','multiselect()','datetime','datetime'],
       rows: []
     },
     habits: {
@@ -139,7 +143,7 @@
   // CACHE_VERSION in sw.js — bump both whenever you ship.
   window.Minerva.version = {
     semver: 'v0.22',
-    build:  53,
-    label:  'v0.22 · build 53'
+    build:  54,
+    label:  'v0.22 · build 54'
   };
 })();

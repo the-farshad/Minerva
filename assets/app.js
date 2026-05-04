@@ -1837,6 +1837,53 @@
         }, 'Copy BibTeX'));
       }
 
+      // Bulk download — YouTube only. With a Cobalt endpoint configured
+      // we fan out one fetch per selected row; without one we hand back
+      // a single yt-dlp command listing every URL (yt-dlp accepts many
+      // URLs in one invocation so the user gets a single paste-and-run).
+      if (sec.slug === 'youtube') {
+        children.push(el('button', { class: 'btn btn-ghost', type: 'button',
+          title: 'Download every selected video for offline playback',
+          onclick: async function () {
+            var ids = Array.from(selectedIds);
+            var rows = [];
+            for (var i = 0; i < ids.length; i++) {
+              var r = await M.db.getRow(sec.tab, ids[i]);
+              if (r && r.url) rows.push(r);
+            }
+            if (!rows.length) { flash(view, 'No URLs in selection.', 'error'); return; }
+            var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
+            if (cobaltOk) {
+              flash(view, 'Downloading ' + rows.length + ' video' + (rows.length === 1 ? '' : 's') + ' via Cobalt — see progress bar.');
+              for (var j = 0; j < rows.length; j++) {
+                try { await downloadOfflineViaCobalt(sec.tab, rows[j], null); }
+                catch (e) { console.warn('[Minerva bulk-cobalt]', e); }
+              }
+              await refresh();
+              flash(view, 'Bulk download finished.');
+              return;
+            }
+            // No Cobalt → single yt-dlp command with N URLs. The user
+            // pastes once in their terminal and walks away.
+            var fmt = readConfig().ytDlpFormat || 'mp4';
+            var cmdParts = ['yt-dlp'];
+            if (fmt === 'mp3') cmdParts.push('-x', '--audio-format', 'mp3');
+            else if (fmt === 'bestaudio') cmdParts.push('-x');
+            else if (fmt === 'mp4') cmdParts.push('-f', 'mp4');
+            else cmdParts.push('-f', JSON.stringify(fmt));
+            rows.forEach(function (r) { cmdParts.push(JSON.stringify(r.url)); });
+            var cmd = cmdParts.join(' ');
+            try {
+              await navigator.clipboard.writeText(cmd);
+              flash(view, 'yt-dlp command for ' + rows.length + ' video' + (rows.length === 1 ? '' : 's') + ' copied — paste in terminal, then ⬆ Upload each result.');
+            } catch (e) {
+              console.log(cmd);
+              flash(view, 'Clipboard unavailable — yt-dlp command logged to console.', 'error');
+            }
+          }
+        }, 'Download'));
+      }
+
       // Remove offline — YouTube only. Drops cached blobs for the selection.
       if (sec.slug === 'youtube') {
         children.push(el('button', { class: 'btn btn-ghost', type: 'button',
@@ -2002,13 +2049,19 @@
     }
     paintViewsBar();
 
-    function paintModeToggle(hasDate, hasTree, hasGraph) {
+    function paintModeToggle(hasDate, hasTree, hasGraph, hasTiles) {
       modeToggle.innerHTML = '';
-      if (!hasDate && !hasTree && !hasGraph) return;
+      if (!hasDate && !hasTree && !hasGraph && !hasTiles) return;
       var listBtn = el('button', { type: 'button', 'data-value': 'list',
         class: mode === 'list' ? 'active' : '' }, 'List');
       listBtn.addEventListener('click', function () { switchMode('list'); });
       modeToggle.appendChild(listBtn);
+      if (hasTiles) {
+        var tilesBtn = el('button', { type: 'button', 'data-value': 'tiles',
+          class: mode === 'tiles' ? 'active' : '' }, 'Tiles');
+        tilesBtn.addEventListener('click', function () { switchMode('tiles'); });
+        modeToggle.appendChild(tilesBtn);
+      }
       if (hasTree) {
         var treeBtn = el('button', { type: 'button', 'data-value': 'tree',
           class: mode === 'tree' ? 'active' : '' }, 'Tree');
@@ -2073,6 +2126,7 @@
       else if (sec.slug === 'books') upgrader = maybeUpgradeBooksSchema;
       else if (sec.slug === 'films') upgrader = maybeUpgradeFilmsSchema;
       else if (sec.slug === 'recipes') upgrader = maybeUpgradeRecipesSchema;
+      else if (sec.slug === 'notes') upgrader = maybeUpgradeNotesSchema;
       if (upgrader && meta && meta.headers) {
         try {
           var changed = await upgrader(meta);
@@ -2185,11 +2239,18 @@
       var canCal = !!dateCol;
       var canTree = !!parentCol;
       var canGraph = !!parentCol && !!(M.graph && M.graph.renderGraph);
+      // Tiles makes sense for any visual-leaning section — anything with
+      // a url, pdf, drawing, or image column. Cheap test: scan headers.
+      var canTiles = (meta && meta.headers || []).some(function (h, i) {
+        var t = M.render.parseType((meta.types || [])[i] || 'text').kind;
+        return h === 'url' || h === 'pdf' || t === 'link' || t === 'drawing';
+      });
       if (mode === 'cal' && !canCal) mode = 'list';
       if (mode === 'tree' && !canTree) mode = 'list';
       if (mode === 'graph' && !canGraph) mode = 'list';
+      if (mode === 'tiles' && !canTiles) mode = 'list';
 
-      paintModeToggle(canCal, canTree, canGraph);
+      paintModeToggle(canCal, canTree, canGraph, canTiles);
       paintCalNav(mode === 'cal');
 
       var meta1 = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
@@ -2216,6 +2277,14 @@
           ' field. ', el('strong', null, '+'), ' adds a subtask · ',
           el('strong', null, '↺'),
           ' shows incoming refs from other sections. Click ▸/▾ to expand.'
+        );
+      } else if (mode === 'tiles' && canTiles) {
+        bodyHost.replaceChildren(renderTiles(meta, filtered, sec.tab, refresh));
+        hint.replaceChildren(
+          'Tiles group rows by ',
+          el('code', null, (meta.headers || []).indexOf('playlist') >= 0 ? 'playlist'
+            : ((meta.headers || []).indexOf('category') >= 0 ? 'category' : 'kind')),
+          '. Click a tile to open the preview.'
         );
       } else if (mode === 'graph' && canGraph) {
         var graphHost = el('div', {
@@ -2807,6 +2876,11 @@
   function maybeUpgradeRecipesSchema(meta) {
     return upgradeSectionSchema('recipes', meta, [
       { name: 'category', type: 'multiselect(breakfast,lunch,dinner,snack,dessert,drink,sauce,baking,other)', before: 'tags' }
+    ]);
+  }
+  function maybeUpgradeNotesSchema(meta) {
+    return upgradeSectionSchema('notes', meta, [
+      { name: 'sketch', type: 'drawing', before: 'tags' }
     ]);
   }
 
@@ -4446,6 +4520,127 @@
     });
   }
 
+  // Tiles view — visual cards grouped by playlist / category / kind
+  // (whichever the section has). Designed for "scan a library and pick
+  // something to watch / read" rather than the spreadsheet feel of the
+  // list view. Each tile shows: thumbnail (YouTube thumb when the row
+  // has a YouTube URL, otherwise a colored monogram fallback), title,
+  // a small chip with channel / authors, and a watched-state dot.
+  function renderTiles(meta, rows, tab, refresh) {
+    var headers = (meta && meta.headers) || [];
+    var groupCol = headers.indexOf('playlist') >= 0 ? 'playlist'
+      : (headers.indexOf('category') >= 0 ? 'category'
+        : (headers.indexOf('kind') >= 0 ? 'kind' : ''));
+    var titleCol = headers.indexOf('title') >= 0 ? 'title'
+      : (headers.indexOf('name') >= 0 ? 'name' : '');
+    var subCol = headers.indexOf('channel') >= 0 ? 'channel'
+      : (headers.indexOf('authors') >= 0 ? 'authors'
+        : (headers.indexOf('author') >= 0 ? 'author' : ''));
+    var hasWatched = headers.indexOf('watched') >= 0;
+    var hasUrl = headers.indexOf('url') >= 0;
+    var collapsed = readCollapsedGroups(tab);
+
+    var ytId = function (s) {
+      var m = String(s || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/);
+      return m ? m[1] : null;
+    };
+
+    function tileFor(r) {
+      var tile = el('div', { class: 'tile' + (hasWatched && String(r.watched || '').toUpperCase() === 'TRUE' ? ' tile-watched' : '') });
+      var thumb = el('div', { class: 'tile-thumb' });
+      var url = hasUrl ? r.url : '';
+      var yid = ytId(url);
+      if (yid) {
+        var img = document.createElement('img');
+        img.loading = 'lazy';
+        img.alt = '';
+        img.src = 'https://img.youtube.com/vi/' + encodeURIComponent(yid) + '/mqdefault.jpg';
+        thumb.appendChild(img);
+      } else if (r.thumbnail) {
+        var img2 = document.createElement('img');
+        img2.loading = 'lazy';
+        img2.alt = '';
+        img2.src = String(r.thumbnail);
+        thumb.appendChild(img2);
+      } else {
+        // Monogram fallback — first non-space char of the title.
+        var t0 = (r[titleCol] || r.title || '?').toString().trim();
+        thumb.classList.add('tile-thumb-mono');
+        thumb.textContent = (t0[0] || '?').toUpperCase();
+      }
+      tile.appendChild(thumb);
+
+      var body = el('div', { class: 'tile-body' });
+      var titleEl = el('div', { class: 'tile-title' }, r[titleCol] || r.title || '(untitled)');
+      body.appendChild(titleEl);
+      if (subCol && r[subCol]) {
+        body.appendChild(el('div', { class: 'tile-sub small muted' }, r[subCol]));
+      }
+      // Optional duration / year tag in the corner.
+      var meta2 = '';
+      if (r.duration) meta2 = String(r.duration);
+      else if (r.year) meta2 = String(r.year);
+      if (meta2) body.appendChild(el('div', { class: 'tile-meta small muted' }, meta2));
+      tile.appendChild(body);
+
+      tile.addEventListener('click', function (e) {
+        // Plain click → preview (URL) or row-detail (no URL). Modifier
+        // keys defer to the OS / let-link-open behavior.
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        e.preventDefault();
+        if (url && window.Minerva && Minerva.preview) {
+          Minerva.preview.show(url);
+        } else {
+          location.hash = '#/r/' + encodeURIComponent(tab) + '/' + encodeURIComponent(r.id);
+        }
+      });
+      return tile;
+    }
+
+    var wrap = el('div', { class: 'tiles-wrap' });
+    if (groupCol) {
+      var byGroup = {};
+      var order = [];
+      rows.forEach(function (r) {
+        var key = (r[groupCol] && String(r[groupCol]).split(',')[0].trim()) || '(uncategorised)';
+        if (!byGroup[key]) { byGroup[key] = []; order.push(key); }
+        byGroup[key].push(r);
+      });
+      order.forEach(function (key) {
+        var groupRows = byGroup[key];
+        var isCol = collapsed.has(key);
+        var head = el('div', { class: 'tiles-group-head' });
+        var caret = el('button', {
+          type: 'button',
+          class: 'row-group-caret',
+          title: isCol ? 'Expand' : 'Collapse',
+          onclick: function () {
+            var cur = readCollapsedGroups(tab);
+            if (cur.has(key)) cur.delete(key);
+            else cur.add(key);
+            writeCollapsedGroups(tab, cur);
+            if (refresh) refresh();
+          }
+        });
+        caret.appendChild(M.render.icon(isCol ? 'chevron-right' : 'chevron-down'));
+        head.appendChild(caret);
+        head.appendChild(el('span', { class: 'tiles-group-title' }, key));
+        head.appendChild(el('span', { class: 'small muted' }, ' · ' + groupRows.length));
+        wrap.appendChild(head);
+        if (!isCol) {
+          var grid = el('div', { class: 'tiles-grid' });
+          groupRows.forEach(function (r) { grid.appendChild(tileFor(r)); });
+          wrap.appendChild(grid);
+        }
+      });
+    } else {
+      var grid = el('div', { class: 'tiles-grid' });
+      rows.forEach(function (r) { grid.appendChild(tileFor(r)); });
+      wrap.appendChild(grid);
+    }
+    return wrap;
+  }
+
   function renderSectionTable(meta, rows, tab, refresh, userSort, onSortChange, backlinks, selectedIds, onBulkChange) {
     if (!meta || !meta.headers || !meta.headers.length) {
       return el('p', { class: 'muted' }, 'No schema cached yet — open Settings and click Sync now.');
@@ -4743,6 +4938,52 @@
         headTd.appendChild(titleSpan);
         headTd.appendChild(countSpan);
 
+        // Per-group "download all" — one click grabs every URL in the
+        // group via Cobalt (when configured) or via a single yt-dlp
+        // command with all URLs on the user's clipboard.
+        if (hasOfflineCol && hasUrlCol) {
+          var groupRowsClosure = groupRows;
+          var dlGroupBtn = el('button', {
+            type: 'button',
+            class: 'icon-btn row-group-dl',
+            title: 'Download every video in "' + key + '"',
+            'aria-label': 'Download playlist',
+            onclick: async function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              var withUrl = groupRowsClosure.filter(function (r) { return r.url; });
+              if (!withUrl.length) { flash(document.body, 'No URLs in this group.', 'error'); return; }
+              var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
+              if (cobaltOk) {
+                flash(document.body, 'Downloading ' + withUrl.length + ' via Cobalt…');
+                for (var i = 0; i < withUrl.length; i++) {
+                  try { await downloadOfflineViaCobalt(tab, withUrl[i], null); }
+                  catch (er) { console.warn('[Minerva group-cobalt]', er); }
+                }
+                if (refresh) await refresh();
+                return;
+              }
+              var fmt = readConfig().ytDlpFormat || 'mp4';
+              var parts = ['yt-dlp'];
+              if (fmt === 'mp3') parts.push('-x', '--audio-format', 'mp3');
+              else if (fmt === 'bestaudio') parts.push('-x');
+              else if (fmt === 'mp4') parts.push('-f', 'mp4');
+              else parts.push('-f', JSON.stringify(fmt));
+              withUrl.forEach(function (r) { parts.push(JSON.stringify(r.url)); });
+              var cmd = parts.join(' ');
+              try {
+                await navigator.clipboard.writeText(cmd);
+                flash(document.body, 'yt-dlp command for ' + withUrl.length + ' video' + (withUrl.length === 1 ? '' : 's') + ' copied. Paste in terminal.');
+              } catch (er) {
+                console.log(cmd);
+                flash(document.body, 'Clipboard blocked — yt-dlp command in console.', 'error');
+              }
+            }
+          });
+          dlGroupBtn.appendChild(M.render.icon('download'));
+          headTd.appendChild(dlGroupBtn);
+        }
+
         var groupTr = el('tr', {
           class: 'row-group-head' + (isCollapsed ? ' is-collapsed' : ''),
           'data-group': key
@@ -4864,24 +5105,30 @@
           wrap.appendChild(rmBtn);
         } else {
           var cobaltOk = !!(readConfig().cobaltEndpoint || '').trim();
-          // The primary action always *says* Download — that's what the
-          // user wants to do. When a Cobalt endpoint is configured we
-          // actually fetch the video; otherwise clicking opens a small
-          // dialog explaining the setup options (browsers can't fetch
-          // YouTube directly due to CORS, so a Cobalt instance is the
-          // mechanism). The secondary "upload local file" option is
-          // always present as an icon button.
+          // Primary action: act immediately, no dialog.
+          //   • Cobalt configured → fetch via Cobalt
+          //   • Otherwise → copy a yt-dlp command and surface a toast
+          //     with "Run in terminal, then click ⬆ Upload"
+          // Long-press / shift-click opens the full-options modal for
+          // anyone who wants to switch format or set up Cobalt.
           var saveBtn = el('button', {
             class: 'btn btn-ghost offline-save',
             type: 'button',
             title: cobaltOk
-              ? 'Download via Cobalt for offline playback'
-              : 'Download for offline playback — click for yt-dlp / Cobalt / upload options',
+              ? 'Download via Cobalt for offline playback (shift-click for options)'
+              : 'Copy yt-dlp command for offline playback (shift-click for options)',
             onclick: function (e) {
               e.preventDefault();
               e.stopPropagation();
-              if (cobaltOk && row.url) downloadOfflineViaCobalt(tab, row, refresh);
-              else showOfflineSetupDialog(tab, row, refresh);
+              if (e.shiftKey) {
+                showOfflineSetupDialog(tab, row, refresh);
+                return;
+              }
+              if (cobaltOk && row.url) {
+                downloadOfflineViaCobalt(tab, row, refresh);
+                return;
+              }
+              copyYtDlpCommand(row.url || '');
             }
           });
           saveBtn.appendChild(M.render.icon('download'));
@@ -4908,6 +5155,35 @@
     }
     paint();
     return wrap;
+  }
+
+  // Build a yt-dlp command from the user's saved format preference and
+  // copy it to the clipboard. Surfaces a toast with the command so the
+  // user knows what landed on their clipboard. No prompt, no modal.
+  function buildYtDlpCommand(url, fmt) {
+    fmt = fmt || (readConfig().ytDlpFormat || 'mp4');
+    var parts = ['yt-dlp'];
+    if (fmt === 'mp3') parts.push('-x', '--audio-format', 'mp3');
+    else if (fmt === 'bestaudio') parts.push('-x');
+    else if (fmt === 'mp4') parts.push('-f', 'mp4');
+    else parts.push('-f', JSON.stringify(fmt));
+    parts.push(JSON.stringify(url));
+    return parts.join(' ');
+  }
+  async function copyYtDlpCommand(url) {
+    if (!url) {
+      flash(document.body, 'No URL on this row to download.', 'error');
+      return;
+    }
+    var cmd = buildYtDlpCommand(url);
+    try {
+      await navigator.clipboard.writeText(cmd);
+      flash(document.body, 'yt-dlp command copied — paste in your terminal, then click ⬆ Upload to attach the file.');
+    } catch (e) {
+      // Clipboard API blocked (insecure context, permissions). Fall back
+      // to opening the modal so the user can still copy manually.
+      flash(document.body, 'Couldn\'t auto-copy. Opening options…', 'error');
+    }
   }
 
   // Modal offering three download paths in priority order:
@@ -6831,6 +7107,87 @@
     if (focusTarget) setTimeout(function () { try { focusTarget.focus(); } catch (e) {} }, 30);
   }
 
+  // PDF drop / pick zone for the URL Import modal. Reads a dropped or
+  // picked PDF, runs M.import.pdfFile to extract an arXiv id / DOI /
+  // title, then injects the identifier into the input field so the
+  // existing debounced lookup picks it up. No text extraction libraries
+  // — pure regex on the first 256KB of bytes.
+  function renderPdfDropZone(input, triggerLookup) {
+    var zone = el('div', { class: 'url-import-pdfzone' });
+    var fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.pdf,application/pdf';
+    fileInput.style.display = 'none';
+
+    var status = el('span', { class: 'small muted' },
+      'Drop a PDF here or ',
+      el('button', { type: 'button', class: 'url-import-pdfpick',
+        onclick: function () { fileInput.click(); }
+      }, 'pick a file'),
+      ' — Minerva pulls out the arXiv id / DOI to auto-fill.'
+    );
+    zone.appendChild(status);
+    zone.appendChild(fileInput);
+
+    async function handleFile(file) {
+      if (!file) return;
+      if (!/pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+        flash(zone, 'Not a PDF — drop a .pdf file.', 'error');
+        return;
+      }
+      status.replaceChildren(document.createTextNode('Reading "' + file.name + '"…'));
+      try {
+        var meta = await M.import.pdfFile(file);
+        if (!meta) {
+          status.replaceChildren(document.createTextNode(
+            'Couldn\'t find an arXiv id or DOI in "' + file.name + '". Type a URL above instead.'
+          ));
+          return;
+        }
+        if (meta.identifier && meta.identifierKind === 'arxiv') {
+          input.value = meta.identifier;
+          status.replaceChildren(document.createTextNode(
+            'Found arXiv id ' + meta.identifier + ' — fetching metadata…'
+          ));
+          triggerLookup();
+        } else if (meta.identifier && meta.identifierKind === 'doi') {
+          input.value = meta.identifier;
+          status.replaceChildren(document.createTextNode(
+            'Found DOI ' + meta.identifier + ' — fetching metadata…'
+          ));
+          triggerLookup();
+        } else if (meta.title) {
+          // No identifier but we got a title from the PDF info dict.
+          // Surface it so the user can complete the row manually.
+          status.replaceChildren(document.createTextNode(
+            'No DOI / arXiv id in "' + file.name + '". Title from PDF metadata: "' + meta.title + '". Type a URL above to fetch full data, or save manually.'
+          ));
+        }
+      } catch (err) {
+        status.replaceChildren(el('span', { class: 'error' },
+          'PDF read failed: ' + (err && err.message || err)));
+      }
+    }
+
+    fileInput.addEventListener('change', function () {
+      handleFile(fileInput.files && fileInput.files[0]);
+    });
+    zone.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      zone.classList.add('is-dragover');
+    });
+    zone.addEventListener('dragleave', function () {
+      zone.classList.remove('is-dragover');
+    });
+    zone.addEventListener('drop', function (e) {
+      e.preventDefault();
+      zone.classList.remove('is-dragover');
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) handleFile(files[0]);
+    });
+    return zone;
+  }
+
   // ---- smart URL import modal (arXiv / YouTube / generic) ----
 
   async function showUrlImport(tab) {
@@ -7253,6 +7610,12 @@
       helpNodes,
       input,
       categoryFieldNode,
+      // PDF drop/pick zone — only for paper-style sections. Drag a
+      // local PDF onto the modal (or click to pick) and Minerva pulls
+      // out the arXiv id / DOI / title and auto-fills the form.
+      sectionKind === 'papers' || tab === 'library'
+        ? renderPdfDropZone(input, function () { lookup(); })
+        : null,
       preview,
       el('div', { class: 'form-actions' },
         addBtn,

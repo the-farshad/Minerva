@@ -32,16 +32,91 @@
     catch (e) { return url; }
   }
 
-  function buildIframeForUrl(url) {
+  // Persisted "last page read" per PDF URL. The browser's native PDF
+  // viewer respects #page=N in the iframe src, so jumping back to where
+  // the user left off is just a hash fragment. We can't observe their
+  // current page (cross-origin iframe), so the user types it into the
+  // page-jumper input — auto-saved on change.
+  var PDF_PAGE_KEY = 'minerva.pdf.page';
+  function readPdfPage(url) {
+    try {
+      var raw = JSON.parse(localStorage.getItem(PDF_PAGE_KEY) || '{}');
+      var n = parseInt(raw[url], 10);
+      return n > 0 ? n : 1;
+    } catch (e) { return 1; }
+  }
+  function writePdfPage(url, page) {
+    try {
+      var raw = JSON.parse(localStorage.getItem(PDF_PAGE_KEY) || '{}');
+      var n = parseInt(page, 10);
+      if (n > 0) raw[url] = n; else delete raw[url];
+      localStorage.setItem(PDF_PAGE_KEY, JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+
+  // YouTube resume — captured via the IFrame Player API. The API script
+  // loads on demand the first time we open a YouTube preview; thereafter
+  // each YouTube iframe is created with `enablejsapi=1` and we attach
+  // a YT.Player instance so we can call getCurrentTime() on close.
+  var YT_RESUME_KEY = 'minerva.video.resume';
+  function readVideoResume(url) {
+    try {
+      var raw = JSON.parse(localStorage.getItem(YT_RESUME_KEY) || '{}');
+      var n = parseFloat(raw[url]);
+      return n > 0 ? Math.floor(n) : 0;
+    } catch (e) { return 0; }
+  }
+  function writeVideoResume(url, seconds) {
+    try {
+      var raw = JSON.parse(localStorage.getItem(YT_RESUME_KEY) || '{}');
+      var n = Math.floor(seconds);
+      // Don't bother saving "almost finished" states — anything within
+      // 5s of zero or within 10s of the end is treated as "done".
+      if (n > 5) raw[url] = n; else delete raw[url];
+      localStorage.setItem(YT_RESUME_KEY, JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+  // Lazy-load the YT IFrame Player API. Returns a promise that resolves
+  // when window.YT.Player is available.
+  var ytApiPromise = null;
+  function loadYouTubeApi() {
+    if (ytApiPromise) return ytApiPromise;
+    if (window.YT && window.YT.Player) {
+      ytApiPromise = Promise.resolve();
+      return ytApiPromise;
+    }
+    ytApiPromise = new Promise(function (resolve) {
+      var prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = function () {
+        if (typeof prev === 'function') { try { prev(); } catch (e) {} }
+        resolve();
+      };
+      var s = document.createElement('script');
+      s.src = 'https://www.youtube.com/iframe_api';
+      s.async = true;
+      document.head.appendChild(s);
+    });
+    return ytApiPromise;
+  }
+
+  function buildIframeForUrl(url, pdfPage, ytStartSec) {
     var iframe = document.createElement('iframe');
     iframe.className = 'preview-frame';
     iframe.referrerPolicy = 'no-referrer';
     iframe.allow = 'fullscreen; autoplay; encrypted-media';
     var yt = ytId(url);
     if (yt) {
-      iframe.src = 'https://www.youtube.com/embed/' + encodeURIComponent(yt);
+      // enablejsapi=1 lets the IFrame Player API attach for resume.
+      // origin pins postMessage so the player only talks to this page.
+      var qp = ['enablejsapi=1', 'origin=' + encodeURIComponent(location.origin)];
+      if (ytStartSec > 0) qp.push('start=' + ytStartSec);
+      iframe.src = 'https://www.youtube.com/embed/' + encodeURIComponent(yt)
+        + '?' + qp.join('&');
     } else if (isPdf(url)) {
-      iframe.src = 'https://docs.google.com/viewer?url=' + encodeURIComponent(url) + '&embedded=true';
+      // Native browser PDF viewer — supports #page=N for resume. Falls
+      // back to Google Docs viewer if the PDF host blocks framing.
+      var page = pdfPage > 0 ? pdfPage : 1;
+      iframe.src = url + (url.indexOf('#') >= 0 ? '&' : '#') + 'page=' + page;
     } else {
       iframe.src = url;
     }
@@ -116,6 +191,52 @@
       openA.textContent = 'Open';
     }
 
+    // Fullscreen toggle — uses the Fullscreen API on the panel (works
+    // for both PDF iframes and YouTube embeds, since the iframe is
+    // mounted inside the panel and inherits the size).
+    var fsBtn = document.createElement('button');
+    fsBtn.className = 'icon-btn preview-fs-btn';
+    fsBtn.type = 'button';
+    fsBtn.title = 'Toggle fullscreen';
+    fsBtn.setAttribute('aria-label', 'Toggle fullscreen');
+    if (window.Minerva && Minerva.render && Minerva.render.icon) {
+      fsBtn.appendChild(Minerva.render.icon('maximize'));
+    } else { fsBtn.textContent = '⛶'; }
+    fsBtn.addEventListener('click', function () {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(function () {});
+      } else if (panel.requestFullscreen) {
+        panel.requestFullscreen().catch(function () {});
+      }
+    });
+
+    // Page jumper — only attached for PDF items. Lets the user pick a
+    // page; auto-saved as resume position. Hidden by default; shown in
+    // render() when the current item is a PDF.
+    var pageInput = document.createElement('input');
+    pageInput.type = 'number';
+    pageInput.min = '1';
+    pageInput.className = 'preview-page-input';
+    pageInput.title = 'Page';
+    var pageLabel = document.createElement('span');
+    pageLabel.className = 'preview-page-label small muted';
+    pageLabel.textContent = 'Page';
+    var pageWrap = document.createElement('label');
+    pageWrap.className = 'preview-page-wrap';
+    pageWrap.appendChild(pageLabel);
+    pageWrap.appendChild(pageInput);
+    pageWrap.style.display = 'none';
+    pageInput.addEventListener('change', function () {
+      var item = items[idx]; if (!item) return;
+      var n = parseInt(pageInput.value, 10);
+      if (!(n > 0)) return;
+      writePdfPage(item.url, n);
+      // Re-mount the iframe at the new page (browser doesn't auto-jump
+      // when you only update the hash on a same-document iframe).
+      while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+      frameHost.appendChild(buildIframeForUrl(item.url, n));
+    });
+
     var closeBtn = document.createElement('button');
     closeBtn.className = 'icon-btn';
     closeBtn.type = 'button';
@@ -129,7 +250,9 @@
     closeBtn.addEventListener('click', function () { close(); });
 
     head.appendChild(titleEl);
+    head.appendChild(pageWrap);
     head.appendChild(openA);
+    head.appendChild(fsBtn);
     head.appendChild(closeBtn);
     panel.appendChild(head);
 
@@ -140,7 +263,13 @@
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
+    var ytPlayer = null;
     function render() {
+      // Snapshot the previous URL's video position before mounting the
+      // next iframe — switching to next/prev shouldn't lose progress.
+      captureVideoResume();
+      ytPlayer = null;
+
       var item = items[idx];
       var url = item.url;
       // Title shows position + item title (or hostname fallback).
@@ -165,12 +294,30 @@
       openLabel = document.createTextNode(isYt ? ' Watch on YouTube' : ' Open');
       openA.appendChild(openLabel);
 
+      // PDF page jumper — show only for PDFs; pre-fill from saved page.
+      var isPdfNow = isPdf(url);
+      var savedPage = isPdfNow ? readPdfPage(url) : 1;
+      pageWrap.style.display = isPdfNow ? '' : 'none';
+      if (isPdfNow) pageInput.value = String(savedPage);
+
       while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
-      frameHost.appendChild(buildIframeForUrl(url));
+      var resumeAt = isYt ? readVideoResume(url) : 0;
+      var iframe = buildIframeForUrl(url, savedPage, resumeAt);
+      frameHost.appendChild(iframe);
       if (isYt) {
+        // Attach a YT.Player instance so close() can grab currentTime().
+        loadYouTubeApi().then(function () {
+          if (!iframe.parentNode) return; // re-rendered already
+          try {
+            ytPlayer = new window.YT.Player(iframe, { events: {} });
+          } catch (e) { /* iframe might not be ready; harmless */ }
+        });
         var note = document.createElement('p');
         note.className = 'small muted preview-yt-note';
-        note.textContent = 'Player shows "Error 153"? The video owner blocked embedding. Click "Watch on YouTube" above.';
+        var noteText = resumeAt > 0
+          ? ('Resuming at ' + Math.floor(resumeAt / 60) + ':' + String(resumeAt % 60).padStart(2, '0') + '. ')
+          : '';
+        note.textContent = noteText + 'Player shows "Error 153"? The video owner blocked embedding. Click "Watch on YouTube" above.';
         frameHost.appendChild(note);
       }
       // Notify any listener that a URL is being played — the section view
@@ -199,8 +346,21 @@
       render();
     }
 
+    // Pull the YT player's currentTime() (if attached) and persist it
+    // for the current item's URL. Used on close + on next/prev nav.
+    function captureVideoResume() {
+      try {
+        if (!ytPlayer || typeof ytPlayer.getCurrentTime !== 'function') return;
+        var item = items[idx]; if (!item) return;
+        var t = ytPlayer.getCurrentTime();
+        if (t && isFinite(t)) writeVideoResume(item.url, t);
+      } catch (e) { /* ignore */ }
+    }
+
     function close() {
+      captureVideoResume();
       clearWatchTimer();
+      try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
       overlay.remove();
       document.removeEventListener('keydown', onKey);
     }
@@ -215,6 +375,11 @@
       } else if (e.key === 'ArrowRight' && items.length > 1) {
         e.preventDefault();
         go(idx + 1);
+      } else if (e.key === 'f' || e.key === 'F') {
+        // Quick fullscreen shortcut — matches typical media player UX.
+        e.preventDefault();
+        if (document.fullscreenElement) { document.exitFullscreen().catch(function () {}); }
+        else if (panel.requestFullscreen) { panel.requestFullscreen().catch(function () {}); }
       }
     };
     document.addEventListener('keydown', onKey);
@@ -273,6 +438,21 @@
     }
     head.appendChild(openA);
 
+    // Fullscreen toggle for offline blob video too.
+    var fsBtn = document.createElement('button');
+    fsBtn.className = 'icon-btn preview-fs-btn';
+    fsBtn.type = 'button';
+    fsBtn.title = 'Toggle fullscreen';
+    fsBtn.setAttribute('aria-label', 'Toggle fullscreen');
+    if (window.Minerva && Minerva.render && Minerva.render.icon) {
+      fsBtn.appendChild(Minerva.render.icon('maximize'));
+    } else { fsBtn.textContent = '⛶'; }
+    fsBtn.addEventListener('click', function () {
+      if (document.fullscreenElement) { document.exitFullscreen().catch(function () {}); }
+      else if (panel.requestFullscreen) { panel.requestFullscreen().catch(function () {}); }
+    });
+    head.appendChild(fsBtn);
+
     var closeBtn = document.createElement('button');
     closeBtn.className = 'icon-btn';
     closeBtn.type = 'button';
@@ -294,6 +474,30 @@
     video.autoplay = true;
     video.style.width = '100%';
     video.style.height = '100%';
+    // Resume — for offline blobs we key by sourceUrl when present (so a
+    // file uploaded for a YouTube row picks up the same resume position
+    // as the streamed version) and fall back to the blob's filename.
+    var resumeKeyUrl = opts.sourceUrl || opts.url;
+    var resumeAt = readVideoResume(resumeKeyUrl);
+    if (resumeAt > 0) {
+      video.addEventListener('loadedmetadata', function () {
+        try { video.currentTime = resumeAt; } catch (e) {}
+      }, { once: true });
+    }
+    // Keep the saved time fresh while the video plays — every 5s of
+    // playback persists the current time. Less write traffic than ontimeupdate.
+    var resumeTick = null;
+    video.addEventListener('play', function () {
+      if (resumeTick) return;
+      resumeTick = setInterval(function () {
+        if (!isFinite(video.currentTime) || video.duration && video.currentTime > video.duration - 5) return;
+        writeVideoResume(resumeKeyUrl, video.currentTime);
+      }, 5000);
+    });
+    video.addEventListener('pause', function () {
+      if (resumeTick) { clearInterval(resumeTick); resumeTick = null; }
+      writeVideoResume(resumeKeyUrl, video.currentTime);
+    });
     frameHost.appendChild(video);
     panel.appendChild(frameHost);
 
@@ -313,13 +517,23 @@
 
     function close() {
       if (blobWatchTimer) { clearTimeout(blobWatchTimer); blobWatchTimer = null; }
+      if (resumeTick) { clearInterval(resumeTick); resumeTick = null; }
+      try {
+        if (isFinite(video.currentTime)) writeVideoResume(resumeKeyUrl, video.currentTime);
+      } catch (e) {}
       try { video.pause(); } catch (e) { /* ignore */ }
       try { URL.revokeObjectURL(opts.url); } catch (e) { /* ignore */ }
+      try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
       overlay.remove();
       document.removeEventListener('keydown', onKey);
     }
     var onKey = function (e) {
       if (e.key === 'Escape') { e.preventDefault(); close(); }
+      else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        if (document.fullscreenElement) { document.exitFullscreen().catch(function () {}); }
+        else if (panel.requestFullscreen) { panel.requestFullscreen().catch(function () {}); }
+      }
     };
     document.addEventListener('keydown', onKey);
     if (window.Minerva && Minerva.render && Minerva.render.refreshIcons) {

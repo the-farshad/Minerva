@@ -592,25 +592,93 @@
     return out;
   }
 
+  // Best-effort metadata extraction from a local PDF File. Tries three
+  // signals in priority order:
+  //   1. The filename — `2401.12345.pdf`, `arxiv-…`, etc.
+  //   2. PDF text content — searches the first ~256 KB for DOI / arXiv
+  //      id patterns. Most modern PDFs compress streams so this hits
+  //      mostly when identifiers appear in headers/footers/ToC. Still
+  //      catches a surprising number of papers.
+  //   3. PDF info dictionary — /Title, /Author, /Subject. Rarely as
+  //      reliable as a DOI but useful as a last-resort title hint.
+  // Returns { kind: 'pdf-meta', identifier, identifierKind, title?, authors? }
+  // where identifierKind is 'arxiv' | 'doi' | '' so the caller can route
+  // to the right lookup.
+  async function pdfFileLookup(file) {
+    if (!file) return null;
+    var name = String(file.name || '');
+    var arxivRe = /(\d{4}\.\d{4,5})(v\d+)?/i;
+    var doiRe   = /\b(10\.\d{4,9}\/[^\s"<>'\\)\\]]+)/i;
+
+    // 1. Filename — common patterns: "2401.12345.pdf", "arxiv-2401.12345.pdf"
+    var fmA = name.match(arxivRe);
+    if (fmA) {
+      return { kind: 'pdf-meta', identifier: fmA[1], identifierKind: 'arxiv' };
+    }
+
+    // 2 + 3. Read up to 256 KB as a Latin-1 string so we can regex
+    // through both content streams and the info dictionary in one pass.
+    var slice = file.slice(0, 256 * 1024);
+    var ab;
+    try { ab = await slice.arrayBuffer(); }
+    catch (e) { return null; }
+    var bytes = new Uint8Array(ab);
+    var text = '';
+    // Latin-1 decode keeps the byte values in the resulting string,
+    // which is what we want for regex matching against ASCII-ish
+    // identifiers without choking on binary-stream bytes.
+    for (var i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+
+    var ax = text.match(arxivRe);
+    if (ax) {
+      return { kind: 'pdf-meta', identifier: ax[1], identifierKind: 'arxiv' };
+    }
+    var dx = text.match(doiRe);
+    if (dx) {
+      var doi = dx[1].replace(/[)\.,;]+$/, '');
+      return { kind: 'pdf-meta', identifier: doi, identifierKind: 'doi' };
+    }
+
+    // 3. /Title / /Author — last resort. PDF strings can be parenthesized
+    // or hex-encoded; we handle the parenthesized form (most common).
+    var out = { kind: 'pdf-meta', identifier: '', identifierKind: '' };
+    var tMatch = text.match(/\/Title\s*\(([^)]{1,300})\)/);
+    if (tMatch) out.title = clean(tMatch[1].replace(/\\([()\\])/g, '$1'));
+    var aMatch = text.match(/\/Author\s*\(([^)]{1,300})\)/);
+    if (aMatch) out.authors = clean(aMatch[1].replace(/\\([()\\])/g, '$1'));
+    if (out.title || out.authors) return out;
+    return null;
+  }
+
   async function lookup(input, opts) {
     opts = opts || {};
     input = String(input || '').trim();
     if (!input) return null;
 
-    // arXiv first — bare id or any arxiv URL.
+    // arXiv first — bare id or any arxiv URL. If the pattern matches,
+    // the user clearly wants arXiv metadata; surface the error so the
+    // import modal can show "arXiv API failed: …" instead of silently
+    // falling through to a generic title-only fetch (which made the
+    // failure look like "no metadata fetched").
     if (/arxiv\.org|^\d{4}\.\d{4,5}/i.test(input)) {
       try {
         var ax = await arxivLookup(input);
         if (ax) return ax;
-      } catch (e) { /* fall through */ }
+      } catch (e) {
+        console.warn('[Minerva arxiv]', e);
+        throw new Error('arXiv lookup failed: ' + (e && e.message || e));
+      }
     }
 
-    // DOI — bare or wrapped in doi.org.
+    // DOI — bare or wrapped in doi.org. Same propagation policy as arXiv.
     if (/(?:doi\.org\/|^)10\.\d{4,9}\//i.test(input)) {
       try {
         var dx = await doiLookup(input);
         if (dx) return dx;
-      } catch (e) { /* fall through */ }
+      } catch (e) {
+        console.warn('[Minerva doi]', e);
+        throw new Error('DOI lookup failed: ' + (e && e.message || e));
+      }
     }
 
     // YouTube playlist. Both pure playlist URLs and watch+list URLs
@@ -655,7 +723,10 @@
       try {
         var yt = await youtubeLookup(input);
         if (yt) return yt;
-      } catch (e) { /* fall through */ }
+      } catch (e) {
+        console.warn('[Minerva youtube]', e);
+        // Generic URL fallback below still lets the user save the link.
+      }
     }
 
     // Anything else — at least preserve the URL.
@@ -676,6 +747,7 @@
     youtubeVideoId: videoIdOf,
     youtubeChannel: youtubeChannelLookup,
     youtubeChannelTarget: youtubeChannelTarget,
+    pdfFile: pdfFileLookup,
     clearYoutubeCache: cacheClear,
     fetchDurationsByIds: fetchDurationsByIds,
     fetchVideoDetailsByIds: fetchVideoDetailsByIds,

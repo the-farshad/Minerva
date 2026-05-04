@@ -189,7 +189,7 @@
       slug: 'sketches',
       title: 'Sketches',
       icon: 'pencil-line',
-      description: 'Quick hand-drawn sketches and diagrams. The sketch column stores a Drive fileId and renders as a thumbnail.',
+      description: 'Standalone hand-drawn sketches. (Notes now supports drawings too via its sketch column — prefer Notes unless you really want a separate section.)',
       schema: {
         headers: ['id','title','tags','sketch','created','_updated'],
         types:   ['text','text','multiselect()','drawing','datetime','datetime']
