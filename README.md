@@ -66,6 +66,25 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 ### Offline / install
 - **PWA** — installable from your browser's *Install* / *Add to Home Screen*, with a service worker that caches the static shell. Read your data offline; edits queue and flush automatically when you reconnect.
 - **Undo** — `⌘/Ctrl+Z` reverses the last edit / add / delete (50-deep stack in `localStorage`).
+- **Per-row offline video** — a Download button on every YouTube row. Wire it to a tiny local **yt-dlp server** (see [`docs/setup-yt-dlp.md`](docs/setup-yt-dlp.md)) for one-click downloads with a progress bar, or to a [Cobalt](https://github.com/imputnet/cobalt) instance, or upload a file you already have. Saved videos live in IndexedDB; the row gets a **Watch offline** button that plays the local copy with resume-where-you-left-off.
+
+### YouTube tracker
+- **Tiles view** — visual card grid grouped by playlist or category, with thumbnails. Toggle from the section header.
+- **Categories** — multi-value `category` column (multi-select). The chip-bar above the table filters by one click; you can add new categories on the fly from the URL Import modal.
+- **Channel + playlist URL import** — paste a `?list=…` URL or a `youtube.com/@handle` URL → Minerva enumerates every video (capped at 200/import) with the YouTube Data API key. Re-imports skip videos already in the section.
+- **Resume + fullscreen** — preview modal has a fullscreen toggle (`F`); YouTube videos remember `currentTime` per URL and resume on reopen. Same for offline blob playback.
+
+### Reading workflow
+- **Notes reader (iPad-style)** — Notes opens in a sidebar + reading-pane layout by default: list of notes on the left, big editing pane on the right with the markdown body, an inline sketch placeholder (tap to draw), and tag chips. Auto-saves on blur. Toggle to **List** or **Tiles** mode any time.
+- **Sketches inline in Notes** — the Notes preset gained a `sketch` (drawing) column. Click it from the table or tap the sketch placeholder in reader mode to open the canvas editor.
+- **PDF preview with resume** — paper rows get a 👁 preview that uses the browser's native PDF viewer with `#page=N` resume. The page jumper in the preview head saves your last-read page per URL.
+- **PDF metadata extraction** — drag a downloaded PDF onto the URL Import modal in Papers / Library. Minerva regex-scans the first 256 KB for an arXiv id or DOI, then auto-fetches title, authors, abstract, venue, volume, pages, publisher (rich CrossRef metadata for DOIs).
+- **Papers preset, expanded** — schema now carries `title, authors, year, venue, volume, pages, doi, url, pdf, abstract, category, tags, read, notes`. Existing Papers sections auto-migrate.
+
+### Misc
+- **Build version pill** — bottom-right of home + top-right of Settings. Click to copy (handy for bug reports).
+- **Downloads tray** — multiple concurrent downloads stack bottom-right with their own progress bars and a **Watch offline** CTA on success.
+- **When-to-meet, chained** — group-availability poll where each shared link carries every prior response. Each person clicks **Add my availability**, marks their slots, and forwards the new link onward; no manual token-passing on the organizer's side.
 
 ---
 
@@ -165,6 +184,8 @@ assets/app.js          hash router, all views (home, section, share, settings, .
 
 docs/setup-google-oauth.md   detailed OAuth client walkthrough + troubleshooting
 docs/setup-telegram.md       Telegram bot setup + always-on bridge sketch
+docs/setup-yt-dlp.md         offline-video downloader server (one-click Download)
+docs/yt-dlp-server.py        Flask reference server for the above (~100 lines)
 docs/assets/minerva-logo.png 512x512 PNG logo for the OAuth consent screen
 docs/assets/minerva-logo.svg source SVG of the logo
 
