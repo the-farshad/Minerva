@@ -2938,12 +2938,18 @@
       } else if (mode === 'tiles' && canTiles) {
         // Pre-resolve which rows already have an offline blob so the
         // grid can paint Watch/Remove instead of Download where
-        // appropriate. Async pre-pass; the grid mounts when it returns.
-        bodyHost.replaceChildren(el('p', { class: 'small muted' }, 'Loading…'));
+        // appropriate. Keep whatever is currently in bodyHost on
+        // screen during the async pre-pass to avoid a "Loading…"
+        // flash on every action that triggers refresh().
         offlineRowIdSet(sec.tab, filtered).then(function (ids) {
           bodyHost.replaceChildren(renderTiles(meta, filtered, sec.tab, refresh, ids));
           if (M.render && M.render.refreshIcons) M.render.refreshIcons();
         });
+        if (!bodyHost.firstChild) {
+          // Cold first render — show a one-time placeholder so the
+          // user knows the page is loading rather than empty.
+          bodyHost.replaceChildren(el('p', { class: 'small muted' }, 'Loading…'));
+        }
         hint.replaceChildren(
           'Grid groups rows by ',
           el('code', null, (meta.headers || []).indexOf('playlist') >= 0 ? 'playlist'
