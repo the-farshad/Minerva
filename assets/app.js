@@ -144,6 +144,32 @@
     load: loadDriveConfigIfPresent
   };
 
+  // Mirror the post-auth bootstrap steps that the Settings page's
+  // connect() handler runs after a successful popup auth. Called from
+  // boot() when an OAuth redirect just resolved — without it the user
+  // would be signed in but not connected to a spreadsheet.
+  async function finishOAuthBootstrap(token) {
+    if (!M.bootstrap || !M.sync) return;
+    var bs = await M.bootstrap(token);
+    if (bs && bs.spreadsheetId) {
+      writeConfig({ spreadsheetId: bs.spreadsheetId });
+    }
+    try { await loadDriveConfigIfPresent(); }
+    catch (e) { console.warn('[Minerva drive-config-load]', e); }
+    try { await M.sync.pullAll(token, bs.spreadsheetId); }
+    catch (e) { console.warn('[Minerva post-redirect-pull]', e); }
+    try { await refreshConfig(); } catch (e) { /* ignore */ }
+    flash(document.body,
+      bs && bs.fresh ? 'Spreadsheet created and synced.' : 'Connected and synced.');
+    if (typeof route === 'function') {
+      try { await route(); } catch (e) { /* ignore */ }
+    }
+    // Push the local config back to Drive so any local edits made
+    // before connecting (e.g. typed-but-unsynced API keys) become
+    // part of the canonical Drive snapshot.
+    if (typeof scheduleDriveConfigSync === 'function') scheduleDriveConfigSync();
+  }
+
   // ---- theme + font picker ----
 
   function bindPicker() {
@@ -10888,12 +10914,27 @@
     // Consume an OAuth redirect-callback code (?code=...&state=...) if
     // the URL carries one. On success the call cleans the URL and the
     // user lands back at the route they kicked off Connect from.
+    var redirectToken = null;
     if (M.auth && typeof M.auth.consumeRedirectCode === 'function') {
-      try { await M.auth.consumeRedirectCode(); }
+      try { redirectToken = await M.auth.consumeRedirectCode(); }
       catch (err) {
         console.warn('[Minerva oauth-redirect]', err);
         flash(document.body, 'Sign-in failed: ' + (err && err.message || err), 'error');
       }
+    }
+    // When a redirect-flow auth just completed, finish the same
+    // post-auth steps the popup-flow Connect button would have run:
+    //   • find-or-create the user's Minerva spreadsheet
+    //   • persist the spreadsheetId
+    //   • pull every section
+    //   • restore Drive-synced settings
+    // Without this the redirect flow leaves the user signed in but
+    // not "connected" — Settings still says "no spreadsheet".
+    if (redirectToken) {
+      finishOAuthBootstrap(redirectToken).catch(function (err) {
+        console.warn('[Minerva post-redirect-bootstrap]', err);
+        flash(document.body, 'Connect failed after sign-in: ' + (err && err.message || err), 'error');
+      });
     }
     await refreshConfig();
     // Best-effort restore of synced settings from Drive on every boot.
