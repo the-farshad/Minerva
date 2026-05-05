@@ -1113,6 +1113,48 @@ code {
 .settings-head h2 { margin: 0; }
 .settings-head .version-badge { margin-left: auto; }
 
+.auth-error-banner {
+  margin: 0.75rem 0 0.5rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--error);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--error) 8%, var(--surface));
+  color: var(--fg);
+}
+.auth-error-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+}
+.auth-error-head svg { width: 1em; height: 1em; color: var(--error); }
+.auth-error-head strong { color: var(--error); }
+.auth-error-dismiss {
+  margin-left: auto;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 0.4rem;
+  cursor: pointer;
+  color: var(--muted);
+}
+.auth-error-dismiss:hover { color: var(--error); }
+.auth-error-msg {
+  margin: 0.45rem 0 0;
+  padding: 0.45rem 0.6rem;
+  background: var(--bg);
+  border-radius: 4px;
+  font: 0.82rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
 .setup-checklist {
   margin: 1rem 0 1.4rem;
   border: 1px solid var(--border);

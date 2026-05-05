@@ -118,14 +118,20 @@
     });
   }
 
-  // ---- PKCE redirect flow --------------------------------------------------
-  // Drop-in alternative to the GIS popup that survives Firefox
-  // Enhanced Tracking Protection / Safari ITP / strict third-party
-  // cookie blockers, because the auth happens inside a top-level
-  // navigation to accounts.google.com (first-party for Google) rather
-  // than an iframe / popup that needs cross-site cookies.
+  // ---- OAuth 2.0 implicit redirect flow -----------------------------------
+  // Static-SPA-friendly path that bypasses Firefox / Safari / Brave's
+  // third-party-cookie blocks (which kill GIS popups). The browser
+  // navigates to accounts.google.com, signs in, and is sent back with
+  // the access token in the URL fragment — no client_secret, no
+  // token-exchange POST. Implicit flow is what GIS itself uses
+  // internally for Web client types; we just do it ourselves so the
+  // strict-cookie blocked iframe path is never required.
+  //
+  // Deliberately not PKCE / authorization-code: Google's token endpoint
+  // requires a client_secret for Web application clients regardless of
+  // PKCE, and a static SPA has nowhere safe to keep one.
 
-  var REDIR_KEY = 'minerva.auth.pkce.v1';
+  var REDIR_KEY = 'minerva.auth.redir.v1';
 
   function redirectUri() {
     // Google's redirect_uri match is byte-exact: `https://x.com` and
@@ -137,35 +143,19 @@
     return location.origin + path.replace(/\/+$/, '');
   }
 
-  function randomVerifier() {
-    var bytes = new Uint8Array(32);
+  function randomNonce() {
+    var bytes = new Uint8Array(24);
     crypto.getRandomValues(bytes);
-    return base64url(bytes);
-  }
-
-  function base64url(bytesOrBuffer) {
-    var bytes = bytesOrBuffer instanceof Uint8Array
-      ? bytesOrBuffer
-      : new Uint8Array(bytesOrBuffer);
     var s = '';
     for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
     return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
 
-  async function sha256base64url(input) {
-    var enc = new TextEncoder().encode(input);
-    var digest = await crypto.subtle.digest('SHA-256', enc);
-    return base64url(digest);
-  }
-
   async function requestTokenViaRedirect(clientId, prompt) {
     if (!clientId) throw new Error('No OAuth client ID configured.');
-    var verifier = randomVerifier();
-    var challenge = await sha256base64url(verifier);
-    var nonce = randomVerifier();
+    var nonce = randomNonce();
     sessionStorage.setItem(REDIR_KEY, JSON.stringify({
       clientId: clientId,
-      verifier: verifier,
       state: nonce,
       returnTo: location.hash || '#/',
       ts: Date.now()
@@ -173,72 +163,68 @@
     var u = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     u.searchParams.set('client_id', clientId);
     u.searchParams.set('redirect_uri', redirectUri());
-    u.searchParams.set('response_type', 'code');
+    u.searchParams.set('response_type', 'token');
     u.searchParams.set('scope', SCOPES);
-    u.searchParams.set('code_challenge', challenge);
-    u.searchParams.set('code_challenge_method', 'S256');
     u.searchParams.set('state', nonce);
     u.searchParams.set('include_granted_scopes', 'true');
     if (prompt) u.searchParams.set('prompt', prompt);
     location.assign(u.toString());
-    // Navigation in flight — never resolves. Ensures callers don't try
-    // to render anything after this point.
+    // Navigation in flight — never resolves. Callers must not try to
+    // render anything after this point.
     return new Promise(function () {});
   }
 
-  // Called once on app boot. If the URL carries the OAuth `code` and
-  // `state` params from a returning redirect, exchange the code for an
-  // access token, restore the user's pre-redirect route, and clean
-  // both query parameters from the address bar. Returns the access
-  // token on success, null when there's nothing to consume.
+  // Called once on app boot. If the URL fragment carries an OAuth
+  // implicit-flow callback (#access_token=…&expires_in=…&state=…),
+  // validate state, persist the token, restore the user's pre-redirect
+  // route, and strip the fragment from the address bar. Returns the
+  // access token on success, null when there's nothing to consume.
   async function consumeRedirectCode() {
-    var qs = location.search || '';
-    if (!qs || qs.indexOf('code=') < 0) return null;
-    var sp = new URLSearchParams(qs);
-    var code = sp.get('code');
-    var stateRet = sp.get('state');
-    if (!code || !stateRet) return null;
+    var hash = location.hash || '';
+    // OAuth fragment starts with `#access_token=…` or `#error=…`.
+    // Skip Minerva's normal `#/route` hashes early so this is a no-op
+    // on every other page load.
+    if (hash.length < 2 || hash.charAt(1) === '/') return null;
+    var fragQs = hash.charAt(0) === '#' ? hash.slice(1) : hash;
+    if (fragQs.indexOf('access_token=') < 0 && fragQs.indexOf('error=') < 0) return null;
 
+    var sp = new URLSearchParams(fragQs);
+    var stateRet = sp.get('state');
     var raw = sessionStorage.getItem(REDIR_KEY);
-    if (!raw) return null;
+    if (!raw) {
+      // No saved state — most likely a stale fragment from a previous
+      // tab. Strip it and stay quiet.
+      cleanFragment('#/');
+      return null;
+    }
     var saved;
     try { saved = JSON.parse(raw); }
-    catch (e) { sessionStorage.removeItem(REDIR_KEY); return null; }
-    if (saved.state !== stateRet) {
+    catch (e) { sessionStorage.removeItem(REDIR_KEY); cleanFragment('#/'); return null; }
+
+    if (!stateRet || saved.state !== stateRet) {
       sessionStorage.removeItem(REDIR_KEY);
-      throw new Error('OAuth state mismatch — refusing to exchange code.');
+      cleanFragment(saved.returnTo || '#/');
+      throw new Error('OAuth state mismatch — refusing the token response.');
     }
 
-    var resp;
-    try {
-      resp = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: saved.clientId,
-          code: code,
-          code_verifier: saved.verifier,
-          redirect_uri: redirectUri(),
-          grant_type: 'authorization_code'
-        }).toString()
-      });
-    } catch (err) {
+    var errParam = sp.get('error');
+    if (errParam) {
       sessionStorage.removeItem(REDIR_KEY);
-      throw new Error('Token endpoint unreachable: ' + (err && err.message || err));
-    }
-    if (!resp.ok) {
-      var body = await resp.text().catch(function () { return ''; });
-      sessionStorage.removeItem(REDIR_KEY);
-      throw new Error('Token exchange failed: HTTP ' + resp.status + ' ' + body.slice(0, 200));
-    }
-    var data = await resp.json();
-    if (!data.access_token) {
-      sessionStorage.removeItem(REDIR_KEY);
-      throw new Error('No access_token in token response.');
+      cleanFragment(saved.returnTo || '#/');
+      var desc = sp.get('error_description') || errParam;
+      throw new Error('Sign-in rejected: ' + desc);
     }
 
-    state.access_token = data.access_token;
-    state.expires_at = Date.now() + ((data.expires_in || 3600) * 1000) - 60000;
+    var token = sp.get('access_token');
+    if (!token) {
+      sessionStorage.removeItem(REDIR_KEY);
+      cleanFragment(saved.returnTo || '#/');
+      throw new Error('No access_token in OAuth response.');
+    }
+    var ttl = parseInt(sp.get('expires_in') || '3600', 10);
+
+    state.access_token = token;
+    state.expires_at = Date.now() + ((ttl || 3600) * 1000) - 60000;
     persist();
     notify();
     fetchEmail(state.access_token).then(function (e) {
@@ -247,9 +233,15 @@
 
     var returnTo = saved.returnTo || '#/';
     sessionStorage.removeItem(REDIR_KEY);
-    history.replaceState(null, '', location.origin + location.pathname + returnTo);
+    cleanFragment(returnTo);
 
     return state.access_token;
+  }
+
+  function cleanFragment(returnTo) {
+    try {
+      history.replaceState(null, '', location.origin + location.pathname + (returnTo || '#/'));
+    } catch (e) { /* ignore */ }
   }
 
   // Default to redirect flow, with the popup as an explicit fallback.

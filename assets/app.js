@@ -144,6 +144,32 @@
     load: loadDriveConfigIfPresent
   };
 
+  // Last sign-in error string. Persists in module state so the
+  // Settings view can render a sticky banner instead of a 3.5-second
+  // flash that the user might miss. Cleared by the Settings view's
+  // dismiss button or by the next successful sign-in.
+  var lastAuthError = '';
+  function setAuthError(msg) {
+    lastAuthError = String(msg || '');
+    try {
+      var listeners = document.querySelectorAll('.auth-error-banner');
+      // If a banner is already on screen, refresh its text and the
+      // Settings view's hook below picks up the new value on next
+      // mount. Otherwise the next render of Settings paints it fresh.
+      Array.prototype.forEach.call(listeners, function (n) {
+        n.querySelector('.auth-error-msg').textContent = lastAuthError;
+      });
+    } catch (e) { /* ignore */ }
+  }
+  function getAuthError() { return lastAuthError; }
+  function clearAuthError() {
+    lastAuthError = '';
+    try {
+      Array.prototype.forEach.call(document.querySelectorAll('.auth-error-banner'),
+        function (n) { n.remove(); });
+    } catch (e) { /* ignore */ }
+  }
+
   // Mirror the post-auth bootstrap steps that the Settings page's
   // connect() handler runs after a successful popup auth. Called from
   // boot() when an OAuth redirect just resolved — without it the user
@@ -8304,6 +8330,7 @@
         el('h2', null, 'Settings'),
         renderVersionBadge()
       ),
+      renderAuthErrorBanner(),
       el('p', { class: 'lead' },
         'Minerva keeps no secrets in its repo. The OAuth client is yours; remembered in this browser. ',
         el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough')
@@ -8341,6 +8368,35 @@
       pill.title = endpoint + ' is not responding — start the server first';
       pill.textContent = 'offline';
     });
+  }
+
+  // Sticky error banner rendered above the Settings checklist when
+  // the most recent sign-in attempt failed. Stays on screen until the
+  // user dismisses it or a successful Connect clears the state.
+  function renderAuthErrorBanner() {
+    var msg = getAuthError();
+    if (!msg) return null;
+    var box = el('div', {
+      class: 'auth-error-banner',
+      role: 'alert'
+    });
+    var head = el('div', { class: 'auth-error-head' },
+      M.render.icon('alert-triangle'),
+      el('strong', null, 'Sign-in error'),
+      el('button', {
+        type: 'button',
+        class: 'auth-error-dismiss',
+        title: 'Dismiss',
+        'aria-label': 'Dismiss',
+        onclick: function (e) {
+          e.preventDefault();
+          clearAuthError();
+        }
+      }, '×')
+    );
+    box.appendChild(head);
+    box.appendChild(el('pre', { class: 'auth-error-msg' }, msg.slice(0, 1000)));
+    return box;
   }
 
   // Numbered first-run checklist for the Settings page. Required steps
@@ -10929,36 +10985,34 @@
     });
 
     registerServiceWorker();
-    // Consume an OAuth redirect-callback code (?code=...&state=...) if
-    // the URL carries one. On success the call cleans the URL and the
-    // user lands back at the route they kicked off Connect from.
+    // Consume an OAuth implicit-flow callback fragment (#access_token=…)
+    // if the URL carries one. On success the call cleans the URL and
+    // the user lands back at the route they kicked off Connect from.
     var redirectToken = null;
     if (M.auth && typeof M.auth.consumeRedirectCode === 'function') {
       try { redirectToken = await M.auth.consumeRedirectCode(); }
       catch (err) {
         console.warn('[Minerva oauth-redirect]', err);
-        flash(document.body, 'Sign-in failed: ' + (err && err.message || err), 'error');
+        setAuthError('Sign-in failed: ' + (err && err.message || err));
       }
     }
-    // When a redirect-flow auth just completed, finish the same
-    // post-auth steps the popup-flow Connect button would have run:
-    //   • find-or-create the user's Minerva spreadsheet
-    //   • persist the spreadsheetId
-    //   • pull every section
-    //   • restore Drive-synced settings
-    // Without this the redirect flow leaves the user signed in but
-    // not "connected" — Settings still says "no spreadsheet".
+    // Finish the rest of the connect flow before any subsequent code
+    // can call M.auth.getToken() — otherwise an unsynced token state
+    // races with loadDriveConfigIfPresent() and triggers a fresh
+    // redirect-to-Google, looping the page back into another sign-in.
     if (redirectToken) {
-      finishOAuthBootstrap(redirectToken).catch(function (err) {
+      try { await finishOAuthBootstrap(redirectToken); }
+      catch (err) {
         console.warn('[Minerva post-redirect-bootstrap]', err);
-        flash(document.body, 'Connect failed after sign-in: ' + (err && err.message || err), 'error');
-      });
+        setAuthError('Connect failed after sign-in: ' + (err && err.message || err));
+      }
     }
     await refreshConfig();
-    // Best-effort restore of synced settings from Drive on every boot.
-    // Silent failure when no token / no file / network — local config
-    // remains authoritative.
-    loadDriveConfigIfPresent().catch(function () { /* ignore */ });
+    // Skip the cold-boot Drive-config probe when we just ran the full
+    // bootstrap above; finishOAuthBootstrap already pulled the file.
+    if (!redirectToken) {
+      loadDriveConfigIfPresent().catch(function () { /* ignore */ });
+    }
 
     // Restore last view if the user landed on a bare URL.
     if (!location.hash || location.hash === '' || location.hash === '#') {
