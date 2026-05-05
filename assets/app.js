@@ -10885,6 +10885,16 @@
     });
 
     registerServiceWorker();
+    // Consume an OAuth redirect-callback code (?code=...&state=...) if
+    // the URL carries one. On success the call cleans the URL and the
+    // user lands back at the route they kicked off Connect from.
+    if (M.auth && typeof M.auth.consumeRedirectCode === 'function') {
+      try { await M.auth.consumeRedirectCode(); }
+      catch (err) {
+        console.warn('[Minerva oauth-redirect]', err);
+        flash(document.body, 'Sign-in failed: ' + (err && err.message || err), 'error');
+      }
+    }
     await refreshConfig();
     // Best-effort restore of synced settings from Drive on every boot.
     // Silent failure when no token / no file / network — local config

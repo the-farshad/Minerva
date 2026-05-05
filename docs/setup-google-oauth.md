@@ -102,7 +102,15 @@ For your own self-hosted copy, add your domain (e.g. `https://planner.example.co
 
 ### Authorized redirect URIs
 
-**Leave blank.** Minerva uses the implicit *token flow* (popup), not redirect flow.
+Add the **same URLs** you put under JavaScript origins. Minerva uses an OAuth 2.0 PKCE redirect flow — the user's browser is redirected to `accounts.google.com`, signs in, and is redirected back. Without these entries Google rejects the redirect with `redirect_uri_mismatch`.
+
+For the hosted instance:
+- `https://minerva.thefarshad.com`
+
+For local development:
+- `http://localhost:8000`
+
+(Same exact strings as in JavaScript origins — no trailing slash, no path.)
 
 Click **Create**.
 
