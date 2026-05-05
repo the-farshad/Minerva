@@ -397,6 +397,32 @@
   }
 
   function show(url) {
+    // Offline-first: when the section has a registered offline lookup
+    // and the requested URL has a cached blob, play the local copy
+    // instead of fetching the remote iframe. Falls through to the
+    // normal iframe modal when no blob exists (or the lookup is
+    // missing / errors).
+    if (offlineLookup && window.Minerva && Minerva.db && Minerva.db.getVideo) {
+      try {
+        var hit = offlineLookup(url);
+        if (hit && hit.tab && hit.rowId) {
+          Minerva.db.getVideo(hit.tab, hit.rowId).then(function (rec) {
+            if (rec && rec.blob) {
+              showVideoBlob({
+                url: URL.createObjectURL(rec.blob),
+                title: hit.title || '',
+                sourceUrl: url
+              });
+            } else {
+              openModal([{ title: '', url: url }], 0);
+            }
+          }).catch(function () {
+            openModal([{ title: '', url: url }], 0);
+          });
+          return;
+        }
+      } catch (e) { /* fall through */ }
+    }
     openModal([{ title: '', url: url }], 0);
   }
 
@@ -556,6 +582,15 @@
   var playlistContext = null;
   function setPlaylistContext(fn) { playlistContext = (typeof fn === 'function') ? fn : null; }
   function clearPlaylistContext() { playlistContext = null; }
+
+  // Offline-blob lookup. Section renders register a function that maps
+  // a URL to { tab, rowId } when an offline blob is known to exist for
+  // it; show() consults this and plays the local copy instead of the
+  // remote iframe.
+  var offlineLookup = null;
+  function setOfflineLookup(fn) { offlineLookup = (typeof fn === 'function') ? fn : null; }
+  function clearOfflineLookup() { offlineLookup = null; }
+
   function getPlaylistContext(url) {
     if (!playlistContext) return null;
     try { return playlistContext(url) || null; }
@@ -571,6 +606,8 @@
     ytId: ytId,
     setPlaylistContext: setPlaylistContext,
     clearPlaylistContext: clearPlaylistContext,
-    getPlaylistContext: getPlaylistContext
+    getPlaylistContext: getPlaylistContext,
+    setOfflineLookup: setOfflineLookup,
+    clearOfflineLookup: clearOfflineLookup
   };
 })();

@@ -340,18 +340,21 @@
     // remains so the user can switch back. Hidden when no URL is
     // entered. The base URL is the field as-is (browsers handle
     // trailing `?` for the CORS proxy field gracefully).
-    var openLink = el('a', { class: 'btn btn-ghost field-test-btn',
-      target: '_blank', rel: 'noopener', title: 'Open in a new tab' },
-      M.render.icon('external-link'), ' Open');
+    // Open / Stop only make sense for URL-shaped fields. Credential
+    // fields (e.g. an API key) skip them entirely.
+    var openLink = !opts.isCredential
+      ? el('a', { class: 'btn btn-ghost field-test-btn',
+          target: '_blank', rel: 'noopener', title: 'Open in a new tab' },
+          M.render.icon('external-link'), ' Open')
+      : null;
     function refreshOpenHref() {
+      if (!openLink) return;
       var v = input.value.trim();
       if (!v) {
         openLink.style.display = 'none';
         openLink.removeAttribute('href');
       } else {
         openLink.style.display = '';
-        // Strip a trailing `?` (used by CORS proxy prefixes) so the
-        // browser doesn't load an empty-target proxy request.
         openLink.href = v.replace(/\/+\?$/, '/');
       }
     }
@@ -503,11 +506,22 @@
     try { resp = await fetch(prefix + encodeURIComponent(probeTarget)); }
     catch (e) { throw new Error('Cannot reach proxy (' + (e.message || e) + ')'); }
     if (!resp.ok) throw new Error('Proxy returned HTTP ' + resp.status);
-    var data;
-    try { data = await resp.json(); }
-    catch (e) { throw new Error('Proxy response not parseable as JSON'); }
-    if (!data || !data.message) throw new Error('Proxy returned data but not the expected CrossRef shape');
-    return 'Proxy reaches CrossRef and returns CORS-friendly JSON';
+    // Be permissive about the body shape: some proxies (and the
+    // self-hosted minerva-services /proxy?) return CrossRef JSON
+    // verbatim; others return JSON wrapped in a status envelope; some
+    // strip headers and return raw text. Accept anything that looks
+    // like a CrossRef-shaped JSON OR contains the DOI we asked for.
+    var body = await resp.text();
+    if (body.indexOf('10.1038/nature14539') >= 0) {
+      return 'Proxy reaches CrossRef successfully';
+    }
+    try {
+      var data = JSON.parse(body);
+      if (data && (data.message || data.DOI || data.doi)) {
+        return 'Proxy reaches CrossRef and returns JSON';
+      }
+    } catch (e) { /* fall through */ }
+    throw new Error('Proxy reachable but the response did not look like CrossRef data');
   }
 
   function callout(title, body) {
@@ -1538,6 +1552,12 @@
     row._dirty = 1;
     row._updated = new Date().toISOString();
     await M.db.upsertRow(tab, row);
+    // Drop any offline blob attached to this row so deleted videos
+    // don't leave orphan storage. Best-effort: getVideo / deleteVideo
+    // are no-ops when the row has nothing cached.
+    if (M.db && M.db.deleteVideo) {
+      try { await M.db.deleteVideo(tab, rowId); } catch (e) { /* ignore */ }
+    }
     schedulePush();
   }
 
@@ -2646,6 +2666,7 @@
         // sibling videos in this section. Recomputed on every refresh so
         // sort/filter changes are reflected.
         registerYouTubePlaylistContext(meta, filtered);
+        registerOfflineLookup(meta, filtered, sec.tab);
       }
 
       paintBacklinksFooter(backlinks);
@@ -4818,6 +4839,29 @@
   // returns the slice of items + the start index that matches the URL
   // the user clicked. Cleared when the next section view (or any other
   // route) overwrites it via setPlaylistContext / clearPlaylistContext.
+  // Build a URL → { tab, rowId, title } map for the current section
+  // and hand it to the preview modal so plain-click on a row's URL
+  // plays the cached offline blob (when one exists) instead of the
+  // remote iframe.
+  function registerOfflineLookup(meta, rows, tab) {
+    if (!M.preview || typeof M.preview.setOfflineLookup !== 'function') return;
+    var headers = (meta && meta.headers) || [];
+    if (headers.indexOf('url') < 0) {
+      M.preview.clearOfflineLookup && M.preview.clearOfflineLookup();
+      return;
+    }
+    var byUrl = {};
+    rows.forEach(function (r) {
+      if (r._deleted) return;
+      var u = r.url && String(r.url).trim();
+      if (!u) return;
+      byUrl[u] = { tab: tab, rowId: r.id, title: r.title || '' };
+    });
+    M.preview.setOfflineLookup(function (url) {
+      return byUrl[String(url || '').trim()] || null;
+    });
+  }
+
   function registerYouTubePlaylistContext(meta, rows) {
     if (!M.preview || typeof M.preview.setPlaylistContext !== 'function') return;
     var ytRe = /youtube\.com\/watch|youtu\.be\//i;
@@ -5319,6 +5363,38 @@
         thumb.textContent = (t0[0] || '?').toUpperCase();
       }
       tile.appendChild(thumb);
+
+      // Watched / unwatched toggle — visible when the section has a
+      // `watched` column. Sits on the thumbnail's bottom-right corner
+      // so it doesn't fight with the offline action buttons (top-right).
+      if (hasWatched) {
+        var watchedNow = String(r.watched || '').toUpperCase() === 'TRUE';
+        var wTog = el('button', {
+          type: 'button',
+          class: 'tile-watched-toggle' + (watchedNow ? ' is-watched' : ''),
+          title: watchedNow ? 'Mark unwatched' : 'Mark watched',
+          'aria-label': watchedNow ? 'Mark unwatched' : 'Mark watched',
+          onclick: async function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var fresh = await M.db.getRow(tab, r.id);
+            if (!fresh || fresh._deleted) return;
+            var nowOn = String(fresh.watched || '').toUpperCase() !== 'TRUE';
+            pushUndo({ kind: 'edit', tab: tab, rowId: fresh.id, field: 'watched', prevValue: fresh.watched });
+            fresh.watched = nowOn ? 'TRUE' : 'FALSE';
+            if (headers.indexOf('watched_at') >= 0) {
+              fresh.watched_at = nowOn ? new Date().toISOString() : '';
+            }
+            fresh._updated = new Date().toISOString();
+            fresh._dirty = 1;
+            await M.db.upsertRow(tab, fresh);
+            schedulePush();
+            if (refresh) await refresh();
+          }
+        });
+        wTog.appendChild(M.render.icon(watchedNow ? 'check-circle-2' : 'circle'));
+        thumb.appendChild(wTog);
+      }
 
       // Per-card offline controls. The set of buttons depends on
       // whether a cached blob already exists for this row:
@@ -6461,27 +6537,51 @@
     var tray = document.querySelector('.downloads-tray');
     if (tray) return tray;
     tray = el('div', { class: 'downloads-tray', role: 'region', 'aria-label': 'Downloads' });
+    var head = el('div', { class: 'downloads-tray-head' });
+    var label = el('span', { class: 'downloads-tray-label' }, 'Downloads');
+    var count = el('span', { class: 'downloads-tray-count small muted' }, '');
+    var minBtn = el('button', { class: 'icon-btn downloads-tray-min', type: 'button',
+      title: 'Minimize',
+      'aria-label': 'Toggle downloads tray',
+      onclick: function () {
+        var collapsed = tray.classList.toggle('is-collapsed');
+        minBtn.title = collapsed ? 'Expand' : 'Minimize';
+      }
+    }, '–');
+    head.appendChild(label);
+    head.appendChild(count);
+    head.appendChild(minBtn);
+    tray.appendChild(head);
+    var body = el('div', { class: 'downloads-tray-body' });
+    tray.appendChild(body);
     document.body.appendChild(tray);
     return tray;
   }
+  function refreshDownloadsCount(tray) {
+    var body = tray.querySelector('.downloads-tray-body');
+    var count = tray.querySelector('.downloads-tray-count');
+    var n = body ? body.querySelectorAll('.dl-job').length : 0;
+    if (count) count.textContent = n + ' job' + (n === 1 ? '' : 's');
+    if (n === 0) tray.classList.add('is-empty');
+    else tray.classList.remove('is-empty');
+  }
   function addDownloadJob(opts) {
     var tray = getDownloadsTray();
+    var trayBody = tray.querySelector('.downloads-tray-body') || tray;
     var title = (opts && opts.title) || 'Downloading';
     var card = el('div', { class: 'dl-job is-running' },
       el('div', { class: 'dl-job-head' },
         el('span', { class: 'dl-job-title' }, title),
         el('button', { class: 'icon-btn dl-job-close', type: 'button',
           title: 'Dismiss',
-          onclick: function () { try { card.remove(); } catch (e) {} }
+          onclick: function () { try { card.remove(); refreshDownloadsCount(tray); } catch (e) {} }
         }, '×')
       ),
       el('div', { class: 'dl-job-status small muted' }, 'Starting…'),
       el('div', { class: 'dl-job-bar' }, el('span', { class: 'dl-job-fill' }))
     );
-    tray.appendChild(card);
-    // Lucide swap runs lazily on a route boundary, so dynamically-
-    // inserted cards display empty <i data-lucide> placeholders until
-    // the next refresh. Force one immediately.
+    trayBody.appendChild(card);
+    refreshDownloadsCount(tray);
     if (M.render && M.render.refreshIcons) M.render.refreshIcons();
     var statusEl = card.querySelector('.dl-job-status');
     var fillEl = card.querySelector('.dl-job-fill');
@@ -6512,7 +6612,10 @@
           if (M.render && M.render.refreshIcons) M.render.refreshIcons();
         }
         setTimeout(function () {
-          if (card.classList.contains('is-done')) try { card.remove(); } catch (e) {}
+          if (card.classList.contains('is-done')) {
+            try { card.remove(); } catch (e) {}
+            refreshDownloadsCount(tray);
+          }
         }, action ? 12000 : 4000);
       },
       fail: function (text) {
@@ -6678,13 +6781,19 @@
         driveFileId = await uploadOfflineToDrive(blob, filename);
       }
       if (meta && (meta.headers || []).indexOf('offline') >= 0) {
-        pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'offline', prevValue: row.offline });
-        row.offline = 'yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB'
-          + (driveFileId ? ' · drive:' + driveFileId : '');
-        row._updated = new Date().toISOString();
-        row._dirty = 1;
-        await M.db.upsertRow(tab, row);
-        schedulePush();
+        // Re-fetch the canonical row before mutating to avoid clobbering
+        // any other field that might have changed since the click. Only
+        // the offline column is updated; url and friends are preserved.
+        var fresh = await M.db.getRow(tab, row.id);
+        if (fresh && !fresh._deleted) {
+          pushUndo({ kind: 'edit', tab: tab, rowId: fresh.id, field: 'offline', prevValue: fresh.offline });
+          fresh.offline = 'yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB'
+            + (driveFileId ? ' · drive:' + driveFileId : '');
+          fresh._updated = new Date().toISOString();
+          fresh._dirty = 1;
+          await M.db.upsertRow(tab, fresh);
+          schedulePush();
+        }
       }
       job.done('Saved ' + (blob.size / (1024*1024)).toFixed(1) + ' MB', {
         label: 'Watch offline',
@@ -6763,13 +6872,16 @@
         driveFileId = await uploadOfflineToDrive(blob, result.filename || 'video.mp4');
       }
       if (meta && (meta.headers || []).indexOf('offline') >= 0) {
-        pushUndo({ kind: 'edit', tab: tab, rowId: row.id, field: 'offline', prevValue: row.offline });
-        row.offline = 'cobalt · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB · ' + quality + 'p'
-          + (driveFileId ? ' · drive:' + driveFileId : '');
-        row._updated = new Date().toISOString();
-        row._dirty = 1;
-        await M.db.upsertRow(tab, row);
-        schedulePush();
+        var fresh = await M.db.getRow(tab, row.id);
+        if (fresh && !fresh._deleted) {
+          pushUndo({ kind: 'edit', tab: tab, rowId: fresh.id, field: 'offline', prevValue: fresh.offline });
+          fresh.offline = 'cobalt · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB · ' + quality + 'p'
+            + (driveFileId ? ' · drive:' + driveFileId : '');
+          fresh._updated = new Date().toISOString();
+          fresh._dirty = 1;
+          await M.db.upsertRow(tab, fresh);
+          schedulePush();
+        }
       }
       job.done('Saved ' + (blob.size / (1024*1024)).toFixed(1) + ' MB', {
         label: 'Watch offline',
@@ -6861,7 +6973,8 @@
           placeholder: 'AIza…',
           value: cfg.youtubeApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
         testYoutubeApiKey,
-        'Only needed for playlist imports + duration auto-fill. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.'
+        'Only needed for playlist imports + duration auto-fill. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.',
+        { healthPath: false, canStop: false, isCredential: true }
       ),
       fieldWithTest('yt-dlp server (recommended)',
         el('input', { name: 'ytDlpServer', type: 'url',
@@ -8769,8 +8882,21 @@
       opts = opts || {};
       var raw = input.value.trim();
       fetched = null;
-      addBtn.disabled = true;
-      setBtnLabel('Add to ' + tab);
+      // Stay enabled whenever the input looks like a URL, even before
+      // metadata returns. The user can save a URL-only row immediately;
+      // the lookup result, when it arrives, populates the preview and
+      // any matching columns. This avoids a "Looking up…" stall.
+      var looksLikeUrl = /^https?:\/\//i.test(raw) || /^\d{4}\.\d{4,5}/.test(raw)
+        || /^10\.\d{4,9}\//.test(raw);
+      if (looksLikeUrl) {
+        fetched = /^https?:\/\//i.test(raw) ? { kind: 'article', url: raw }
+          : { kind: 'paper', url: raw };
+        addBtn.disabled = false;
+        setBtnLabel('Add to ' + tab + ' (metadata loading…)');
+      } else {
+        addBtn.disabled = true;
+        setBtnLabel('Add to ' + tab);
+      }
       if (!raw) { preview.replaceChildren(); return; }
       preview.replaceChildren(el('p', { class: 'small muted' }, opts.noCache ? 'Refreshing…' : 'Looking up…'));
       try {
