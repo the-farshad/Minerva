@@ -7775,8 +7775,142 @@
     var bookmarkletPanel = el('div', { class: 'tg-panel' });
     paintBookmarklet();
 
+    var pgPanel = el('div', { class: 'tg-panel' });
+    paintPg();
+
     var diagPanel = el('div', { class: 'tg-panel' });
     paintDiag();
+
+    function paintPg() {
+      var stamp = readPgBackupStamp();
+      var stateNow = (Minerva.pg && Minerva.pg.cachedState) ? Minerva.pg.cachedState() : { ok: false, configured: false };
+      var configured = !!(cfg.ytDlpServer || '').trim();
+      var live = stateNow.ok && configured;
+
+      var pillClass = live ? 'svc-pill is-ok'
+                    : configured ? 'svc-pill is-down'
+                                 : 'svc-pill is-unset';
+      var pillText = live ? 'Reachable'
+                   : configured ? 'Offline'
+                                : 'Not configured';
+
+      var lastLine;
+      if (stamp && stamp.at) {
+        var ageMs = Date.now() - stamp.at;
+        var ageStr;
+        if (ageMs < 60 * 1000) ageStr = 'just now';
+        else if (ageMs < 60 * 60 * 1000) ageStr = Math.round(ageMs / 60000) + ' min ago';
+        else if (ageMs < 24 * 60 * 60 * 1000) ageStr = Math.round(ageMs / 3600000) + ' h ago';
+        else ageStr = Math.round(ageMs / 86400000) + ' d ago';
+        lastLine = el('p', { class: 'small muted' },
+          'Last backup: ', ageStr,
+          stamp.fileId ? ' · ' : null,
+          stamp.fileId ? el('code', null, stamp.fileId.slice(0, 10) + '…') : null
+        );
+      } else {
+        lastLine = el('p', { class: 'small muted' }, 'No backup yet.');
+      }
+
+      var btn = el('button', { type: 'button', class: 'btn btn-primary' },
+        M.render.icon('upload-cloud'), ' Backup to Drive now');
+      btn.onclick = function () { runPgBackup(btn); };
+
+      var refreshBtn = el('button', { type: 'button', class: 'btn btn-ghost btn-inline' },
+        M.render.icon('refresh-cw'), ' Re-check');
+      refreshBtn.onclick = function () {
+        if (!Minerva.pg) return;
+        Minerva.pg.probe(true).then(function () { paintPg(); });
+      };
+
+      pgPanel.replaceChildren(
+        el('h3', null, 'Postgres mirror'),
+        el('p', { class: 'small muted' },
+          'Every successful Sheets push is mirrored into a local Postgres database (via ',
+          el('code', null, 'minerva-services'),
+          '). Sheets stays the source of truth; PG is the read-fast cache and the source for the Drive-backed pg_dump below.'
+        ),
+        el('div', { class: 'pg-status-row' },
+          el('span', { class: pillClass }, pillText),
+          ' ',
+          refreshBtn
+        ),
+        configured
+          ? null
+          : el('p', { class: 'small muted' },
+              'Set the ', el('strong', null, 'yt-dlp server'),
+              ' URL under Connection (e.g. ', el('code', null, 'http://localhost:8765'),
+              ') to enable the mirror.'
+            ),
+        el('hr'),
+        el('h4', null, 'Drive backup'),
+        el('p', { class: 'small muted' },
+          'Runs ', el('code', null, 'pg_dump'),
+          ' on the local container and uploads the SQL file to Drive (rolling — same fileId is updated each time).'
+        ),
+        lastLine,
+        btn
+      );
+    }
+
+    var PG_BACKUP_KEY = 'minerva.pgBackup.v1';
+    function readPgBackupStamp() {
+      try { return JSON.parse(localStorage.getItem(PG_BACKUP_KEY) || 'null'); }
+      catch (e) { return null; }
+    }
+    function writePgBackupStamp(patch) {
+      var prev = readPgBackupStamp() || {};
+      var next = Object.assign({}, prev, patch);
+      localStorage.setItem(PG_BACKUP_KEY, JSON.stringify(next));
+      return next;
+    }
+
+    async function runPgBackup(btn) {
+      if (!Minerva.pg || !Minerva.pg.isLive()) {
+        flash(document.body, 'Postgres mirror is not reachable — start minerva-services first.', 'error');
+        return;
+      }
+      var token;
+      try { token = await M.auth.getToken(); }
+      catch (e) {
+        flash(document.body, 'Connect Google before uploading the backup.', 'error');
+        return;
+      }
+      var origLabel = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '';
+      btn.appendChild(document.createTextNode('Dumping…'));
+      try {
+        var blob = await Minerva.pg.dump();
+        btn.innerHTML = '';
+        btn.appendChild(document.createTextNode('Uploading…'));
+        var sql = await blob.text();
+        var prev = readPgBackupStamp() || {};
+        var name = 'minerva.sql';
+        var resp;
+        try {
+          resp = await Minerva.sheets.uploadDriveFile(
+            token, name, 'application/sql; charset=utf-8', sql, prev.fileId || null
+          );
+        } catch (e) {
+          if (prev.fileId && (e.status === 404 || e.status === 403)) {
+            // Stored fileId is gone or no longer ours — retry as a new file.
+            resp = await Minerva.sheets.uploadDriveFile(
+              token, name, 'application/sql; charset=utf-8', sql, null
+            );
+          } else {
+            throw e;
+          }
+        }
+        writePgBackupStamp({ at: Date.now(), fileId: resp.id, link: resp.webViewLink || null });
+        flash(document.body, 'Backup uploaded to Drive.', 'ok');
+        paintPg();
+      } catch (e) {
+        flash(document.body, 'Backup failed: ' + (e && e.message || e), 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = origLabel;
+      }
+    }
 
     function paintDiag() {
       diagPanel.replaceChildren(
@@ -8442,6 +8576,7 @@
     var sections = [
       { id: 'connection', label: 'Connection',    content: connectionPanel, primary: true },
       { id: 'store',      label: 'Local store',   content: localPanel },
+      { id: 'pgsync',     label: 'Postgres mirror', content: pgPanel },
       { id: 'add',        label: 'Add a section', content: presetsPanel },
       { id: 'notify',     label: 'Notifications', content: notifyPanel },
       { id: 'ical',       label: 'Calendar feed', content: icalPanel },
@@ -11156,6 +11291,11 @@
     });
 
     registerServiceWorker();
+    // Warm the Postgres-mirror probe so the first push has a cached
+    // verdict instead of waiting for a network round-trip mid-flush.
+    if (Minerva.pg && Minerva.pg.probe) {
+      Minerva.pg.probe().catch(function () { /* probe is best-effort */ });
+    }
     // Consume an OAuth implicit-flow callback fragment (#access_token=…)
     // if the URL carries one. On success the call cleans the URL and
     // the user lands back at the route they kicked off Connect from.

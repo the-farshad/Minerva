@@ -37,7 +37,7 @@ import venv as _venv
 # Bootstrap.
 # ---------------------------------------------------------------------------
 
-REQUIREMENTS = ("flask", "yt-dlp", "requests")
+REQUIREMENTS = ("flask", "yt-dlp", "requests", "psycopg[binary]")
 VENV_DIR = pathlib.Path(
     os.environ.get("MINERVA_VENV") or (pathlib.Path.home() / ".minerva-services")
 ).expanduser()
@@ -93,6 +93,13 @@ from flask import (  # noqa: E402
     request,
     send_file,
 )
+
+try:
+    import psycopg  # noqa: E402
+    from psycopg.types.json import Jsonb  # noqa: E402
+    _HAS_PSYCOPG = True
+except Exception:  # noqa: BLE001
+    _HAS_PSYCOPG = False
 
 app = Flask(__name__)
 
@@ -236,6 +243,245 @@ def proxy():
     return Response(body, status=up.status_code, headers=out)
 
 
+# ---------- Postgres mirror -----------------------------------------------
+#
+# When MINERVA_DATABASE_URL is set and psycopg is importable, the service
+# exposes a small CRUD surface that the browser uses to mirror every
+# spreadsheet write into a local Postgres instance. Schema is intentionally
+# schema-less from PG's view: one table, one jsonb column per row, keyed
+# by (tab, id). The browser already enforces the column shape via the
+# spreadsheet's row-2 type hints, so the database doesn't need to.
+#
+# When the env var isn't set the endpoints all return 503 — the browser
+# treats that as "no PG, fall back to Sheets only".
+
+DATABASE_URL = os.environ.get("MINERVA_DATABASE_URL", "").strip()
+_DB_READY = False
+
+
+def _db_ready() -> bool:
+    global _DB_READY
+    if _DB_READY:
+        return True
+    if not (DATABASE_URL and _HAS_PSYCOPG):
+        return False
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS minerva_rows (
+                        tab        TEXT        NOT NULL,
+                        id         TEXT        NOT NULL,
+                        data       JSONB       NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        deleted    BOOLEAN     NOT NULL DEFAULT FALSE,
+                        row_index  INTEGER,
+                        PRIMARY KEY (tab, id)
+                    );
+                    """
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS minerva_rows_tab_updated "
+                    "ON minerva_rows (tab, updated_at);"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS minerva_rows_tab_live "
+                    "ON minerva_rows (tab) WHERE NOT deleted;"
+                )
+            conn.commit()
+        _DB_READY = True
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[minerva-db] init failed: {exc}", file=sys.stderr)
+        return False
+
+
+def _db_unavailable():
+    return (
+        jsonify({"ok": False, "error": "Postgres not configured on this service."}),
+        503,
+        _cors_dict(),
+    )
+
+
+@app.route("/db/health", methods=["GET", "OPTIONS"])
+def db_health():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    if not (DATABASE_URL and _HAS_PSYCOPG):
+        return jsonify({"ok": False, "configured": False})
+    ready = _db_ready()
+    return jsonify({"ok": ready, "configured": True})
+
+
+@app.route("/db/rows/<tab>", methods=["GET", "OPTIONS"])
+def db_rows(tab):
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    if not _db_ready():
+        return _db_unavailable()
+    since = (request.args.get("since") or "").strip()
+    include_deleted = request.args.get("include_deleted") == "1"
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                clauses = ["tab = %s"]
+                params = [tab]
+                if not include_deleted:
+                    clauses.append("NOT deleted")
+                if since:
+                    clauses.append("updated_at > %s")
+                    params.append(since)
+                cur.execute(
+                    "SELECT id, data, EXTRACT(EPOCH FROM updated_at) * 1000 AS updated_ms, "
+                    "deleted, row_index FROM minerva_rows WHERE "
+                    + " AND ".join(clauses)
+                    + " ORDER BY updated_at ASC",
+                    params,
+                )
+                out = []
+                for row in cur.fetchall():
+                    rid, data, updated_ms, deleted, row_index = row
+                    rec = dict(data or {})
+                    rec["id"] = rid
+                    rec["_updated_ms"] = int(updated_ms or 0)
+                    rec["_deleted"] = 1 if deleted else 0
+                    if row_index is not None:
+                        rec["_rowIndex"] = row_index
+                    out.append(rec)
+        return jsonify({"ok": True, "tab": tab, "rows": out})
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": str(exc)}), 500, _cors_dict())
+
+
+@app.route("/db/upsert/<tab>", methods=["POST", "OPTIONS"])
+def db_upsert(tab):
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    if not _db_ready():
+        return _db_unavailable()
+    body = request.get_json(silent=True) or {}
+    rows = body.get("rows")
+    if rows is None and body:
+        rows = [body]
+    if not isinstance(rows, list) or not rows:
+        return (jsonify({"ok": False, "error": "Body must include rows[]."}), 400, _cors_dict())
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                for r in rows:
+                    if not isinstance(r, dict):
+                        continue
+                    rid = r.get("id")
+                    if not rid:
+                        continue
+                    row_index = r.get("_rowIndex")
+                    payload = {
+                        k: v for k, v in r.items()
+                        if not (isinstance(k, str) and k.startswith("_")) and k != "id"
+                    }
+                    cur.execute(
+                        """
+                        INSERT INTO minerva_rows (tab, id, data, updated_at, deleted, row_index)
+                        VALUES (%s, %s, %s, NOW(), FALSE, %s)
+                        ON CONFLICT (tab, id) DO UPDATE
+                          SET data = EXCLUDED.data,
+                              updated_at = NOW(),
+                              deleted = FALSE,
+                              row_index = EXCLUDED.row_index
+                        """,
+                        (tab, rid, Jsonb(payload), row_index),
+                    )
+            conn.commit()
+        return jsonify({"ok": True, "count": len(rows)})
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": str(exc)}), 500, _cors_dict())
+
+
+@app.route("/db/delete/<tab>", methods=["POST", "OPTIONS"])
+def db_delete(tab):
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    if not _db_ready():
+        return _db_unavailable()
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ids")
+    if isinstance(body.get("id"), str):
+        ids = [body["id"]]
+    hard = body.get("hard") is True
+    if not isinstance(ids, list) or not ids:
+        return (jsonify({"ok": False, "error": "Body must include ids[]."}), 400, _cors_dict())
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                if hard:
+                    cur.execute(
+                        "DELETE FROM minerva_rows WHERE tab = %s AND id = ANY(%s)",
+                        (tab, ids),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE minerva_rows SET deleted = TRUE, updated_at = NOW() "
+                        "WHERE tab = %s AND id = ANY(%s)",
+                        (tab, ids),
+                    )
+            conn.commit()
+        return jsonify({"ok": True, "count": len(ids), "hard": hard})
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": str(exc)}), 500, _cors_dict())
+
+
+@app.route("/db/dump", methods=["GET", "OPTIONS"])
+def db_dump():
+    # Stream a pg_dump of the minerva database back to the caller.
+    # The browser-side flow uploads the resulting file to Drive, so this
+    # endpoint just needs to materialise a portable plain-text dump.
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    if not _db_ready():
+        return _db_unavailable()
+    if not shutil.which("pg_dump"):
+        return (
+            jsonify({"ok": False, "error": "pg_dump is not installed in this image."}),
+            500,
+            _cors_dict(),
+        )
+    parsed = urlparse(DATABASE_URL)
+    env = os.environ.copy()
+    if parsed.password:
+        env["PGPASSWORD"] = parsed.password
+    cmd = [
+        "pg_dump",
+        "--format=plain",
+        "--no-owner",
+        "--no-privileges",
+        f"--host={parsed.hostname or 'localhost'}",
+        f"--port={parsed.port or 5432}",
+        f"--username={parsed.username or 'minerva'}",
+        f"--dbname={(parsed.path or '/minerva').lstrip('/') or 'minerva'}",
+    ]
+    try:
+        proc = subprocess.run(cmd, env=env, capture_output=True, timeout=120)
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": f"pg_dump invocation failed: {exc}"}), 500, _cors_dict())
+    if proc.returncode != 0:
+        return (
+            jsonify({
+                "ok": False,
+                "error": "pg_dump exited non-zero",
+                "stderr": proc.stderr.decode("utf-8", "replace"),
+            }),
+            500,
+            _cors_dict(),
+        )
+    headers = dict(_cors_dict())
+    headers["Content-Type"] = "application/sql; charset=utf-8"
+    headers["Content-Length"] = str(len(proc.stdout))
+    headers["Content-Disposition"] = 'attachment; filename="minerva.sql"'
+    return Response(proc.stdout, status=200, headers=headers)
+
+
 # ---------- meta endpoints ------------------------------------------------
 
 @app.route("/health", methods=["GET"])
@@ -248,7 +494,16 @@ def health():
     payload = {
         "ok": True,
         "service": "minerva-services",
-        "endpoints": ["/download", "/proxy", "/health", "/shutdown", "/"],
+        "endpoints": [
+            "/download", "/proxy",
+            "/db/health", "/db/rows/<tab>", "/db/upsert/<tab>",
+            "/db/delete/<tab>", "/db/dump",
+            "/health", "/shutdown", "/",
+        ],
+        "postgres": {
+            "configured": bool(DATABASE_URL and _HAS_PSYCOPG),
+            "ready": _DB_READY,
+        },
     }
     if "text/html" in accept and "application/json" not in accept:
         return (

@@ -1,18 +1,43 @@
-# Minerva local services — one container, two endpoints.
+# Minerva local services — yt-dlp, CORS proxy, and Postgres mirror.
 #
 # Usage from this directory:
 #     docker compose up           # build + run
 #     docker compose up -d        # background
-#     docker compose down         # stop
+#     docker compose down         # stop (data persists in named volume)
+#     docker compose down -v      # stop AND drop the Postgres volume
 #
 # In Minerva → Settings:
 #     yt-dlp server   http://localhost:8765
 #     CORS proxy      http://localhost:8765/proxy?
+#     Postgres mirror http://localhost:8765   (auto-detected via /db/health)
+#
+# The Postgres container is bound only to 127.0.0.1 so it isn't reachable
+# from the LAN. Default credentials are baked in — this is local-only,
+# there's no trust boundary against your own machine.
 #
 # Override the bind port by setting MINERVA_PORT in the environment
 # before `docker compose up`.
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: minerva-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: minerva
+      POSTGRES_PASSWORD: minerva
+      POSTGRES_DB: minerva
+    volumes:
+      - minerva-pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${MINERVA_PG_PORT:-5544}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minerva -d minerva"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   minerva-services:
     build:
       context: .
@@ -20,14 +45,22 @@ services:
     image: minerva-services:latest
     container_name: minerva-services
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${MINERVA_PORT:-8765}:8765"
     environment:
       MINERVA_HOST: "0.0.0.0"
       MINERVA_PORT: "8765"
+      MINERVA_DATABASE_URL: "postgres://minerva:minerva@postgres:5432/minerva"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health').read()"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
+
+volumes:
+  minerva-pgdata:
+    name: minerva-pgdata

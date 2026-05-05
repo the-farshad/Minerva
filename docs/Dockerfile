@@ -17,9 +17,9 @@
 FROM python:3.12-slim
 
 # ffmpeg lets yt-dlp merge separate video / audio streams and produce
-# mp3. Skip it and yt-dlp falls back to single-stream formats only.
+# mp3. postgresql-client provides pg_dump for the /db/dump endpoint.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv
@@ -28,7 +28,7 @@ COPY minerva-services.py /srv/minerva-services.py
 # The script self-bootstraps a venv on first run. Inside the
 # container we install deps directly so the image starts instantly
 # and survives ephemeral filesystems.
-RUN pip install --no-cache-dir flask yt-dlp requests
+RUN pip install --no-cache-dir flask yt-dlp requests "psycopg[binary]"
 
 ENV MINERVA_HOST=0.0.0.0 \
     MINERVA_PORT=8765 \

@@ -137,7 +137,7 @@
   // CACHE_VERSION in sw.js — bump both whenever you ship.
   window.Minerva.version = {
     semver: 'v0.22',
-    build:  84,
-    label:  'v0.22 · build 84'
+    build:  85,
+    label:  'v0.22 · build 85'
   };
 })();

@@ -177,6 +177,12 @@
     var sheetId = meta && meta.sheetId;
     var anyDelete = false;
 
+    // Track rows that successfully reached Sheets so we can mirror them to
+    // the Postgres adapter after the Sheets batch is done. Mirror failures
+    // are non-fatal: PG is optional; Sheets remains the source of truth.
+    var pgUpsertRows = [];
+    var pgDeleteIds = [];
+
     // Group dirty rows by operation so deletes can be sorted before
     // execution. Multi-row deletes that hit Sheets one-by-one in the
     // original (ascending) order corrupt the sheet because each
@@ -202,6 +208,7 @@
       var ddrow = deletes[ddi];
       if (ddrow._localOnly || !ddrow._rowIndex) {
         await Minerva.db.deleteRow(tab, ddrow.id);
+        if (ddrow.id) pgDeleteIds.push(ddrow.id);
       } else if (sheetId != null) {
         sheetDeletes.push(ddrow);
       }
@@ -222,6 +229,7 @@
       await Minerva.sheets.batchUpdate(token, ssId, requests);
       for (var sdi = 0; sdi < sheetDeletes.length; sdi++) {
         await Minerva.db.deleteRow(tab, sheetDeletes[sdi].id);
+        if (sheetDeletes[sdi].id) pgDeleteIds.push(sheetDeletes[sdi].id);
       }
       anyDelete = true;
     }
@@ -266,6 +274,7 @@
         row._dirty = 0;
         if (rowIndex) row._rowIndex = rowIndex;
         await Minerva.db.upsertRow(tab, row);
+        pgUpsertRows.push(row);
         continue;
       }
 
@@ -274,6 +283,16 @@
         await Minerva.sheets.updateValues(token, ssId, tab + '!A' + row._rowIndex, [values2]);
         row._dirty = 0;
         await Minerva.db.upsertRow(tab, row);
+        pgUpsertRows.push(row);
+      }
+    }
+
+    if (Minerva.pg && (pgUpsertRows.length || pgDeleteIds.length)) {
+      try {
+        if (pgUpsertRows.length) await Minerva.pg.upsertRows(tab, pgUpsertRows);
+        if (pgDeleteIds.length) await Minerva.pg.deleteRows(tab, pgDeleteIds);
+      } catch (e) {
+        console.warn('[Minerva pg-mirror]', tab, (e && e.message) || e);
       }
     }
 

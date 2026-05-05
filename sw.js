@@ -19,7 +19,7 @@
 
 'use strict';
 
-var CACHE_VERSION = 'minerva-v84';
+var CACHE_VERSION = 'minerva-v85';
 var SHELL = [
   './',
   './index.html',
@@ -33,6 +33,7 @@ var SHELL = [
   './assets/auth.js',
   './assets/sheets.js',
   './assets/db.js',
+  './assets/pg.js',
   './assets/bootstrap.js',
   './assets/sync.js',
   './assets/vendor/lucide.min.js',
