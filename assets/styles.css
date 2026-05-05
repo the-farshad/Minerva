@@ -2101,12 +2101,31 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 }
 .tile-action:hover { background: var(--accent); }
 .tile-action svg { width: 1em; height: 1em; }
-.tile-watch { background: rgba(40, 130, 60, 0.85); }
-.tile-watch:hover { background: var(--ok, #2c8c3e); }
-.tile-drive { background: rgba(45, 90, 200, 0.85); }
-.tile-drive:hover { background: rgba(30, 70, 180, 1); }
+/* Cached / downloaded indicators on grid cards. The previous styling
+   used heavy solid greens / blues that fought with the rest of the
+   theme; switch to a translucent dark base with a thin accent ring
+   so the action is recognisable but doesn't dominate the thumbnail. */
+.tile-watch { background: rgba(0, 0, 0, 0.55); box-shadow: 0 0 0 1px var(--ok, #2c8c3e); color: #fff; }
+.tile-watch:hover { background: var(--ok, #2c8c3e); box-shadow: 0 0 0 1px var(--ok, #2c8c3e); }
+.tile-drive { background: rgba(0, 0, 0, 0.55); box-shadow: 0 0 0 1px var(--accent); color: #fff; }
+.tile-drive:hover { background: var(--accent); }
 .tile-remove:hover { background: var(--error); }
-.tile.tile-has-offline { box-shadow: 0 0 0 1px var(--ok) inset; }
+/* When the row has an offline copy, the whole tile gets a subtle
+   accent corner badge instead of an inset border running the full
+   perimeter — same signal, less visual noise. */
+.tile.tile-has-offline { position: relative; }
+.tile.tile-has-offline::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 14px 14px 0;
+  border-color: transparent var(--ok, #2c8c3e) transparent transparent;
+  pointer-events: none;
+}
 .tile-info {
   position: absolute;
   left: 0.4rem;

@@ -120,11 +120,22 @@
       });
     }, 1500);
   }
+  // True only when M.auth has a non-expired cached access token. The
+  // background Drive sync helpers below short-circuit on this so they
+  // never call getToken — calling getToken without a cached token
+  // would auto-redirect to Google's sign-in, which is exactly the
+  // "asks me to log in immediately" failure mode we want to avoid.
+  function hasLiveAuthToken() {
+    if (!M.auth || typeof M.auth.getState !== 'function') return false;
+    var s = M.auth.getState();
+    return !!(s && s.hasToken);
+  }
   async function runDriveConfigSync() {
     if (driveConfigSyncInflight) return;
     var c = readConfig();
     if (!c.clientId) return;
     if (!M.auth || !M.sheets) return;
+    if (!hasLiveAuthToken()) return; // never trigger a sign-in from a background sync
     driveConfigSyncInflight = true;
     try {
       var token = await M.auth.getToken(c.clientId);
@@ -144,6 +155,7 @@
     var c = readConfig();
     if (!c.clientId) return false;
     if (!M.auth || !M.sheets) return false;
+    if (!hasLiveAuthToken()) return false; // never trigger a sign-in from a background load
     var token;
     try { token = await M.auth.getToken(c.clientId); }
     catch (e) { return false; }
@@ -294,10 +306,12 @@
     var cfg = readConfig();
     var hasSheet = !!cfg.spreadsheetId;
 
-    // Group 1: home + the always-on action views.
+    // Group 1: home + the always-on action views. Today is now part
+    // of Home (the inline plan block + stats); no separate Today
+    // entry. Schedule absorbs the When-to-meet builder via its
+    // existing form.
     var primary = [{ hash: '#/', label: 'Home', icon: 'home' }];
     if (hasSheet) {
-      primary.push({ hash: '#/today', label: 'Today', icon: 'sun', badge: 'today' });
       primary.push({ hash: '#/schedule', label: 'Schedule', icon: 'calendar-clock' });
     }
     groups.push(primary);
@@ -8768,7 +8782,11 @@
       } else if (/^#\/p\/.+/.test(hash)) {
         view = viewPublic(hash.replace(/^#\/p\//, ''));
       } else if (hash === '#/today') {
-        view = await viewToday(); active = '#/today';
+        // Today is folded into Home; redirect any remaining /today
+        // links back to /. The home view already renders today's
+        // tasks, habits, and events inline.
+        location.replace(location.origin + location.pathname + '#/');
+        return;
       } else if (hash === '#/graph' || hash.indexOf('#/graph?') === 0) {
         view = await viewGraph(hash); active = '#/graph';
       } else if (hash === '#/schedule') {

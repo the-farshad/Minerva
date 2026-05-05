@@ -174,17 +174,10 @@
       },
       defaultSort: 'start'
     },
-    {
-      slug: 'meets',
-      title: 'Meeting polls',
-      icon: 'users',
-      description: 'Archive of When-to-meet group polls you have created. The + button opens the When-to-meet builder; saved polls show up here with their response URL so you can re-share later.',
-      schema: {
-        headers: ['id','title','url','days','slots','responses','status','note','created','_updated'],
-        types:   ['text','text','link','text','text','number','select(open,closed)','markdown','datetime','datetime']
-      },
-      defaultSort: 'created:desc'
-    },
+    // Meeting polls are accessed via Schedule → When to meet; the
+    // standalone preset has been retired so it doesn't clutter the
+    // gallery. Existing user spreadsheets that already have a `meets`
+    // tab keep working — saveMeetPoll still writes into it.
     // Sketches preset removed in favour of the sketch column on Notes.
     {
       slug: 'youtube',
