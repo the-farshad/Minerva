@@ -291,11 +291,23 @@
     return r.enabled === 'TRUE' || r.enabled === true || r.enabled === 'true';
   }
 
+  // Slugs that have been folded into other surfaces. Rows still
+  // exist in the user's _config tab (we never touch their data) but
+  // they're hidden from the nav and section pickers so they don't
+  // duplicate the merged target. Direct hits on #/s/<slug> redirect
+  // to the absorbing surface.
+  var DEPRECATED_SECTIONS = {
+    sketches: { redirect: '#/s/notes', mergedInto: 'Notes' },
+    meets:    { redirect: '#/schedule', mergedInto: 'Schedule' },
+    goals:    { redirect: null, mergedInto: '' /* gallery-only removal */ }
+  };
+
   function sectionRows() {
     if (!configCache || !configCache.length) return [];
     return configCache.slice()
       .filter(isEnabled)
       .filter(function (r) { return r.slug && r.tab; })
+      .filter(function (r) { return !DEPRECATED_SECTIONS[r.slug]; })
       .sort(function (a, b) {
         return (Number(a.order) || 0) - (Number(b.order) || 0);
       });
@@ -8832,6 +8844,14 @@
         }, 50);
       } else if ((sectionMatch = hash.match(/^#\/s\/(.+)$/))) {
         var slug = decodeURIComponent(sectionMatch[1]);
+        // Deprecated sections forward to the surface that absorbed
+        // their data. The user's spreadsheet rows are preserved; only
+        // the navigation entry is gone.
+        var dep = DEPRECATED_SECTIONS[slug];
+        if (dep && dep.redirect) {
+          location.replace(location.origin + location.pathname + dep.redirect);
+          return;
+        }
         view = await viewSection(slug);
         active = '#/s/' + encodeURIComponent(slug);
       } else if ((sectionMatch = hash.match(/^#\/draw\/([^/]+)\/([^?]+)(?:\?(.*))?$/))) {
