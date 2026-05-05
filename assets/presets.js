@@ -185,17 +185,7 @@
       },
       defaultSort: 'created:desc'
     },
-    {
-      slug: 'sketches',
-      title: 'Sketches',
-      icon: 'pencil-line',
-      description: 'Standalone hand-drawn sketches. (Notes now supports drawings too via its sketch column — prefer Notes unless you really want a separate section.)',
-      schema: {
-        headers: ['id','title','tags','sketch','created','_updated'],
-        types:   ['text','text','multiselect()','drawing','datetime','datetime']
-      },
-      defaultSort: 'created:desc'
-    },
+    // Sketches preset removed in favour of the sketch column on Notes.
     {
       slug: 'youtube',
       title: 'YouTube tracker',

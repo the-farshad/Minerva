@@ -253,14 +253,23 @@
       };
       a.appendChild(thumb);
       a.appendChild(document.createTextNode(host));
-      // Plain click on a YouTube cell plays inline. Modifier-click and
-      // middle-click still open the YouTube page in a new tab via the
-      // anchor's default behavior.
+      // Plain click on a YouTube cell plays inline. Shift-click jumps
+      // to the row's Drive copy when one exists (via the offline lookup
+      // registered by the section view). Modifier-click and middle-click
+      // otherwise fall through to the anchor's default behavior.
       a.addEventListener('click', function (ev) {
+        var preview = window.Minerva && window.Minerva.preview;
+        if (ev.shiftKey && preview && typeof preview.openInDrive === 'function') {
+          if (preview.openInDrive(raw)) {
+            ev.preventDefault();
+            return;
+          }
+          // No Drive copy — let shift-click open the original YouTube
+          // tab via the anchor's default behavior.
+        }
         if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button === 1) return;
-        if (!window.Minerva || !window.Minerva.preview) return;
+        if (!preview) return;
         ev.preventDefault();
-        var preview = window.Minerva.preview;
         if (preview.showPlaylist && typeof preview.getPlaylistContext === 'function') {
           var ctx = preview.getPlaylistContext(raw);
           if (ctx && ctx.items && ctx.items.length > 1) {

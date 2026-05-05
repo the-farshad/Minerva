@@ -995,10 +995,17 @@
       } catch (e) { /* ignore */ }
     }
 
+    // ---- inline "Today's plan" -----------------------------------------
+    // What used to live at /today is now folded into home so there is a
+    // single landing surface. The standalone /today route still resolves
+    // and forwards to / for back-compat.
+    var todayPlanEl = await buildHomeTodayPlan(today);
+
     return el('section', { class: 'view view-home-connected' },
       hero,
       stats.length ? el('div', { class: 'stats-grid' }, stats.map(renderStatCard)) : null,
       habitStripEl,
+      todayPlanEl,
       sections.length
         ? el('div', { class: 'home-block' },
             el('h3', { class: 'home-block-h' }, 'Sections'),
@@ -1016,6 +1023,140 @@
         renderVersionBadge()
       )
     );
+  }
+
+  // Compose the inline today block embedded in the home view: today's
+  // tasks (overdue + due today), habits not yet checked off, and any
+  // events that start today. Returns null when there is nothing to
+  // surface so the home page stays compact for empty days.
+  async function buildHomeTodayPlan(today) {
+    var tasks = (await M.db.getAllRows('tasks').catch(function () { return []; }))
+      .filter(function (r) {
+        if (r._deleted) return false;
+        if (String(r.status || '').toLowerCase() === 'done') return false;
+        if (!r.due) return false;
+        return String(r.due).slice(0, 10) <= today;
+      })
+      .sort(function (a, b) { return String(a.due).localeCompare(String(b.due)); });
+
+    var habits = (await M.db.getAllRows('habits').catch(function () { return []; }))
+      .filter(function (h) { return !h._deleted; });
+    var habitLogs = (await M.db.getAllRows('habit_log').catch(function () { return []; }))
+      .filter(function (l) { return !l._deleted; });
+    var doneToday = {};
+    habitLogs.forEach(function (l) {
+      if (String(l.date).slice(0, 10) === today) doneToday[l.habit_id] = true;
+    });
+    var habitsLeft = habits.filter(function (h) { return !doneToday[h.id]; });
+
+    var startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    var endOfToday = new Date(startOfToday.getTime() + 86400000);
+    var events = [];
+    try {
+      var allMeta = await M.db.getAllMeta();
+      for (var m of allMeta) {
+        if (!m || !m.headers || !m.types) continue;
+        if (m.headers.indexOf('start') < 0 || m.headers.indexOf('end') < 0) continue;
+        var rows = await M.db.getAllRows(m.tab);
+        rows.forEach(function (r) {
+          if (r._deleted || !r.start) return;
+          var s = new Date(r.start);
+          if (isNaN(s.getTime()) || s < startOfToday || s >= endOfToday) return;
+          events.push({ row: r, start: s, tab: m.tab });
+        });
+      }
+      events.sort(function (a, b) { return a.start - b.start; });
+    } catch (e) { /* non-fatal */ }
+
+    if (!tasks.length && !habitsLeft.length && !events.length) return null;
+
+    var wrap = el('div', { class: 'home-block home-today-plan' });
+    var head = el('h3', { class: 'home-block-h' });
+    head.appendChild(M.render.icon('sun'));
+    head.appendChild(document.createTextNode(' Today'));
+    wrap.appendChild(head);
+
+    if (tasks.length) {
+      var tList = el('ul', { class: 'home-today-list' });
+      tasks.slice(0, 8).forEach(function (t) {
+        var overdueCls = (String(t.due).slice(0, 10) < today) ? ' is-overdue' : '';
+        var li = el('li', { class: 'home-today-item' + overdueCls });
+        var doneBtn = el('button', { class: 'home-today-check', type: 'button',
+          title: 'Mark done',
+          'aria-label': 'Mark done',
+          onclick: async function (e) {
+            e.preventDefault();
+            var fresh = await M.db.getRow('tasks', t.id);
+            if (!fresh || fresh._deleted) return;
+            fresh.status = 'done';
+            fresh._dirty = 1;
+            fresh._updated = new Date().toISOString();
+            await M.db.upsertRow('tasks', fresh);
+            schedulePush();
+            await route();
+          }
+        });
+        doneBtn.appendChild(M.render.icon('square'));
+        var label = el('button', { class: 'home-today-label', type: 'button',
+          onclick: function () { showRowDetail('tasks', t.id); }
+        }, t.title || '(untitled task)');
+        var when = el('span', { class: 'home-today-when small muted' }, String(t.due).slice(0, 10));
+        li.appendChild(doneBtn);
+        li.appendChild(label);
+        li.appendChild(when);
+        tList.appendChild(li);
+      });
+      wrap.appendChild(tList);
+    }
+
+    if (habitsLeft.length) {
+      var hList = el('ul', { class: 'home-today-list home-today-habits' });
+      habitsLeft.slice(0, 8).forEach(function (h) {
+        var li = el('li', { class: 'home-today-item' });
+        var doneBtn = el('button', { class: 'home-today-check', type: 'button',
+          title: 'Log done',
+          'aria-label': 'Log done',
+          onclick: async function (e) {
+            e.preventDefault();
+            try {
+              var meta = await M.db.getMeta('habit_log');
+              if (!meta || !meta.headers) return;
+              var row = await addRow('habit_log', meta.headers);
+              if (meta.headers.indexOf('habit_id') >= 0) row.habit_id = h.id;
+              if (meta.headers.indexOf('date') >= 0) row.date = today;
+              if (meta.headers.indexOf('count') >= 0) row.count = '1';
+              row._dirty = 1;
+              await M.db.upsertRow('habit_log', row);
+              schedulePush();
+              await route();
+            } catch (err) { /* ignore */ }
+          }
+        });
+        doneBtn.appendChild(M.render.icon('zap'));
+        li.appendChild(doneBtn);
+        li.appendChild(el('span', { class: 'home-today-label' }, h.name || h.title || '(habit)'));
+        hList.appendChild(li);
+      });
+      wrap.appendChild(hList);
+    }
+
+    if (events.length) {
+      var eList = el('ul', { class: 'home-today-list home-today-events' });
+      events.slice(0, 6).forEach(function (e) {
+        var li = el('li', { class: 'home-today-item' });
+        li.appendChild(el('span', { class: 'home-today-when' },
+          e.start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+        ));
+        var btn = el('button', { class: 'home-today-label', type: 'button',
+          onclick: function () { showRowDetail(e.tab, e.row.id); }
+        }, e.row.title || e.row.name || '(event)');
+        li.appendChild(btn);
+        eList.appendChild(li);
+      });
+      wrap.appendChild(eList);
+    }
+
+    return wrap;
   }
 
   // Click-to-copy build pill. Rendered in the home footer and the
@@ -4855,7 +4996,13 @@
       if (r._deleted) return;
       var u = r.url && String(r.url).trim();
       if (!u) return;
-      byUrl[u] = { tab: tab, rowId: r.id, title: r.title || '' };
+      var driveMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
+      byUrl[u] = {
+        tab: tab,
+        rowId: r.id,
+        title: r.title || '',
+        driveFileId: driveMatch ? driveMatch[1] : ''
+      };
     });
     M.preview.setOfflineLookup(function (url) {
       return byUrl[String(url || '').trim()] || null;
@@ -4927,6 +5074,54 @@
       if (ti.kind === 'select' && ti.options && ti.options.length) return headers[i];
     }
     return null;
+  }
+
+  // Lightweight read-only metadata popup. Renders every non-internal
+  // column for the row in a definition-list shape so the user can
+  // inspect what's stored without leaving the current view. ESC and
+  // overlay click both close.
+  function showRowMetadataPopup(meta, row) {
+    if (!meta || !row) return;
+    if (document.querySelector('.row-info-overlay')) return;
+    var headers = (meta && meta.headers) || [];
+    var overlay = el('div', { class: 'modal-overlay row-info-overlay',
+      onclick: function () { overlay.remove(); }
+    });
+    var entries = [];
+    headers.forEach(function (h) {
+      if (M.render.isInternal(h)) return;
+      if (h === 'id') return;
+      var v = row[h];
+      if (v == null || v === '') return;
+      entries.push({ k: h, v: v });
+    });
+    if (!entries.length) {
+      entries.push({ k: '(no fields)', v: 'This row has no populated fields yet.' });
+    }
+    var dl = el('dl', { class: 'row-info-dl' });
+    entries.forEach(function (e) {
+      dl.appendChild(el('dt', null, e.k));
+      var val = String(e.v);
+      // Wrap long values; treat newlines as line breaks.
+      var dd = el('dd', null, val);
+      dl.appendChild(dd);
+    });
+    var panel = el('div', { class: 'modal-panel row-info-panel',
+      onclick: function (e) { e.stopPropagation(); }
+    },
+      el('h3', null, row.title || row.name || row.id || 'Row details'),
+      dl,
+      el('div', { class: 'form-actions' },
+        el('button', { class: 'btn btn-ghost', type: 'button',
+          onclick: function () { overlay.remove(); } }, 'Close')
+      )
+    );
+    panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); overlay.remove(); }
+    });
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    M.render.refreshIcons();
   }
 
   // Pre-fetch which rows already have a cached offline blob so the
@@ -5163,12 +5358,42 @@
       newBtn
     ));
     var sideList = el('div', { class: 'notes-reader-list' });
+    var hasWatchedSide = headers.indexOf('watched') >= 0;
     rows.forEach(function (r) {
       var rawTitle = (titleCol && r[titleCol]) || '';
       var rawBody = (r[primaryBodyCol] || '').toString();
       // Strip markdown markers for the preview line — readable at a glance.
       var preview = rawBody.replace(/[#*_`>~\[\]\(\)]/g, '').replace(/\s+/g, ' ').trim();
-      var item = el('button', {
+      var item = el('div', { class: 'notes-reader-item-row' });
+      if (hasWatchedSide) {
+        var on = String(r.watched || '').toUpperCase() === 'TRUE';
+        var wcb = el('button', {
+          type: 'button',
+          class: 'notes-reader-watched' + (on ? ' is-watched' : ''),
+          title: on ? 'Mark unwatched' : 'Mark watched',
+          'aria-label': on ? 'Mark unwatched' : 'Mark watched',
+          onclick: async function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var fresh = await M.db.getRow(tab, r.id);
+            if (!fresh || fresh._deleted) return;
+            var nowOn = String(fresh.watched || '').toUpperCase() !== 'TRUE';
+            pushUndo({ kind: 'edit', tab: tab, rowId: fresh.id, field: 'watched', prevValue: fresh.watched });
+            fresh.watched = nowOn ? 'TRUE' : 'FALSE';
+            if (headers.indexOf('watched_at') >= 0) {
+              fresh.watched_at = nowOn ? new Date().toISOString() : '';
+            }
+            fresh._updated = new Date().toISOString();
+            fresh._dirty = 1;
+            await M.db.upsertRow(tab, fresh);
+            schedulePush();
+            if (refresh) await refresh();
+          }
+        });
+        wcb.appendChild(M.render.icon(on ? 'check-circle-2' : 'circle'));
+        item.appendChild(wcb);
+      }
+      var clickable = el('button', {
         type: 'button',
         class: 'notes-reader-item' + (r.id === selectedId ? ' is-active' : ''),
         onclick: function () {
@@ -5180,6 +5405,7 @@
         el('div', { class: 'notes-reader-item-title' }, rawTitle || '(untitled)'),
         el('div', { class: 'notes-reader-item-preview' }, preview ? preview.slice(0, 120) : '(empty)')
       );
+      item.appendChild(clickable);
       sideList.appendChild(item);
     });
     sidebar.appendChild(sideList);
@@ -5191,7 +5417,13 @@
 
     function paint() {
       // Reflect the selection in the sidebar without a full re-render.
-      Array.prototype.forEach.call(sideList.querySelectorAll('.notes-reader-item'), function (n, i) {
+      Array.prototype.forEach.call(sideList.querySelectorAll('.notes-reader-item'), function (n) {
+        // Pull the row id by matching against the current rows list.
+        // The .notes-reader-item-row wrapper holds the row id implicitly
+        // by ordering, so a structural match still works.
+      });
+      var items = sideList.querySelectorAll('.notes-reader-item');
+      Array.prototype.forEach.call(items, function (n, i) {
         n.classList.toggle('is-active', rows[i] && rows[i].id === selectedId);
       });
       pane.replaceChildren();
@@ -5363,6 +5595,23 @@
         thumb.textContent = (t0[0] || '?').toUpperCase();
       }
       tile.appendChild(thumb);
+
+      // Info button — opens a quick-look modal showing every column
+      // value for the row. Lets the user inspect metadata without
+      // opening the full row-detail route.
+      var infoBtn = el('button', {
+        type: 'button',
+        class: 'tile-info',
+        title: 'Show all fields',
+        'aria-label': 'Show details',
+        onclick: function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          showRowMetadataPopup(meta, r);
+        }
+      });
+      infoBtn.appendChild(M.render.icon('info'));
+      thumb.appendChild(infoBtn);
 
       // Watched / unwatched toggle — visible when the section has a
       // `watched` column. Sits on the thumbnail's bottom-right corner
@@ -6975,6 +7224,19 @@
         testYoutubeApiKey,
         'Only needed for playlist imports + duration auto-fill. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.',
         { healthPath: false, canStop: false, isCredential: true }
+      ),
+      el('div', { class: 'docker-tip' },
+        el('h4', null, M.render.icon('container'), ' Prefer Docker?'),
+        el('p', { class: 'small' },
+          'A ready-made image and compose file ship in ',
+          el('code', null, 'docs/'),
+          '. Run ',
+          el('code', null, 'docker compose up -d'),
+          ' from there to start both services on port 8765, then paste the URLs into the fields below. ',
+          el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-local-services.md',
+            target: '_blank', rel: 'noopener' }, 'Full Docker / systemd / launchd guide'),
+          '.'
+        )
       ),
       fieldWithTest('yt-dlp server (recommended)',
         el('input', { name: 'ytDlpServer', type: 'url',

@@ -54,6 +54,37 @@
     } catch (e) { /* ignore */ }
   }
 
+  // Per-URL bookmark store. Each bookmark is { kind, ref, label, ts }
+  // where kind is 'video' (ref = seconds) or 'pdf' (ref = page number).
+  // Stored as a map keyed by URL in localStorage.
+  var BOOKMARK_KEY = 'minerva.bookmarks';
+  function readBookmarks(url) {
+    try {
+      var raw = JSON.parse(localStorage.getItem(BOOKMARK_KEY) || '{}');
+      return Array.isArray(raw[url]) ? raw[url] : [];
+    } catch (e) { return []; }
+  }
+  function writeBookmarks(url, list) {
+    try {
+      var raw = JSON.parse(localStorage.getItem(BOOKMARK_KEY) || '{}');
+      if (!list || !list.length) delete raw[url];
+      else raw[url] = list;
+      localStorage.setItem(BOOKMARK_KEY, JSON.stringify(raw));
+    } catch (e) { /* ignore */ }
+  }
+  function addBookmark(url, mark) {
+    var list = readBookmarks(url);
+    list.push(mark);
+    writeBookmarks(url, list);
+    return list;
+  }
+  function removeBookmark(url, idx) {
+    var list = readBookmarks(url);
+    list.splice(idx, 1);
+    writeBookmarks(url, list);
+    return list;
+  }
+
   // YouTube resume — captured via the IFrame Player API. The API script
   // loads on demand the first time we open a YouTube preview; thereafter
   // each YouTube iframe is created with `enablejsapi=1` and we attach
@@ -252,8 +283,89 @@
     head.appendChild(pageWrap);
     head.appendChild(openA);
     head.appendChild(fsBtn);
+
+    // Bookmark button — adds a bookmark at the current playback time
+    // (videos) or page (PDFs). The list lives in a small drawer beneath
+    // the head and is rebuilt from localStorage on each render.
+    var bmBtn = document.createElement('button');
+    bmBtn.className = 'icon-btn preview-bm-btn';
+    bmBtn.type = 'button';
+    bmBtn.title = 'Add bookmark';
+    bmBtn.setAttribute('aria-label', 'Add bookmark');
+    if (window.Minerva && Minerva.render && Minerva.render.icon) {
+      bmBtn.appendChild(Minerva.render.icon('bookmark-plus'));
+    } else { bmBtn.textContent = '+ '; }
+    head.appendChild(bmBtn);
     head.appendChild(closeBtn);
     panel.appendChild(head);
+
+    var bmDrawer = document.createElement('div');
+    bmDrawer.className = 'preview-bookmarks';
+    panel.appendChild(bmDrawer);
+
+    function paintBookmarks() {
+      var item = items[idx]; if (!item) return;
+      var list = readBookmarks(item.url);
+      bmDrawer.replaceChildren();
+      if (!list.length) { bmDrawer.style.display = 'none'; return; }
+      bmDrawer.style.display = '';
+      list.forEach(function (mk, i) {
+        var label;
+        if (mk.kind === 'video') {
+          var s = Math.max(0, mk.ref | 0);
+          label = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+        } else if (mk.kind === 'pdf') {
+          label = 'p.' + mk.ref;
+        } else { label = String(mk.ref); }
+        var chip = document.createElement('button');
+        chip.className = 'preview-bm';
+        chip.type = 'button';
+        chip.title = 'Jump to ' + label + (mk.label ? ' — ' + mk.label : '');
+        chip.textContent = label + (mk.label ? ' · ' + mk.label : '');
+        chip.addEventListener('click', function () {
+          if (mk.kind === 'video' && ytPlayer && typeof ytPlayer.seekTo === 'function') {
+            try { ytPlayer.seekTo(mk.ref, true); ytPlayer.playVideo && ytPlayer.playVideo(); } catch (e) {}
+          } else if (mk.kind === 'pdf') {
+            pageInput.value = String(mk.ref);
+            writePdfPage(item.url, mk.ref);
+            while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+            frameHost.appendChild(buildIframeForUrl(item.url, mk.ref));
+          }
+        });
+        var rm = document.createElement('button');
+        rm.className = 'preview-bm-rm';
+        rm.type = 'button';
+        rm.title = 'Remove bookmark';
+        rm.textContent = '×';
+        rm.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          removeBookmark(item.url, i);
+          paintBookmarks();
+        });
+        chip.appendChild(rm);
+        bmDrawer.appendChild(chip);
+      });
+    }
+    bmBtn.addEventListener('click', function () {
+      var item = items[idx]; if (!item) return;
+      var url = item.url;
+      var isYt = !!ytId(url);
+      var isPdfNow = isPdf(url);
+      if (isYt) {
+        var t = 0;
+        try { if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') t = Math.floor(ytPlayer.getCurrentTime() || 0); }
+        catch (e) {}
+        var label = window.prompt('Bookmark label (optional):', '') || '';
+        addBookmark(url, { kind: 'video', ref: t, label: label.trim(), ts: Date.now() });
+        paintBookmarks();
+      } else if (isPdfNow) {
+        var p = parseInt(pageInput.value, 10) || 1;
+        var lbl = window.prompt('Bookmark label for page ' + p + ' (optional):', '') || '';
+        addBookmark(url, { kind: 'pdf', ref: p, label: lbl.trim(), ts: Date.now() });
+        paintBookmarks();
+      }
+    });
 
     var frameHost = document.createElement('div');
     frameHost.className = 'preview-frame-host';
@@ -343,6 +455,8 @@
 
       if (prevBtn) prevBtn.disabled = idx <= 0;
       if (nextBtn) nextBtn.disabled = idx >= items.length - 1;
+
+      paintBookmarks();
 
       if (window.Minerva && Minerva.render && Minerva.render.refreshIcons) {
         Minerva.render.refreshIcons();
@@ -590,6 +704,21 @@
   var offlineLookup = null;
   function setOfflineLookup(fn) { offlineLookup = (typeof fn === 'function') ? fn : null; }
   function clearOfflineLookup() { offlineLookup = null; }
+  // Open the row's Drive mirror in a new tab if the offline lookup
+  // resolves a driveFileId for this URL. Returns true when handled,
+  // false when no Drive copy is known so the caller can fall back.
+  function openInDrive(url) {
+    if (!offlineLookup) return false;
+    try {
+      var hit = offlineLookup(url);
+      if (hit && hit.driveFileId) {
+        window.open('https://drive.google.com/file/d/' + encodeURIComponent(hit.driveFileId) + '/view',
+          '_blank', 'noopener');
+        return true;
+      }
+    } catch (e) { /* fall through */ }
+    return false;
+  }
 
   function getPlaylistContext(url) {
     if (!playlistContext) return null;
@@ -608,6 +737,7 @@
     clearPlaylistContext: clearPlaylistContext,
     getPlaylistContext: getPlaylistContext,
     setOfflineLookup: setOfflineLookup,
-    clearOfflineLookup: clearOfflineLookup
+    clearOfflineLookup: clearOfflineLookup,
+    openInDrive: openInDrive
   };
 })();

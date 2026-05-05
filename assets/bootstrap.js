@@ -21,11 +21,10 @@
       headers: ['slug','title','icon','tab','order','enabled','defaultSort','defaultFilter'],
       types:   ['text','text','text','text','number','check','text','text'],
       rows: [
-        ['goals',    'Goals',    'target',          'goals',    1, 'TRUE', 'due',         ''],
-        ['tasks',    'Tasks',    'check-square',    'tasks',    2, 'TRUE', 'due',         'status:!=done'],
-        ['projects', 'Projects', 'folder',          'projects', 3, 'TRUE', 'name',        ''],
-        ['notes',    'Notes',    'file-text',       'notes',    4, 'TRUE', 'created:desc',''],
-        ['habits',   'Habits',   'zap',             'habits',   5, 'TRUE', 'name',        '']
+        ['tasks',    'Tasks',    'check-square',    'tasks',    1, 'TRUE', 'due',         'status:!=done'],
+        ['projects', 'Projects', 'folder',          'projects', 2, 'TRUE', 'name',        ''],
+        ['notes',    'Notes',    'file-text',       'notes',    3, 'TRUE', 'created:desc',''],
+        ['habits',   'Habits',   'zap',             'habits',   4, 'TRUE', 'name',        '']
       ]
     },
     _prefs: {
@@ -42,11 +41,6 @@
     _log: {
       headers: ['ts','actor','action','section','rowId','summary'],
       types:   ['datetime','text','text','text','text','longtext'],
-      rows: []
-    },
-    goals: {
-      headers: ['id','name','progress','due','parent','notes','_updated'],
-      types:   ['text','text','progress(0..100)','date','ref(goals)','markdown','datetime'],
       rows: []
     },
     tasks: {
@@ -81,7 +75,7 @@
   };
 
   // Ordered list — _config first so it's the leftmost tab in Sheets.
-  var TAB_ORDER = ['_config','_prefs','_log','goals','tasks','projects','notes','habits','habit_log'];
+  var TAB_ORDER = ['_config','_prefs','_log','tasks','projects','notes','habits','habit_log'];
 
   async function findOrCreate(token) {
     var found = await Minerva.sheets.findByName(token, SHEETS_TITLE);
@@ -143,7 +137,7 @@
   // CACHE_VERSION in sw.js — bump both whenever you ship.
   window.Minerva.version = {
     semver: 'v0.22',
-    build:  65,
-    label:  'v0.22 · build 65'
+    build:  66,
+    label:  'v0.22 · build 66'
   };
 })();
