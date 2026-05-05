@@ -7596,7 +7596,6 @@
               }
             } }, 'Disconnect')
           : el('button', { class: 'btn', type: 'button',
-              disabled: !c.clientId,
               onclick: function () { void connect(); }
             }, 'Connect Google'),
         ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void syncNow(); } }, 'Sync now') : null,
@@ -7722,6 +7721,14 @@
     async function connect() {
       var c = readConfig();
       if (!c.clientId) {
+        setAuthError('Paste your Google OAuth Client ID below, click Save, then Connect Google again.');
+        try {
+          var input = document.querySelector('input[name="clientId"]');
+          if (input) {
+            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            input.focus();
+          }
+        } catch (e) { /* best effort */ }
         flash(status, 'Save a Client ID first.', 'error');
         return;
       }
@@ -7745,6 +7752,7 @@
         renderNav(navActive());
         var msg = bs.fresh ? 'Spreadsheet created, seeded, and pulled.' : 'Connected and synced.';
         if (loaded) msg += ' Settings restored from Drive.';
+        clearAuthError();
         flash(status, msg);
         // Push a fresh copy of the local config back to Drive so any
         // values typed before connect (typically just the spreadsheet
