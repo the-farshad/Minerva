@@ -605,6 +605,66 @@ button.btn {
 }
 .switch input { accent-color: var(--accent); transform: scale(1.1); }
 
+/* iOS-style toggle for switchField(). The label sits on the left,
+   the toggle pip on the right; everything else (hint paragraph) flows
+   beneath the row. */
+.switch-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+}
+.switch-row-label {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin: 0;
+}
+.switch-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.switch-toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(1.35rem - 6px);
+  height: calc(1.35rem - 6px);
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+  transition: left .15s, background .15s;
+}
+.switch-toggle:has(input:checked) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch-toggle:has(input:checked) .switch-thumb {
+  left: calc(100% - 1.35rem + 4px);
+  background: #fff;
+}
+.switch-toggle:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* Compact ghost button used inline within hint text. Vertically
    centered with surrounding inline content; smaller padding than
    the standard btn rule so it doesn't break the line height. */
@@ -1121,6 +1181,46 @@ code {
 .setup-step.is-pending .setup-step-status { color: var(--error); border-color: var(--error); }
 .setup-step-detail { line-height: 1.45; }
 .setup-step-detail code { background: var(--bg); padding: 0 0.3rem; border-radius: 3px; }
+
+/* settings: collapse panels into accordion rows */
+.settings-section {
+  margin: 0.5rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.settings-section[open] { background: var(--bg); }
+.settings-section > summary.settings-section-head {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.7rem 0.95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  user-select: none;
+  background: var(--surface);
+  transition: background .12s;
+}
+.settings-section[open] > summary.settings-section-head {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.settings-section > summary.settings-section-head:hover { background: var(--surface-2); }
+.settings-section > summary.settings-section-head::-webkit-details-marker { display: none; }
+.settings-section > summary.settings-section-head::before {
+  content: '▸';
+  display: inline-block;
+  width: 0.9rem;
+  color: var(--muted);
+  transition: transform .12s;
+}
+.settings-section[open] > summary.settings-section-head::before { transform: rotate(90deg); }
+.settings-section-title { color: var(--accent); letter-spacing: 0.01em; }
+/* Add breathing room inside an open section. */
+.settings-section[open] > *:not(summary) { padding: 0.85rem 1rem; }
+.settings-section[open] > *:not(summary):not(:last-child) { padding-bottom: 0; }
 
 /* Landing variant — bigger hero, calmer color */
 .view-home-landing .home-hero-greet {

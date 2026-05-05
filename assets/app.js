@@ -381,6 +381,28 @@
     return el('div', { class: 'hint field-hint-body', hidden: '' }, hint);
   }
 
+  // Toggle row: label on the left, iOS-style switch on the right. The
+  // checkbox carries the form field name so the existing FormData
+  // submit picks it up like any other input.
+  function switchField(label, name, on, hint) {
+    var id = 'sw-' + Math.random().toString(36).slice(2, 8);
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.name = name;
+    cb.id = id;
+    if (on) cb.checked = true;
+    var sw = el('span', { class: 'switch-toggle' }, cb, el('span', { class: 'switch-thumb' }));
+    var labelEl = el('label', { for: id, class: 'switch-row-label' },
+      label,
+      hint ? renderHintToggle(hint) : null
+    );
+    var row = el('div', { class: 'switch-row' }, labelEl, sw);
+    return el('div', { class: 'field switch-field' },
+      row,
+      hint ? renderHintBody(hint) : null
+    );
+  }
+
   // Variant of field() that pairs the input with a Test button and a
   // live status pill. The test function receives the current input
   // value and returns a promise resolving to a string (success
@@ -7362,32 +7384,14 @@
         })(),
         'Max video resolution to request from Cobalt. Higher = bigger file. 720p is a sensible default for laptop / phone playback.'
       ),
-      field('Also save downloads to Drive',
-        (function () {
-          var lbl = el('label', { class: 'switch' });
-          var cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.name = 'uploadOfflineToDrive';
-          if (cfg.uploadOfflineToDrive) cb.checked = true;
-          lbl.appendChild(cb);
-          lbl.appendChild(el('span', { class: 'switch-track' }));
-          lbl.appendChild(document.createTextNode(' Mirror each downloaded file to your Drive too'));
-          return lbl;
-        })(),
+      switchField('Mirror downloads to Drive',
+        'uploadOfflineToDrive',
+        !!cfg.uploadOfflineToDrive,
         'When on, the per-row Download flow uploads the resulting blob to a "Minerva offline" folder in your Google Drive after saving it locally. The row\'s offline column records the Drive fileId. Counts against your Drive storage quota.'
       ),
-      field('Also save imported papers to Drive',
-        (function () {
-          var lbl = el('label', { class: 'switch' });
-          var cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.name = 'uploadPapersToDrive';
-          if (cfg.uploadPapersToDrive) cb.checked = true;
-          lbl.appendChild(cb);
-          lbl.appendChild(el('span', { class: 'switch-track' }));
-          lbl.appendChild(document.createTextNode(' Upload each paper PDF to a Minerva folder in Drive on import'));
-          return lbl;
-        })(),
+      switchField('Mirror imported paper PDFs to Drive',
+        'uploadPapersToDrive',
+        !!cfg.uploadPapersToDrive,
         'When on, every URL-imported paper that resolves to a PDF (arXiv, CrossRef when available) is fetched via your CORS proxy and uploaded to Drive. Counts against your Drive quota.'
       ),
       el('div', { class: 'form-actions' },
@@ -8234,12 +8238,21 @@
       );
     }
 
-    // Wrap each panel in a section with an id so the TOC can link to it.
-    function panel(id, content) {
-      var s = el('section', { class: 'settings-section', id: id });
-      if (Array.isArray(content)) content.forEach(function (c) { if (c) s.appendChild(c); });
-      else if (content) s.appendChild(content);
-      return s;
+    // Wrap each panel in a <details> so the page collapses to a list
+    // of section headers. The TOC links open the target details and
+    // scroll to it. Connection stays open by default; the rest are
+    // collapsed so the page is short on first load.
+    function panel(id, label, content, openByDefault) {
+      var attrs = { class: 'settings-section', id: id };
+      if (openByDefault) attrs.open = '';
+      var det = el('details', attrs);
+      var summary = el('summary', { class: 'settings-section-head' },
+        el('span', { class: 'settings-section-title' }, label)
+      );
+      det.appendChild(summary);
+      if (Array.isArray(content)) content.forEach(function (c) { if (c) det.appendChild(c); });
+      else if (content) det.appendChild(content);
+      return det;
     }
 
     var connectionPanel = el('div');
@@ -8267,7 +8280,10 @@
         onclick: function (e) {
           e.preventDefault();
           var t = document.getElementById(s.id);
-          if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          if (t) {
+            t.open = true;
+            t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
           history.replaceState(null, '', '#/settings');
         }
       }, s.label);
@@ -8277,8 +8293,10 @@
     toc.appendChild(tocList);
 
     var body = el('div', { class: 'settings-body' });
-    sections.forEach(function (s) {
-      body.appendChild(panel(s.id, s.content));
+    sections.forEach(function (s, idx) {
+      // Connection panel opens by default; everything else stays collapsed
+      // so the Settings page is a list of section headers on first load.
+      body.appendChild(panel(s.id, s.label, s.content, idx === 0));
     });
 
     return el('section', { class: 'view view-settings' },
