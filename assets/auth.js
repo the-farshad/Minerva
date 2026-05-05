@@ -153,13 +153,21 @@
 
   async function requestTokenViaRedirect(clientId, prompt) {
     if (!clientId) throw new Error('No OAuth client ID configured.');
-    var nonce = randomNonce();
-    sessionStorage.setItem(REDIR_KEY, JSON.stringify({
-      clientId: clientId,
-      state: nonce,
-      returnTo: location.hash || '#/',
-      ts: Date.now()
-    }));
+    var nonce;
+    try { nonce = randomNonce(); }
+    catch (e) {
+      throw new Error('Cannot generate nonce — Web Crypto unavailable. Are you on https or localhost?');
+    }
+    try {
+      sessionStorage.setItem(REDIR_KEY, JSON.stringify({
+        clientId: clientId,
+        state: nonce,
+        returnTo: location.hash || '#/',
+        ts: Date.now()
+      }));
+    } catch (e) {
+      throw new Error('Cannot persist OAuth state to sessionStorage (private browsing? quota?).');
+    }
     var u = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     u.searchParams.set('client_id', clientId);
     u.searchParams.set('redirect_uri', redirectUri());
@@ -168,10 +176,20 @@
     u.searchParams.set('state', nonce);
     u.searchParams.set('include_granted_scopes', 'true');
     if (prompt) u.searchParams.set('prompt', prompt);
-    location.assign(u.toString());
+    var target = u.toString();
+    console.info('[Minerva auth] redirecting to', target);
+    // Use location.href so any popup-blocker or extension that
+    // intercepts location.assign still sees a top-level navigation.
+    location.href = target;
     // Navigation in flight — never resolves. Callers must not try to
-    // render anything after this point.
-    return new Promise(function () {});
+    // render anything after this point. Also schedule a fallback
+    // error if for any reason the navigation didn't happen within
+    // 1 second so the user gets a visible toast instead of "nothing".
+    return new Promise(function (_resolve, reject) {
+      setTimeout(function () {
+        reject(new Error('Browser refused to navigate to accounts.google.com (popup blocker, extension, or strict CSP). Try disabling extensions for this site or check the console.'));
+      }, 1500);
+    });
   }
 
   // Called once on app boot. If the URL fragment carries an OAuth
