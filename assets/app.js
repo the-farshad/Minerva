@@ -93,10 +93,13 @@
   window.Minerva.forceUpdate = forceUpdateAll;
 
   // ---- Drive-backed config sync ----
-  // Persists everything except the OAuth Client ID (which has to be
-  // entered locally before any API call can be made) to a single JSON
-  // file on the user's Drive. New devices fetch it after Connect Google
-  // and pre-fill Settings.
+  // Persists every Settings field — including the OAuth Client ID — to
+  // a single JSON file on the user's Drive. The Client ID is a public
+  // OAuth identifier (the redirect-URI allow-list is what gates abuse),
+  // so colocating it with the rest of the snapshot lets a new device
+  // skip re-typing it after the first sign-in. The bootstrap path on a
+  // fresh device still requires the Client ID locally to start the
+  // first OAuth redirect; once signed in, this file fills in the rest.
   var DRIVE_CONFIG_FILENAME = 'minerva-config.json';
   var driveConfigSyncTimer = null;
   var driveConfigSyncInflight = false;
@@ -104,7 +107,7 @@
     var c = readConfig();
     var out = {};
     [
-      'spreadsheetId', 'youtubeApiKey',
+      'clientId', 'spreadsheetId', 'youtubeApiKey',
       'cobaltEndpoint', 'cobaltApiKey',
       'ytDlpServer', 'ytDlpFormat',
       'corsProxy', 'offlineQuality'
