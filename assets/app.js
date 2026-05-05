@@ -7768,11 +7768,20 @@
         var msg = bs.fresh ? 'Spreadsheet created, seeded, and pulled.' : 'Connected and synced.';
         if (loaded) msg += ' Settings restored from Drive.';
         clearAuthError();
-        flash(status, msg);
         // Push a fresh copy of the local config back to Drive so any
         // values typed before connect (typically just the spreadsheet
         // id) become part of the canonical Drive snapshot.
         scheduleDriveConfigSync();
+        // Re-render the Settings view if we're still on it — the form
+        // inputs were mounted with the pre-load (often empty) values,
+        // so without a re-route the user sees blank fields even though
+        // localStorage now holds everything Drive returned.
+        if (loaded && (location.hash || '').indexOf('#/settings') === 0) {
+          try { route(); } catch (e) { /* fall through to the flash */ }
+        }
+        // Surface the confirmation on document.body so it survives the
+        // re-render above.
+        flash(document.body, msg);
       } catch (err) {
         paintStatus();
         flash(status, 'Connect failed: ' + (err && err.message ? err.message : err), 'error');
