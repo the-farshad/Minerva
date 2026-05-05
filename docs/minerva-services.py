@@ -224,8 +224,14 @@ def proxy():
     except requests.RequestException as exc:
         return (f"Upstream fetch failed: {exc}", 502, _cors_dict())
 
+    # `requests` transparently decompresses gzip/deflate responses
+    # when streaming, so the bytes flowing out of iter_content() do
+    # not match the upstream Content-Length and the original
+    # Content-Encoding no longer applies. Forward only headers that
+    # stay accurate after decompression — letting the browser see a
+    # chunked unknown-length response is fine.
     out = dict(_cors_dict())
-    for h in ("Content-Type", "Content-Length", "Cache-Control"):
+    for h in ("Content-Type", "Cache-Control"):
         if h in up.headers:
             out[h] = up.headers[h]
 
