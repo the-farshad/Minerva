@@ -6046,6 +6046,31 @@
           });
           dlAllBtn.appendChild(M.render.icon('download'));
           head.appendChild(dlAllBtn);
+
+          // Per-group "delete all" — mirrors the list-view group
+          // delete. Wipes every row in the playlist and the offline
+          // blobs they own (deleteRow cascades to the videos store).
+          var rmAllBtn = el('button', {
+            type: 'button',
+            class: 'icon-btn row-group-rm tiles-group-rm',
+            title: 'Delete every video in "' + key + '" (and their offline copies)',
+            'aria-label': 'Delete playlist',
+            onclick: async function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              var n = groupRowsClosure.length;
+              if (!n) return;
+              if (!confirm('Delete ' + n + ' video' + (n === 1 ? '' : 's') + ' from "' + key + '"? Offline copies are removed too.')) return;
+              for (var i = 0; i < n; i++) {
+                try { await deleteRow(tab, groupRowsClosure[i].id); }
+                catch (er) { console.warn('[Minerva grid-group-rm]', er); }
+              }
+              if (refresh) await refresh();
+              flash(document.body, 'Deleted ' + n + ' video' + (n === 1 ? '' : 's') + '.');
+            }
+          });
+          rmAllBtn.appendChild(M.render.icon('trash-2'));
+          head.appendChild(rmAllBtn);
         }
         wrap.appendChild(head);
         if (!isCol) {
@@ -6425,6 +6450,32 @@
           });
           dlGroupBtn.appendChild(M.render.icon('download'));
           headTd.appendChild(dlGroupBtn);
+
+          // Per-group "delete all" — wipes every row in the playlist
+          // and any offline blobs they own. Always offered alongside
+          // the download-all action so list-view users can clean up
+          // a whole playlist without bulk-selecting.
+          var rmGroupBtn = el('button', {
+            type: 'button',
+            class: 'icon-btn row-group-rm',
+            title: 'Delete every row in "' + key + '" (and their offline copies)',
+            'aria-label': 'Delete playlist',
+            onclick: async function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              var n = groupRowsClosure.length;
+              if (!n) return;
+              if (!confirm('Delete ' + n + ' row' + (n === 1 ? '' : 's') + ' from "' + key + '"? Offline copies are removed too. Undoable until your next ' + UNDO_MAX + '-deep operation.')) return;
+              for (var i = 0; i < n; i++) {
+                try { await deleteRow(tab, groupRowsClosure[i].id); }
+                catch (er) { console.warn('[Minerva group-rm]', er); }
+              }
+              if (refresh) await refresh();
+              flash(document.body, 'Deleted ' + n + ' row' + (n === 1 ? '' : 's') + '.');
+            }
+          });
+          rmGroupBtn.appendChild(M.render.icon('trash-2'));
+          headTd.appendChild(rmGroupBtn);
         }
 
         var groupTr = el('tr', {

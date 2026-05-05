@@ -4909,6 +4909,10 @@ table.rows.rows-grouped tr.row-group-head td {
 }
 .icon-btn.row-group-dl:hover { color: var(--accent); }
 .icon-btn.row-group-dl svg { width: 0.95em; height: 0.95em; }
+.icon-btn.row-group-rm { color: var(--muted); }
+.icon-btn.row-group-rm:hover { color: var(--error); }
+.icon-btn.row-group-rm svg { width: 0.95em; height: 0.95em; }
+.icon-btn.tiles-group-rm:hover { color: var(--error); }
 
 /* offline download setup dialog */
 .offline-setup-panel {
