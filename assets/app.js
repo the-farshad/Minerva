@@ -7422,10 +7422,9 @@
     var cfg = readConfig();
     var st = M.auth ? M.auth.getState() : { hasToken: false, email: null };
 
-    var form = el('form', { class: 'form', onsubmit: function (e) {
-      e.preventDefault();
+    function collectFormConfig() {
       var f = new FormData(form);
-      writeConfig({
+      return {
         clientId:        String(f.get('clientId') || '').trim(),
         spreadsheetId:   String(f.get('spreadsheetId') || '').trim(),
         youtubeApiKey:   String(f.get('youtubeApiKey') || '').trim(),
@@ -7436,9 +7435,22 @@
         offlineQuality:  String(f.get('offlineQuality') || '720').trim(),
         uploadOfflineToDrive: f.get('uploadOfflineToDrive') === 'on',
         uploadPapersToDrive:  f.get('uploadPapersToDrive') === 'on'
-      });
-      flash(form, 'Saved locally.');
-    } },
+      };
+    }
+    var autoSaveTimer = null;
+    function scheduleAutoSave() {
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(function () {
+        autoSaveTimer = null;
+        writeConfig(collectFormConfig());
+      }, 500);
+    }
+    var form = el('form', { class: 'form', onsubmit: function (e) {
+      e.preventDefault();
+      if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+      writeConfig(collectFormConfig());
+      flash(form, 'Saved.');
+    }, oninput: scheduleAutoSave, onchange: scheduleAutoSave },
       field('Google OAuth Client ID',
         el('input', { name: 'clientId', type: 'text',
           placeholder: '123456789-abc.apps.googleusercontent.com',
