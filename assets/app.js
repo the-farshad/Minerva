@@ -63,6 +63,35 @@
     return next;
   }
 
+  // Recovery escape hatch: unregister every service worker, drop
+  // every Cache Storage entry, and hard-reload via location.replace
+  // with a cache-busting query. Reachable via the Diagnostics
+  // "Force update" button and via `Minerva.forceUpdate()` in the
+  // console. Used when an old build keeps running because the
+  // service worker is serving cached assets even after a refresh.
+  async function forceUpdateAll() {
+    try {
+      if (navigator.serviceWorker) {
+        var regs = await navigator.serviceWorker.getRegistrations();
+        for (var i = 0; i < regs.length; i++) {
+          try { await regs[i].unregister(); } catch (e) { /* ignore */ }
+        }
+      }
+      if (window.caches && caches.keys) {
+        var keys = await caches.keys();
+        for (var j = 0; j < keys.length; j++) {
+          try { await caches.delete(keys[j]); } catch (e) { /* ignore */ }
+        }
+      }
+    } catch (e) { /* best effort */ }
+    var url = location.origin + location.pathname
+      + '?_force=' + Date.now()
+      + (location.hash || '');
+    location.replace(url);
+  }
+  window.Minerva = window.Minerva || {};
+  window.Minerva.forceUpdate = forceUpdateAll;
+
   // ---- Drive-backed config sync ----
   // Persists everything except the OAuth Client ID (which has to be
   // entered locally before any API call can be made) to a single JSON
@@ -7772,10 +7801,20 @@
         el('div', { class: 'form-actions' },
           el('button', { class: 'btn btn-ghost', type: 'button',
             onclick: function () { void runDiag(); }
-          }, 'Run again')
+          }, 'Run again'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            title: 'Unregister the service worker, clear all caches, and hard-reload. Use when "Connect Google" or other features stop responding because an old build is still running.',
+            onclick: function () { void forceUpdate(); }
+          }, M.render.icon('refresh-cw'), ' Force update')
         )
       );
     }
+
+    // Defer to the global helper so the same flow is reachable from
+    // either the Diagnostics button or `Minerva.forceUpdate()` in the
+    // console (handy when something keeps the page from ever
+    // reaching Settings).
+    function forceUpdate() { return forceUpdateAll(); }
 
     function paintBookmarklet() {
       // The snippet runs on any web page: grabs title/URL/selection, encodes
