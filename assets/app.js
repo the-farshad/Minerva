@@ -5349,7 +5349,7 @@
         'data-row-id': row.id,
         onclick: function (e) {
           if (e.target.closest('button, input, a')) return;
-          location.hash = '#/r/' + encodeURIComponent(tab) + '/' + encodeURIComponent(row.id);
+          showRowDetail(tab, row.id);
         }
       });
       card.addEventListener('dragstart', function (e) {
@@ -5416,6 +5416,10 @@
           await M.db.upsertRow(tab, newRow);
           schedulePush();
           if (refresh) await refresh();
+          // Open the row detail so the user can type the title and
+          // fill the rest of the fields without hunting for the new
+          // empty card on the board.
+          showRowDetail(tab, newRow.id);
         }
       }, M.render.icon('plus'), ' Add card');
       column.appendChild(addBtn);
@@ -5954,7 +5958,7 @@
         if (url && window.Minerva && Minerva.preview) {
           Minerva.preview.show(url);
         } else {
-          location.hash = '#/r/' + encodeURIComponent(tab) + '/' + encodeURIComponent(r.id);
+          showRowDetail(tab, r.id);
         }
       });
       return tile;
