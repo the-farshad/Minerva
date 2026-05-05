@@ -375,6 +375,75 @@
     document.body.appendChild(overlay);
 
     var ytPlayer = null;
+    // Monotonic counter incremented at the start of each render() so
+    // an in-flight async blob lookup that resolves after the user
+    // already navigated to a different item is ignored.
+    var currentRenderEpoch = 0;
+    var blobVideoEl = null;
+    var blobObjectUrl = null;
+
+    function mountRemoteIframe(url, savedPage, resumeAt, isYt) {
+      cleanupBlobVideo();
+      var iframe = buildIframeForUrl(url, savedPage, resumeAt);
+      frameHost.appendChild(iframe);
+      if (isYt) {
+        loadYouTubeApi().then(function () {
+          if (!iframe.parentNode) return;
+          try { ytPlayer = new window.YT.Player(iframe, { events: {} }); }
+          catch (e) { /* iframe not ready yet, harmless */ }
+        });
+        var note = document.createElement('p');
+        note.className = 'small muted preview-yt-note';
+        var noteText = resumeAt > 0
+          ? ('Resuming at ' + Math.floor(resumeAt / 60) + ':' + String(resumeAt % 60).padStart(2, '0') + '. ')
+          : '';
+        note.textContent = noteText + 'Player shows "Error 153"? The video owner blocked embedding. Click "Watch on YouTube" above.';
+        frameHost.appendChild(note);
+      }
+    }
+
+    function mountBlobVideo(blob, sourceUrl, resumeAt) {
+      cleanupBlobVideo();
+      blobObjectUrl = URL.createObjectURL(blob);
+      var video = document.createElement('video');
+      video.className = 'preview-frame preview-blob-video';
+      video.src = blobObjectUrl;
+      video.controls = true;
+      video.autoplay = true;
+      video.style.width = '100%';
+      video.style.height = '100%';
+      if (resumeAt > 0) {
+        video.addEventListener('loadedmetadata', function () {
+          try { video.currentTime = resumeAt; } catch (e) {}
+        }, { once: true });
+      }
+      // Keep the saved time fresh so the next open resumes correctly.
+      video.addEventListener('timeupdate', function () {
+        try {
+          if (isFinite(video.currentTime) && video.currentTime > 1) {
+            writeVideoResume(sourceUrl, video.currentTime);
+          }
+        } catch (e) {}
+      });
+      blobVideoEl = video;
+      frameHost.appendChild(video);
+      var note = document.createElement('p');
+      note.className = 'small muted preview-yt-note';
+      note.textContent = 'Playing your locally-saved copy. Click "Watch on YouTube" above to open the original.';
+      frameHost.appendChild(note);
+    }
+
+    function cleanupBlobVideo() {
+      if (blobVideoEl) {
+        try { blobVideoEl.pause(); } catch (e) {}
+        blobVideoEl = null;
+      }
+      if (blobObjectUrl) {
+        try { URL.revokeObjectURL(blobObjectUrl); } catch (e) {}
+        blobObjectUrl = null;
+      }
+    }
+
     function render() {
       // Snapshot the previous URL's video position before mounting the
       // next iframe — switching to next/prev shouldn't lose progress.
@@ -423,23 +492,30 @@
 
       while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
       var resumeAt = isYt ? readVideoResume(url) : 0;
-      var iframe = buildIframeForUrl(url, savedPage, resumeAt);
-      frameHost.appendChild(iframe);
-      if (isYt) {
-        // Attach a YT.Player instance so close() can grab currentTime().
-        loadYouTubeApi().then(function () {
-          if (!iframe.parentNode) return; // re-rendered already
-          try {
-            ytPlayer = new window.YT.Player(iframe, { events: {} });
-          } catch (e) { /* iframe might not be ready; harmless */ }
+
+      // Offline-first: when the section registered an offline lookup
+      // and a blob exists for this URL, mount a native <video> element
+      // sourced from the blob and skip the YouTube iframe entirely.
+      // Avoids the embedding "Error 153" path for owner-blocked videos.
+      var renderEpoch = ++currentRenderEpoch;
+      var hit = null;
+      if (isYt && offlineLookup) {
+        try { hit = offlineLookup(url); } catch (e) { hit = null; }
+      }
+      if (hit && hit.tab && hit.rowId && window.Minerva && Minerva.db && Minerva.db.getVideo) {
+        Minerva.db.getVideo(hit.tab, hit.rowId).then(function (rec) {
+          if (renderEpoch !== currentRenderEpoch) return;
+          if (rec && rec.blob) {
+            mountBlobVideo(rec.blob, url, resumeAt);
+          } else {
+            mountRemoteIframe(url, savedPage, resumeAt, isYt);
+          }
+        }).catch(function () {
+          if (renderEpoch !== currentRenderEpoch) return;
+          mountRemoteIframe(url, savedPage, resumeAt, isYt);
         });
-        var note = document.createElement('p');
-        note.className = 'small muted preview-yt-note';
-        var noteText = resumeAt > 0
-          ? ('Resuming at ' + Math.floor(resumeAt / 60) + ':' + String(resumeAt % 60).padStart(2, '0') + '. ')
-          : '';
-        note.textContent = noteText + 'Player shows "Error 153"? The video owner blocked embedding. Click "Watch on YouTube" above.';
-        frameHost.appendChild(note);
+      } else {
+        mountRemoteIframe(url, savedPage, resumeAt, isYt);
       }
       // Notify any listener that a URL is being played — the section view
       // uses this to auto-mark a matching row as watched. Delayed so a
@@ -482,6 +558,7 @@
 
     function close() {
       captureVideoResume();
+      cleanupBlobVideo();
       clearWatchTimer();
       try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
       overlay.remove();
@@ -511,32 +588,9 @@
   }
 
   function show(url) {
-    // Offline-first: when the section has a registered offline lookup
-    // and the requested URL has a cached blob, play the local copy
-    // instead of fetching the remote iframe. Falls through to the
-    // normal iframe modal when no blob exists (or the lookup is
-    // missing / errors).
-    if (offlineLookup && window.Minerva && Minerva.db && Minerva.db.getVideo) {
-      try {
-        var hit = offlineLookup(url);
-        if (hit && hit.tab && hit.rowId) {
-          Minerva.db.getVideo(hit.tab, hit.rowId).then(function (rec) {
-            if (rec && rec.blob) {
-              showVideoBlob({
-                url: URL.createObjectURL(rec.blob),
-                title: hit.title || '',
-                sourceUrl: url
-              });
-            } else {
-              openModal([{ title: '', url: url }], 0);
-            }
-          }).catch(function () {
-            openModal([{ title: '', url: url }], 0);
-          });
-          return;
-        }
-      } catch (e) { /* fall through */ }
-    }
+    // openModal now handles the offline-first path itself, so the
+    // single-URL entry point is a thin wrapper. Keeping the function
+    // for back-compat with callers around the codebase.
     openModal([{ title: '', url: url }], 0);
   }
 
