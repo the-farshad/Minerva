@@ -318,10 +318,41 @@
     var id = 'f-' + Math.random().toString(36).slice(2, 8);
     input.id = id;
     return el('div', { class: 'field' },
-      el('label', { for: id }, label),
+      el('label', { for: id }, label, hint ? renderHintToggle(hint) : null),
       input,
-      hint ? el('p', { class: 'hint' }, hint) : null
+      hint ? renderHintBody(hint) : null
     );
+  }
+
+  // Collapsible hint pattern. The label gets an inline (i) button; the
+  // hint paragraph below it stays hidden until clicked. Same DOM tree
+  // for every field, no <details> tag because some hints contain
+  // interactive controls (links, buttons) that swallow the disclosure
+  // event when nested inside <summary>.
+  function renderHintToggle(hint) {
+    var btn = el('button', {
+      type: 'button',
+      class: 'field-hint-toggle',
+      title: 'What does this do?',
+      'aria-label': 'Show help',
+      'aria-expanded': 'false',
+      onclick: function (e) {
+        e.preventDefault();
+        var fld = btn.closest('.field');
+        if (!fld) return;
+        var body = fld.querySelector('.field-hint-body');
+        if (!body) return;
+        var open = body.hasAttribute('hidden') ? false : true;
+        if (open) { body.setAttribute('hidden', ''); btn.setAttribute('aria-expanded', 'false'); }
+        else { body.removeAttribute('hidden'); btn.setAttribute('aria-expanded', 'true'); }
+      }
+    });
+    var icon = M.render && M.render.icon ? M.render.icon('info') : document.createTextNode('ⓘ');
+    btn.appendChild(icon);
+    return btn;
+  }
+  function renderHintBody(hint) {
+    return el('div', { class: 'hint field-hint-body', hidden: '' }, hint);
   }
 
   // Variant of field() that pairs the input with a Test button and a
@@ -421,10 +452,10 @@
       setTimeout(function () { attachStatusPill(pill, input.value.trim(), opts.healthPath); }, 0);
     }
     return el('div', { class: 'field' },
-      el('label', { for: id }, label),
+      el('label', { for: id }, label, hint ? renderHintToggle(hint) : null),
       row,
       status,
-      hint ? el('p', { class: 'hint' }, hint) : null
+      hint ? renderHintBody(hint) : null
     );
   }
 

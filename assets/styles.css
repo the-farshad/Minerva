@@ -521,6 +521,35 @@ button.btn {
   font-family: var(--font);
 }
 .hint { margin: 0; font-size: 0.82rem; color: var(--muted); }
+.field label { display: inline-flex; align-items: center; gap: 0.35rem; }
+.field-hint-toggle {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0 0.15rem;
+  margin: 0;
+  cursor: help;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  width: 1.15rem;
+  height: 1.15rem;
+}
+.field-hint-toggle:hover { color: var(--accent); background: var(--surface); }
+.field-hint-toggle[aria-expanded="true"] { color: var(--accent); }
+.field-hint-toggle svg { width: 0.95em; height: 0.95em; }
+.field-hint-body {
+  margin-top: 0.35rem;
+  padding: 0.45rem 0.6rem;
+  border-left: 2px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
 .field-test-row {
   display: flex;
   gap: 0.5rem;
