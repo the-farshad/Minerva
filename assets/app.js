@@ -7492,7 +7492,30 @@
       var c = readConfig();
       var state = M.auth ? M.auth.getState() : { hasToken: false, email: null };
       var ok = state.hasToken && c.spreadsheetId;
-      status.replaceChildren(
+      // Build the children list and filter out nullish entries before
+      // handing them to replaceChildren — the native DOM API
+      // stringifies non-Node values, so a `null` would render as the
+      // literal text "null".
+      var actions = el('div', { class: 'form-actions' });
+      var actionKids = [
+        ok
+          ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () {
+              if (confirm('Sign out? Your spreadsheet is not affected.')) {
+                M.auth.signOut();
+                paintStatus();
+                paintLocal();
+              }
+            } }, 'Disconnect')
+          : el('button', { class: 'btn', type: 'button',
+              disabled: !c.clientId,
+              onclick: function () { void connect(); }
+            }, 'Connect Google'),
+        ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void syncNow(); } }, 'Sync now') : null,
+        ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void connect(); } }, 'Re-run bootstrap') : null
+      ];
+      actionKids.filter(Boolean).forEach(function (k) { actions.appendChild(k); });
+
+      var statusKids = [
         el('h3', null, 'Connection'),
         ok
           ? el('p', null,
@@ -7507,23 +7530,9 @@
         stage && stageLabels[stage]
           ? el('p', { class: 'small muted' }, stageLabels[stage])
           : null,
-        el('div', { class: 'form-actions' },
-          ok
-            ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () {
-                if (confirm('Sign out? Your spreadsheet is not affected.')) {
-                  M.auth.signOut();
-                  paintStatus();
-                  paintLocal();
-                }
-              } }, 'Disconnect')
-            : el('button', { class: 'btn', type: 'button',
-                disabled: !c.clientId,
-                onclick: function () { void connect(); }
-              }, 'Connect Google'),
-          ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void syncNow(); } }, 'Sync now') : null,
-          ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void connect(); } }, 'Re-run bootstrap') : null
-        )
-      );
+        actions
+      ];
+      status.replaceChildren.apply(status, statusKids.filter(Boolean));
     }
 
     function fmtRel(ts) {
