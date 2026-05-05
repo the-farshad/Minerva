@@ -7289,7 +7289,7 @@
     }
   }
 
-  function viewSettings() {
+  function viewSettings(subId) {
     var cfg = readConfig();
     var st = M.auth ? M.auth.getState() : { hasToken: false, email: null };
 
@@ -8285,33 +8285,34 @@
     connectionPanel.appendChild(form);
     connectionPanel.appendChild(status);
 
+    // Each section is its own subroute — only one section's content
+    // shows at a time. The sidebar's role is navigation, not summary.
+    // `id` becomes the trailing path segment in #/settings/<id>.
     var sections = [
-      { id: 'settings-connection', label: 'Connection',  content: connectionPanel },
-      { id: 'settings-store',      label: 'Local store', content: localPanel },
-      { id: 'settings-sections',   label: 'Add a section', content: presetsPanel },
-      { id: 'settings-notify',     label: 'Notifications', content: notifyPanel },
-      { id: 'settings-ical',       label: 'Calendar feed', content: icalPanel },
-      { id: 'settings-telegram',   label: 'Telegram bot',  content: tgPanel },
-      { id: 'settings-ai',         label: 'AI assistant',  content: aiPanel },
-      { id: 'settings-bookmarklet', label: 'Bookmarklet',  content: bookmarkletPanel },
-      { id: 'settings-theme',      label: 'Custom theme',  content: themePanel },
-      { id: 'settings-diag',       label: 'Diagnostics',   content: diagPanel }
+      { id: 'connection', label: 'Connection',    content: connectionPanel, primary: true },
+      { id: 'store',      label: 'Local store',   content: localPanel },
+      { id: 'add',        label: 'Add a section', content: presetsPanel },
+      { id: 'notify',     label: 'Notifications', content: notifyPanel },
+      { id: 'ical',       label: 'Calendar feed', content: icalPanel },
+      { id: 'telegram',   label: 'Telegram bot',  content: tgPanel },
+      { id: 'ai',         label: 'AI assistant',  content: aiPanel },
+      { id: 'bookmarklet', label: 'Bookmarklet',  content: bookmarkletPanel },
+      { id: 'theme',      label: 'Custom theme',  content: themePanel },
+      { id: 'diag',       label: 'Diagnostics',   content: diagPanel }
     ];
+
+    // Resolve the active section from the subroute. Default to the
+    // first section when no subId or an unknown id was passed.
+    var activeId = subId || sections[0].id;
+    var active = sections.find(function (s) { return s.id === activeId; });
+    if (!active) { activeId = sections[0].id; active = sections[0]; }
 
     var toc = el('aside', { class: 'settings-toc', 'aria-label': 'Settings sections' });
     var tocList = el('ul');
     sections.forEach(function (s) {
       var a = el('a', {
-        href: '#' + s.id,
-        onclick: function (e) {
-          e.preventDefault();
-          var t = document.getElementById(s.id);
-          if (t) {
-            t.open = true;
-            t.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
-          history.replaceState(null, '', '#/settings');
-        }
+        href: '#/settings/' + s.id,
+        class: s.id === activeId ? 'is-active' : ''
       }, s.label);
       tocList.appendChild(el('li', null, a));
     });
@@ -8319,11 +8320,12 @@
     toc.appendChild(tocList);
 
     var body = el('div', { class: 'settings-body' });
-    sections.forEach(function (s, idx) {
-      // Connection panel opens by default; everything else stays collapsed
-      // so the Settings page is a list of section headers on first load.
-      body.appendChild(panel(s.id, s.label, s.content, idx === 0));
-    });
+    var pane = el('section', { class: 'settings-section settings-section-active' },
+      el('h3', { class: 'settings-section-title' }, active.label)
+    );
+    if (Array.isArray(active.content)) active.content.forEach(function (c) { if (c) pane.appendChild(c); });
+    else if (active.content) pane.appendChild(active.content);
+    body.appendChild(pane);
 
     return el('section', { class: 'view view-settings' },
       el('div', { class: 'settings-head' },
@@ -8331,11 +8333,16 @@
         renderVersionBadge()
       ),
       renderAuthErrorBanner(),
-      el('p', { class: 'lead' },
-        'Minerva keeps no secrets in its repo. The OAuth client is yours; remembered in this browser. ',
-        el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough')
-      ),
-      renderSetupChecklist(cfg),
+      // The lead + setup checklist only render on the first (default)
+      // section; deeper pages skip them so the user sees just what
+      // they navigated to.
+      activeId === sections[0].id
+        ? el('p', { class: 'lead' },
+            'Minerva keeps no secrets in its repo. The OAuth client is yours; remembered in this browser. ',
+            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough')
+          )
+        : null,
+      activeId === sections[0].id ? renderSetupChecklist(cfg) : null,
       el('div', { class: 'settings-layout' },
         toc,
         body
@@ -8714,8 +8721,9 @@
     try {
       if (hash === '#/' || hash === '' || hash === '#') {
         view = await viewHome(); active = '#/';
-      } else if (hash === '#/settings') {
-        view = viewSettings(); active = '#/settings';
+      } else if (hash === '#/settings' || /^#\/settings\//.test(hash)) {
+        var subId = hash === '#/settings' ? '' : hash.replace(/^#\/settings\//, '');
+        view = viewSettings(subId); active = '#/settings';
       } else if (/^#\/share(\/.*)?$/.test(hash)) {
         view = viewShare(); active = '#/share';
       } else if (/^#\/p\/.+/.test(hash)) {
