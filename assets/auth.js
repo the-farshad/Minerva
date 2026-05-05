@@ -128,7 +128,13 @@
   var REDIR_KEY = 'minerva.auth.pkce.v1';
 
   function redirectUri() {
-    return location.origin + location.pathname;
+    // Google's redirect_uri match is byte-exact: `https://x.com` and
+    // `https://x.com/` are not equal. Root deploys send origin only
+    // so an OAuth client entry without a trailing slash matches.
+    // Subpath deploys keep the path verbatim.
+    var path = location.pathname || '/';
+    if (path === '/') return location.origin;
+    return location.origin + path.replace(/\/+$/, '');
   }
 
   function randomVerifier() {
