@@ -177,14 +177,64 @@
     var sheetId = meta && meta.sheetId;
     var anyDelete = false;
 
-    for (var i = 0; i < dirty.length; i++) {
-      var row = dirty[i];
+    // Group dirty rows by operation so deletes can be sorted before
+    // execution. Multi-row deletes that hit Sheets one-by-one in the
+    // original (ascending) order corrupt the sheet because each
+    // deleteDimension shifts the rows below it up by one — the next
+    // _rowIndex was captured before that shift, so the second delete
+    // hits the wrong row. Run deletes from the bottom up, in a single
+    // batchUpdate, so every index in the request is still valid when
+    // the server applies it (server processes in array order, top to
+    // bottom; descending start indices stay correct because nothing
+    // below the current target moves).
+    var deletes = [];
+    var upserts = [];
+    for (var di = 0; di < dirty.length; di++) {
+      var dr = dirty[di];
+      if (dr._deleted) deletes.push(dr); else upserts.push(dr);
+    }
+    deletes.sort(function (a, b) { return (b._rowIndex || 0) - (a._rowIndex || 0); });
+
+    // First: drop any deletes that never made it to the sheet
+    // (purely local rows). They're the cheap case — no API call.
+    var sheetDeletes = [];
+    for (var ddi = 0; ddi < deletes.length; ddi++) {
+      var ddrow = deletes[ddi];
+      if (ddrow._localOnly || !ddrow._rowIndex) {
+        await Minerva.db.deleteRow(tab, ddrow.id);
+      } else if (sheetId != null) {
+        sheetDeletes.push(ddrow);
+      }
+    }
+    if (sheetDeletes.length && sheetId != null) {
+      var requests = sheetDeletes.map(function (r) {
+        return {
+          deleteDimension: {
+            range: {
+              sheetId: sheetId,
+              dimension: 'ROWS',
+              startIndex: r._rowIndex - 1,
+              endIndex: r._rowIndex
+            }
+          }
+        };
+      });
+      await Minerva.sheets.batchUpdate(token, ssId, requests);
+      for (var sdi = 0; sdi < sheetDeletes.length; sdi++) {
+        await Minerva.db.deleteRow(tab, sheetDeletes[sdi].id);
+      }
+      anyDelete = true;
+    }
+
+    // Now run the upserts (creates + edits). Deletes already done.
+    for (var ui = 0; ui < upserts.length; ui++) {
+      var row = upserts[ui];
 
       // Flush any pending drawings for this row first — the multipart upload
       // produces fileIds that need to land in row cells before we PUT the
       // row's values to Sheets. If a drawing's upload fails, leave the row
       // dirty and skip it for now; the next push retries.
-      if (!row._deleted && Minerva.draw && Minerva.draw.flushPending) {
+      if (Minerva.draw && Minerva.draw.flushPending) {
         try {
           await Minerva.draw.flushPending(tab, row.id, token);
           // Re-read the row in case flushPending wrote a fileId into a cell.
@@ -201,29 +251,8 @@
       // a different device) the cell still reads 'pending' but flushPending
       // had nothing to upload. Skip the row rather than committing the bad
       // sentinel — user can re-edit the sketch to recover.
-      if (!row._deleted && hasPendingSketch(row)) {
+      if (hasPendingSketch(row)) {
         console.warn('[Minerva draw] row carries pending sentinel with no local drawing; skipping push', tab, row.id);
-        continue;
-      }
-
-      if (row._deleted) {
-        if (row._localOnly || !row._rowIndex) {
-          // never reached the sheet — just drop it locally.
-          await Minerva.db.deleteRow(tab, row.id);
-        } else if (sheetId != null) {
-          await Minerva.sheets.batchUpdate(token, ssId, [{
-            deleteDimension: {
-              range: {
-                sheetId: sheetId,
-                dimension: 'ROWS',
-                startIndex: row._rowIndex - 1,
-                endIndex: row._rowIndex
-              }
-            }
-          }]);
-          await Minerva.db.deleteRow(tab, row.id);
-          anyDelete = true;
-        }
         continue;
       }
 
