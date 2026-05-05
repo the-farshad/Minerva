@@ -215,31 +215,25 @@ def proxy():
 
     try:
         if request.method == "GET":
-            up = requests.get(decoded, headers=fwd, stream=True, timeout=30)
+            up = requests.get(decoded, headers=fwd, timeout=30)
         else:
             up = requests.post(
-                decoded, headers=fwd, data=request.get_data(),
-                stream=True, timeout=30,
+                decoded, headers=fwd, data=request.get_data(), timeout=30,
             )
     except requests.RequestException as exc:
         return (f"Upstream fetch failed: {exc}", 502, _cors_dict())
 
-    # `requests` transparently decompresses gzip/deflate responses
-    # when streaming, so the bytes flowing out of iter_content() do
-    # not match the upstream Content-Length and the original
-    # Content-Encoding no longer applies. Forward only headers that
-    # stay accurate after decompression — letting the browser see a
-    # chunked unknown-length response is fine.
+    # Materialize the body before responding. `up.content` is the
+    # fully-decompressed payload; pairing it with the matching length
+    # avoids any chunked / Content-Length mismatch that the streaming
+    # path could surface depending on the upstream's headers.
+    body = up.content
     out = dict(_cors_dict())
-    for h in ("Content-Type", "Cache-Control"):
-        if h in up.headers:
-            out[h] = up.headers[h]
+    if "Content-Type" in up.headers:
+        out["Content-Type"] = up.headers["Content-Type"]
+    out["Content-Length"] = str(len(body))
 
-    return Response(
-        up.iter_content(chunk_size=8192),
-        status=up.status_code,
-        headers=out,
-    )
+    return Response(body, status=up.status_code, headers=out)
 
 
 # ---------- meta endpoints ------------------------------------------------
