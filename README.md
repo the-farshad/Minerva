@@ -67,6 +67,7 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 - **PWA** — installable from your browser's *Install* / *Add to Home Screen*, with a service worker that caches the static shell. Read your data offline; edits queue and flush automatically when you reconnect.
 - **Undo** — `⌘/Ctrl+Z` reverses the last edit / add / delete (50-deep stack in `localStorage`).
 - **Per-row offline video** — a Download button on every YouTube row. Wire it to a tiny local **helper service** (see [`docs/setup-local-services.md`](docs/setup-local-services.md)) — one Python script (or one Docker container) that runs yt-dlp downloads + a CORS proxy from the same process — for one-click downloads with a progress bar, or to a [Cobalt](https://github.com/imputnet/cobalt) instance, or upload a file you already have. Saved videos live in IndexedDB; the row gets a **Watch offline** button that plays the local copy with resume-where-you-left-off.
+   - Prebuilt image on Docker Hub: `docker run -d --name minerva-services --restart unless-stopped -p 8765:8765 thefarshad/minerva-services:latest`. Paste `http://localhost:8765` and `http://localhost:8765/proxy?` into Settings.
 
 ### YouTube tracker
 - **Tiles view** — visual card grid grouped by playlist or category, with thumbnails. Toggle from the section header.

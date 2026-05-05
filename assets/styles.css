@@ -695,6 +695,17 @@ button.btn {
 }
 .docker-tip h4 svg { width: 1em; height: 1em; }
 .docker-tip p { margin: 0; }
+.docker-tip-cmd {
+  margin: 0.4rem 0;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 0.78rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  color: var(--fg);
+}
 .form-actions {
   display: flex;
   gap: 0.6rem;

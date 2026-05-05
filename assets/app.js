@@ -532,7 +532,17 @@
           var ok = await testFn(input.value.trim());
           status.classList.add('is-ok');
           status.textContent = '✓ ' + (ok || 'OK');
-          attachStatusPill(pill, input.value.trim(), opts.healthPath);
+          // Reflect the successful test on the pill directly. Re-running
+          // attachStatusPill here would issue a separate /health probe
+          // that some endpoints (e.g. corsproxy.io) don't support, so
+          // a green Test could flip back to "offline" a second later.
+          if (opts.healthPath === false) {
+            pill.className = 'svc-pill is-ok';
+            pill.textContent = 'online';
+            pill.title = 'Last test passed';
+          } else {
+            attachStatusPill(pill, input.value.trim(), opts.healthPath);
+          }
         } catch (err) {
           status.classList.add('is-err');
           status.textContent = '✗ ' + (err && err.message || err);
@@ -7443,13 +7453,19 @@
       el('div', { class: 'docker-tip' },
         el('h4', null, M.render.icon('container'), ' Prefer Docker?'),
         el('p', { class: 'small' },
-          'A ready-made image and compose file ship in ',
-          el('code', null, 'docs/'),
-          '. Run ',
-          el('code', null, 'docker compose up -d'),
-          ' from there to start both services on port 8765, then paste the URLs into the fields below. ',
+          'Run the prebuilt image — no checkout, no Python:'
+        ),
+        el('pre', { class: 'docker-tip-cmd' },
+          'docker run -d --name minerva-services --restart unless-stopped \\\n  -p 8765:8765 thefarshad/minerva-services:latest'
+        ),
+        el('p', { class: 'small' },
+          'Then paste ',
+          el('code', null, 'http://localhost:8765'),
+          ' into yt-dlp server and ',
+          el('code', null, 'http://localhost:8765/proxy?'),
+          ' into CORS proxy below. ',
           el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-local-services.md',
-            target: '_blank', rel: 'noopener' }, 'Full Docker / systemd / launchd guide'),
+            target: '_blank', rel: 'noopener' }, 'Full guide (compose, systemd, launchd, build-from-source)'),
           '.'
         )
       ),
