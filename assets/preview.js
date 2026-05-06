@@ -984,12 +984,20 @@
     head.className = 'extract-head';
     var title = document.createElement('strong');
     title.textContent = 'Extracted PDF data';
+    var status = document.createElement('span');
+    status.className = 'extract-status small muted';
+    var saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'btn';
+    saveBtn.textContent = 'Save to notes';
     var closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'btn btn-ghost';
     closeBtn.textContent = 'Close';
     closeBtn.addEventListener('click', function () { overlay.remove(); });
     head.appendChild(title);
+    head.appendChild(status);
+    head.appendChild(saveBtn);
     head.appendChild(closeBtn);
     var body = document.createElement('pre');
     body.className = 'extract-body';
@@ -1011,6 +1019,37 @@
     panel.appendChild(body);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
+
+    // Wire Save → notes column. We need both the saver (to write back)
+    // and the provider (to read existing notes so we append rather than
+    // clobber). When either is missing, hide the button.
+    if (!notesSaver || !notesProvider) {
+      saveBtn.style.display = 'none';
+      return;
+    }
+    saveBtn.addEventListener('click', async function () {
+      saveBtn.disabled = true;
+      var origLabel = saveBtn.textContent;
+      saveBtn.textContent = 'Saving…';
+      try {
+        var existing = '';
+        try { existing = (await notesProvider(url)) || ''; } catch (e) { /* tolerate */ }
+        var stamp = new Date().toISOString().slice(0, 10);
+        var section = '## Extracted (' + stamp + ')\n\n' + text + '\n';
+        var merged = existing
+          ? (existing.replace(/\s+$/, '') + '\n\n' + section)
+          : section;
+        await notesSaver(url, merged);
+        status.textContent = 'Saved to notes';
+        status.classList.add('is-saved');
+        setTimeout(function () { overlay.remove(); }, 700);
+      } catch (e) {
+        status.textContent = 'Save failed: ' + (e && e.message || e);
+        status.classList.add('is-error');
+        saveBtn.disabled = false;
+        saveBtn.textContent = origLabel;
+      }
+    });
   }
   // Open the row's Drive mirror in a new tab if the offline lookup
   // resolves a driveFileId for this URL. Returns true when handled,

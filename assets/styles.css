@@ -5214,10 +5214,14 @@ table.rows.rows-grouped tr.row-group-head td {
 .extract-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.5rem;
   padding: 0.6rem 0.9rem;
   border-bottom: 1px solid var(--border);
 }
+.extract-head strong { margin-right: auto; }
+.extract-status { margin-right: 0.5rem; }
+.extract-status.is-saved { color: var(--ok, #2c8c3e); }
+.extract-status.is-error { color: var(--error, #c0392b); }
 .extract-body {
   flex: 1 1 auto;
   margin: 0;
