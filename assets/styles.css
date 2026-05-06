@@ -2112,14 +2112,14 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 }
 .tile-action:hover { background: var(--accent); }
 .tile-action svg { width: 1em; height: 1em; }
-/* Cached / downloaded indicators on grid cards. The previous styling
-   used heavy solid greens / blues that fought with the rest of the
-   theme; switch to a translucent dark base with a thin accent ring
-   so the action is recognisable but doesn't dominate the thumbnail. */
-.tile-watch { background: rgba(0, 0, 0, 0.55); box-shadow: 0 0 0 1px var(--ok, #2c8c3e); color: #fff; }
-.tile-watch:hover { background: var(--ok, #2c8c3e); box-shadow: 0 0 0 1px var(--ok, #2c8c3e); }
-.tile-drive { background: rgba(0, 0, 0, 0.55); box-shadow: 0 0 0 1px var(--accent); color: #fff; }
-.tile-drive:hover { background: var(--accent); }
+/* Cached / downloaded indicators on grid cards. Solid fills so the
+   "this row has an offline copy" signal reads at a glance — translucent
+   base on these buttons made the watch / drive actions disappear into
+   the thumbnail. */
+.tile-watch { background: var(--ok, #2c8c3e); color: #fff; }
+.tile-watch:hover { background: var(--ok, #2c8c3e); filter: brightness(1.08); }
+.tile-drive { background: var(--accent); color: #fff; }
+.tile-drive:hover { background: var(--accent); filter: brightness(1.08); }
 .tile-remove:hover { background: var(--error); }
 /* When the row has an offline copy, the whole tile gets a subtle
    accent corner badge instead of an inset border running the full
