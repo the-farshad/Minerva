@@ -1118,7 +1118,7 @@ def _cmd_up(browser):
     else:
         print("[minerva] step 4/5: skipping timer (MINERVA_NO_TIMER=1).")
 
-    print("[minerva] step 5/5: pulling latest image and starting the stack…")
+    print("[minerva] step 5/8: pulling latest image and starting the stack…")
     try:
         subprocess.run(["docker", "compose", "pull"], cwd=here, check=False)
     except Exception as exc:  # noqa: BLE001
@@ -1135,9 +1135,85 @@ def _cmd_up(browser):
         print(f"[minerva] docker compose up failed: {exc}", file=sys.stderr)
         return exc.returncode or 1
 
+    print("[minerva] step 6/8: waiting for container to be ready…")
+    if not _wait_for_health("http://127.0.0.1:8765/health", timeout=60):
+        print("[minerva] container didn't report healthy in 60s; continuing anyway.", file=sys.stderr)
+
+    print("[minerva] step 7/8: upgrading yt-dlp inside the container…")
+    # YouTube's anti-bot logic moves faster than published images. Force
+    # the freshest yt-dlp into the running container so first-use isn't
+    # gambling on whatever shipped in the image. Idempotent — pip exits
+    # quickly when nothing's to upgrade.
+    try:
+        subprocess.run(
+            ["docker", "exec", "minerva-services",
+             "pip", "install", "--upgrade", "--no-cache-dir", "--quiet", "yt-dlp"],
+            check=False, timeout=120,
+        )
+        subprocess.run(["docker", "restart", "minerva-services"],
+                       check=False, stdout=subprocess.DEVNULL)
+        # Restart triggers another health probe; give the container a beat.
+        _wait_for_health("http://127.0.0.1:8765/health", timeout=60)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[minerva] yt-dlp upgrade in-container skipped: {exc}", file=sys.stderr)
+
+    print("[minerva] step 8/8: verifying cookies file has YouTube entries…")
+    yt_count = _count_youtube_cookies(cookies_file)
+    if yt_count == 0 and cookies_file.stat().st_size > 0:
+        print(
+            "[minerva] heads-up: cookies.txt is populated but contains 0 cookies for\n"
+            "          youtube.com domains. Open Firefox → youtube.com → confirm you're\n"
+            "          signed in (the home feed should show your channel) → re-run\n"
+            "          `python3 minerva-services.py refresh-cookies firefox`. Until\n"
+            "          then yt-dlp will keep hitting the bot wall on gated videos.",
+            file=sys.stderr,
+        )
+    elif yt_count == 0:
+        print("[minerva] no cookies dumped — gated YouTube videos will fail to download.",
+              file=sys.stderr)
+    else:
+        print(f"[minerva] {yt_count} YouTube cookies present.")
+
     subprocess.run(["docker", "compose", "ps"], cwd=here, check=False)
     print("\n[minerva] ready: http://localhost:8765/")
     return 0
+
+
+def _wait_for_health(url, timeout=60):
+    """Poll until a GET on `url` returns 2xx, or `timeout` seconds elapse."""
+    import time
+    import urllib.request
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:
+                if 200 <= r.status < 300:
+                    return True
+        except Exception:
+            pass
+        time.sleep(1.5)
+    return False
+
+
+def _count_youtube_cookies(path):
+    """Return the number of YouTube-domain cookies in a Netscape file.
+    Zero means: the file exists but the browser hasn't set any
+    google.com / youtube.com cookies — usually because the user hasn't
+    actually visited youtube.com signed in recently."""
+    try:
+        if not path.is_file() or path.stat().st_size == 0:
+            return 0
+        n = 0
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("#") or not line.strip():
+                    continue
+                domain = line.split("\t", 1)[0].lower()
+                if "youtube.com" in domain or "google.com" in domain:
+                    n += 1
+        return n
+    except Exception:
+        return 0
 
 
 def _cmd_down():
