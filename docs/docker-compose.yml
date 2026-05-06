@@ -39,10 +39,14 @@ services:
       start_period: 5s
 
   minerva-services:
+    # Two ways to run this image:
+    #   1. Pull the published build:  docker compose pull && docker compose up -d
+    #   2. Build from your checkout:   docker compose up -d --build
+    # The image: name has to match the Docker Hub repo so (1) works.
     build:
       context: .
       dockerfile: Dockerfile
-    image: minerva-services:latest
+    image: thefarshad/minerva-services:latest
     container_name: minerva-services
     restart: unless-stopped
     depends_on:
