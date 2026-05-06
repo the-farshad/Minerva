@@ -3539,6 +3539,11 @@
       { name: 'pages',    type: 'text', before: 'url' },
       { name: 'doi',      type: 'text', before: 'url' },
       { name: 'pdf',      type: 'link', before: 'read' },
+      // Mirrors the youtube `offline` breadcrumb. Carries
+      // drive:<fileId> when the paper PDF has been uploaded to Drive,
+      // so preview.js can mount the Drive viewer instead of the live
+      // arXiv URL (arxiv blocks iframe embedding).
+      { name: 'offline',  type: 'text', before: 'read' },
       { name: 'abstract', type: 'markdown', before: 'read' },
       { name: 'category', type: 'multiselect(method,review,dataset,benchmark,position,survey,theory,application,other)', before: 'read' },
       { name: 'tags',     type: 'multiselect()', before: 'read' }
@@ -9887,8 +9892,27 @@
         if (readConfig().uploadPapersToDrive
             && fetched.kind === 'paper' && fetched.pdf) {
           uploadPaperPdfToDrive(fetched.pdf, fetched.title || row.id)
-            .then(function (fid) {
-              if (fid) flash(document.body, 'PDF saved to Drive (' + fid + ').');
+            .then(async function (fid) {
+              if (!fid) return;
+              // Record the Drive fileId on the row so preview.js can
+              // mount the Drive viewer instead of the arXiv URL (which
+              // arxiv refuses to allow inside an iframe). Re-read the
+              // row to avoid clobbering any edits made between save
+              // and upload completion.
+              try {
+                var meta2 = await M.db.getMeta(tab);
+                if (meta2 && (meta2.headers || []).indexOf('offline') >= 0) {
+                  var fresh = await M.db.getRow(tab, row.id);
+                  if (fresh) {
+                    fresh.offline = 'drive:' + fid;
+                    fresh._dirty = 1;
+                    fresh._updated = new Date().toISOString();
+                    await M.db.upsertRow(tab, fresh);
+                    schedulePush();
+                  }
+                }
+              } catch (e) { /* non-fatal */ }
+              flash(document.body, 'PDF saved to Drive.');
             })
             .catch(function (err) {
               flash(document.body, 'Drive upload skipped: ' + (err && err.message || err), 'error');

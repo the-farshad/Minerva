@@ -84,8 +84,8 @@
       icon: 'file-text',
       description: 'Research papers — auto-fetches title, authors, year, venue, DOI, abstract, PDF link from arXiv or any DOI. Add an arXiv id, DOI, or paper URL and Minerva fills the rest.',
       schema: {
-        headers: ['id','title','authors','year','venue','volume','pages','doi','url','pdf','abstract','category','tags','read','notes','_updated'],
-        types:   ['text','text','text','number','text','text','text','text','link','link','markdown','multiselect(method,review,dataset,benchmark,position,survey,theory,application,other)','multiselect()','check','markdown','datetime']
+        headers: ['id','title','authors','year','venue','volume','pages','doi','url','pdf','offline','abstract','category','tags','read','notes','_updated'],
+        types:   ['text','text','text','number','text','text','text','text','link','link','text','markdown','multiselect(method,review,dataset,benchmark,position,survey,theory,application,other)','multiselect()','check','markdown','datetime']
       }
     },
     {

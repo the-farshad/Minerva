@@ -493,16 +493,17 @@
       while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
       var resumeAt = isYt ? readVideoResume(url) : 0;
 
-      // Offline-first: when the section registered an offline lookup
-      // and a blob exists for this URL, mount a native <video> element
-      // sourced from the blob and skip the YouTube iframe entirely.
-      // Avoids the embedding "Error 153" path for owner-blocked videos.
+      // Offline-first lookup. Both YouTube and PDF rows may have a
+      // Drive-mirrored copy whose breadcrumb (drive:<fileId>) was
+      // attached to the row. For YouTube we prefer the local IDB blob
+      // when present; for PDFs we route the iframe at Drive's preview
+      // host, which (unlike arxiv.org) allows third-party embedding.
       var renderEpoch = ++currentRenderEpoch;
       var hit = null;
-      if (isYt && offlineLookup) {
+      if (offlineLookup && (isYt || isPdfNow)) {
         try { hit = offlineLookup(url); } catch (e) { hit = null; }
       }
-      if (hit && hit.tab && hit.rowId && window.Minerva && Minerva.db && Minerva.db.getVideo) {
+      if (isYt && hit && hit.tab && hit.rowId && window.Minerva && Minerva.db && Minerva.db.getVideo) {
         Minerva.db.getVideo(hit.tab, hit.rowId).then(function (rec) {
           if (renderEpoch !== currentRenderEpoch) return;
           if (rec && rec.blob) {
@@ -514,6 +515,18 @@
           if (renderEpoch !== currentRenderEpoch) return;
           mountRemoteIframe(url, savedPage, resumeAt, isYt);
         });
+      } else if (isPdfNow && hit && hit.driveFileId) {
+        var driveSrc = 'https://drive.google.com/file/d/' +
+          encodeURIComponent(hit.driveFileId) + '/preview';
+        var iframe = document.createElement('iframe');
+        iframe.src = driveSrc;
+        iframe.allow = 'autoplay';
+        iframe.referrerPolicy = 'no-referrer';
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        iframe.style.border = '0';
+        iframe.title = 'PDF (Drive)';
+        frameHost.appendChild(iframe);
       } else {
         mountRemoteIframe(url, savedPage, resumeAt, isYt);
       }
