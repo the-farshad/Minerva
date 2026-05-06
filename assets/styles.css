@@ -3563,6 +3563,63 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 }
 .preview-overlay-yt,
 .preview-overlay-video { align-items: center !important; }
+/* Notes pane lives next to the PDF viewer. The panel's main column
+   is now a flex row that holds both the iframe host and the notes
+   sidebar; toggling .preview-notes-open on the panel shows/hides the
+   sidebar by animating its width. The textarea fills the available
+   height so longer notes scroll inside the pane, not the modal. */
+.preview-content {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+.preview-content .preview-frame-host {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.preview-notes {
+  width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  transition: width .18s ease;
+}
+.preview-panel.preview-notes-open .preview-notes {
+  width: clamp(280px, 35%, 480px);
+}
+.preview-notes-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.84rem;
+}
+.preview-notes-head strong { font-weight: 600; }
+.preview-notes-stamp {
+  font-size: 0.74rem;
+  padding: 0.1rem 0.45rem;
+}
+.preview-notes-status { margin-left: auto; }
+.preview-notes-status.is-saved { color: var(--ok, #2c8c3e); }
+.preview-notes-status.is-error { color: var(--error, #c0392b); }
+.preview-notes-area {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  resize: none;
+  padding: 0.7rem 0.85rem;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  outline: none;
+}
+.preview-notes-btn { font-size: 0.78rem; }
+
 .preview-panel.preview-panel-yt,
 .preview-panel.preview-panel-video {
   max-width: min(1280px, calc(100vw - 2rem)) !important;

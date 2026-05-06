@@ -5188,10 +5188,16 @@
         driveFileId: driveMatch ? driveMatch[1] : ''
       };
     });
-    M.preview.setOfflineLookup(function (url) {
+    var lookupFn = function (url) {
       return byUrl[String(url || '').trim()] || null;
-    });
+    };
+    currentOfflineLookup = lookupFn;
+    M.preview.setOfflineLookup(lookupFn);
   }
+  // Mirror of the most recent offlineLookup so the notes pane (and any
+  // other consumer outside the section render path) can resolve a URL
+  // back to its tab + rowId without re-walking every section's rows.
+  var currentOfflineLookup = null;
 
   function registerYouTubePlaylistContext(meta, rows) {
     if (!M.preview || typeof M.preview.setPlaylistContext !== 'function') return;
@@ -7870,7 +7876,7 @@
         Minerva.pg.probe(true).then(function () { paintPg(); });
       };
 
-      pgPanel.replaceChildren(
+      var pgKids = [
         el('h3', null, 'Postgres mirror'),
         el('p', { class: 'small muted' },
           'Every successful Sheets push is mirrored into a local Postgres database (via ',
@@ -7896,7 +7902,8 @@
           ' on the local container and uploads the SQL file to Drive (rolling — same fileId is updated each time).'
         ),
         lastLine
-      );
+      ];
+      pgPanel.replaceChildren.apply(pgPanel, pgKids.filter(Boolean));
     }
 
     var PG_BACKUP_KEY = 'minerva.pgBackup.v1';
@@ -11377,6 +11384,37 @@
         );
         if (!resp.ok) throw new Error('Drive PDF fetch ' + resp.status);
         return resp.blob();
+      });
+    }
+    // PDF notes pane — bound to the active row's `notes` column.
+    // Lookups go through the same byUrl map registerOfflineLookup
+    // builds, so both YouTube and Papers sections plug in for free.
+    if (M.preview && typeof M.preview.setNotesProvider === 'function') {
+      M.preview.setNotesProvider(async function (url) {
+        var lookup = currentOfflineLookup;
+        if (!lookup) return '';
+        var hit = lookup(url);
+        if (!hit || !hit.tab || !hit.rowId) return '';
+        var row = await M.db.getRow(hit.tab, hit.rowId);
+        return (row && row.notes) || '';
+      });
+      M.preview.setNotesSaver(async function (url, markdown) {
+        var lookup = currentOfflineLookup;
+        if (!lookup) throw new Error('No row context for these notes.');
+        var hit = lookup(url);
+        if (!hit || !hit.tab || !hit.rowId) throw new Error('Row not found for this URL.');
+        var meta = await M.db.getMeta(hit.tab);
+        if (!meta || (meta.headers || []).indexOf('notes') < 0) {
+          throw new Error('This section has no notes column.');
+        }
+        var row = await M.db.getRow(hit.tab, hit.rowId);
+        if (!row) throw new Error('Row gone.');
+        if ((row.notes || '') === (markdown || '')) return;
+        row.notes = markdown || '';
+        row._dirty = 1;
+        row._updated = new Date().toISOString();
+        await M.db.upsertRow(hit.tab, row);
+        schedulePush();
       });
     }
     // PDF data extractor — wraps minerva-services' /pdf/extract route

@@ -308,6 +308,22 @@
       }
     });
     head.appendChild(extractBtn);
+
+    // Notes toggle — opens the side pane bound to the row's notes
+    // column. Visible only for PDFs when the section registered the
+    // notes provider/saver hooks.
+    var notesBtn = document.createElement('button');
+    notesBtn.type = 'button';
+    notesBtn.className = 'btn btn-ghost preview-notes-btn';
+    notesBtn.title = 'Show notes pane';
+    notesBtn.textContent = 'Notes';
+    notesBtn.style.display = 'none';
+    notesBtn.addEventListener('click', function () {
+      var open = panel.classList.toggle('preview-notes-open');
+      notesBtn.title = open ? 'Hide notes pane' : 'Show notes pane';
+      if (open) setTimeout(function () { notesArea.focus(); }, 50);
+    });
+    head.appendChild(notesBtn);
     head.appendChild(fsBtn);
 
     // Bookmark button — adds a bookmark at the current playback time
@@ -395,10 +411,108 @@
 
     var frameHost = document.createElement('div');
     frameHost.className = 'preview-frame-host';
-    panel.appendChild(frameHost);
+
+    // Notes pane — opens beside the PDF when the active item is a paper
+    // row whose section registered a notes provider/saver pair. The
+    // textarea binds to the row's `notes` markdown column; the helper
+    // button stamps a `## p.<currentPage>` heading at the cursor so
+    // notes stay anchored to where the user was reading.
+    var notesPanel = document.createElement('aside');
+    notesPanel.className = 'preview-notes';
+    var notesHead = document.createElement('div');
+    notesHead.className = 'preview-notes-head';
+    var notesTitle = document.createElement('strong');
+    notesTitle.textContent = 'Notes';
+    var notesStamp = document.createElement('button');
+    notesStamp.type = 'button';
+    notesStamp.className = 'btn btn-ghost btn-inline preview-notes-stamp';
+    notesStamp.title = 'Insert "## p.<current>" at the cursor';
+    notesStamp.textContent = '+ p.';
+    var notesStatus = document.createElement('span');
+    notesStatus.className = 'preview-notes-status small muted';
+    notesHead.appendChild(notesTitle);
+    notesHead.appendChild(notesStamp);
+    notesHead.appendChild(notesStatus);
+    var notesArea = document.createElement('textarea');
+    notesArea.className = 'preview-notes-area';
+    notesArea.placeholder = 'Markdown notes — auto-saves to the row';
+    notesArea.spellcheck = true;
+    notesPanel.appendChild(notesHead);
+    notesPanel.appendChild(notesArea);
+
+    var content = document.createElement('div');
+    content.className = 'preview-content';
+    content.appendChild(frameHost);
+    content.appendChild(notesPanel);
+    panel.appendChild(content);
 
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
+
+    // Notes lifecycle: load on render, save on debounced input + on close.
+    var notesSaveTimer = null;
+    var notesDirty = false;
+    var notesUrlAtLoad = null;
+    function setNotesStatus(text, cls) {
+      notesStatus.textContent = text || '';
+      notesStatus.classList.toggle('is-saved', cls === 'saved');
+      notesStatus.classList.toggle('is-error', cls === 'error');
+    }
+    async function loadNotes(url) {
+      notesUrlAtLoad = url;
+      notesArea.value = '';
+      notesDirty = false;
+      setNotesStatus('');
+      if (!notesProvider) return;
+      try {
+        var md = await notesProvider(url);
+        if (notesUrlAtLoad !== url) return;
+        notesArea.value = md || '';
+        setNotesStatus('Saved', 'saved');
+      } catch (e) {
+        setNotesStatus('Couldn\'t load notes', 'error');
+      }
+    }
+    async function flushNotes() {
+      if (!notesDirty || !notesSaver || !notesUrlAtLoad) return;
+      var url = notesUrlAtLoad;
+      var value = notesArea.value;
+      notesDirty = false;
+      setNotesStatus('Saving…');
+      try {
+        await notesSaver(url, value);
+        if (notesUrlAtLoad === url) setNotesStatus('Saved', 'saved');
+      } catch (e) {
+        notesDirty = true;
+        setNotesStatus('Save failed', 'error');
+      }
+    }
+    notesArea.addEventListener('input', function () {
+      notesDirty = true;
+      setNotesStatus('Editing…');
+      if (notesSaveTimer) clearTimeout(notesSaveTimer);
+      notesSaveTimer = setTimeout(function () { flushNotes(); }, 800);
+    });
+    notesArea.addEventListener('blur', function () {
+      if (notesSaveTimer) { clearTimeout(notesSaveTimer); notesSaveTimer = null; }
+      flushNotes();
+    });
+    notesStamp.addEventListener('click', function () {
+      var p = parseInt(pageInput && pageInput.value, 10) || 1;
+      var insert = (notesArea.value && !notesArea.value.endsWith('\n') ? '\n' : '')
+                 + '## p.' + p + '\n';
+      var pos = notesArea.selectionStart || notesArea.value.length;
+      var before = notesArea.value.slice(0, pos);
+      var after  = notesArea.value.slice(pos);
+      notesArea.value = before + insert + after;
+      notesArea.focus();
+      var caret = (before + insert).length;
+      notesArea.setSelectionRange(caret, caret);
+      notesDirty = true;
+      setNotesStatus('Editing…');
+      if (notesSaveTimer) clearTimeout(notesSaveTimer);
+      notesSaveTimer = setTimeout(function () { flushNotes(); }, 800);
+    });
 
     var ytPlayer = null;
     // Monotonic counter incremented at the start of each render() so
@@ -505,6 +619,10 @@
       var savedPage = isPdfNow ? readPdfPage(url) : 1;
       pageWrap.style.display = isPdfNow ? '' : 'none';
       extractBtn.style.display = (isPdfNow && pdfExtractor) ? '' : 'none';
+      var notesAvailable = isPdfNow && (notesProvider || notesSaver);
+      notesBtn.style.display = notesAvailable ? '' : 'none';
+      if (!notesAvailable) panel.classList.remove('preview-notes-open');
+      if (notesAvailable) loadNotes(url);
       if (isPdfNow) pageInput.value = String(savedPage);
 
       // Adjust the panel aspect to the content kind. YouTube embeds
@@ -625,6 +743,8 @@
     }
     function close() {
       captureVideoResume();
+      if (notesSaveTimer) { clearTimeout(notesSaveTimer); notesSaveTimer = null; }
+      flushNotes();
       cleanupBlobVideo();
       revokeBlobIframes();
       clearWatchTimer();
@@ -835,6 +955,16 @@
   var pdfBlobLoader = null;
   function setPdfBlobLoader(fn) { pdfBlobLoader = (typeof fn === 'function') ? fn : null; }
 
+  // Notes provider + saver. Section render registers these so the
+  // preview's notes pane can read and write the row's `notes` markdown
+  // column. Both are async so they can hit IDB / Drive without blocking
+  // the UI thread. Either may be null — when missing, the notes pane
+  // stays hidden.
+  var notesProvider = null;
+  var notesSaver = null;
+  function setNotesProvider(fn) { notesProvider = (typeof fn === 'function') ? fn : null; }
+  function setNotesSaver(fn)    { notesSaver    = (typeof fn === 'function') ? fn : null; }
+
   // Optional structured-data extractor (opendataloader-pdf). When set,
   // the preview head renders an "Extract" button for PDFs that calls
   // this callback with the current PDF URL and expects a Promise that
@@ -918,6 +1048,8 @@
     clearOfflineLookup: clearOfflineLookup,
     setPdfBlobLoader: setPdfBlobLoader,
     setPdfExtractor: setPdfExtractor,
+    setNotesProvider: setNotesProvider,
+    setNotesSaver: setNotesSaver,
     openInDrive: openInDrive
   };
 })();
