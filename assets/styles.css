@@ -145,7 +145,14 @@ body {
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Sticky-footer scaffolding: short pages keep the footer pinned to
+     the bottom of the viewport instead of floating in the middle of
+     the page. Long pages flow normally. */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
+main { flex: 1 0 auto; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-2); }
 a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
@@ -316,18 +323,50 @@ em { color: var(--accent); font-style: normal; font-weight: 500; }
 /* --- footer -------------------------------------------------- */
 
 footer {
+  flex-shrink: 0;
   max-width: var(--maxw);
+  width: 100%;
   margin: 2rem auto 0;
-  padding: 1rem 1.5rem 2rem;
+  padding: 1.1rem 1.5rem 1.6rem;
   border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 0.82rem;
+  letter-spacing: 0.01em;
 }
-footer a {
+.footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem 0.85rem;
+}
+.footer-nav a {
   color: var(--muted);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid transparent;
+  padding: 0.1rem 0;
+  transition: color .12s, border-color .12s;
 }
-footer a:hover { color: var(--fg); }
+.footer-nav a:hover,
+.footer-nav a:focus-visible {
+  color: var(--fg);
+  border-bottom-color: var(--border);
+}
+.footer-nav a + a { position: relative; }
+.footer-nav a + a::before {
+  content: '·';
+  position: absolute;
+  left: -0.55rem;
+  top: 50%;
+  transform: translateY(-55%);
+  color: var(--border);
+  pointer-events: none;
+}
+.footer-meta {
+  margin: 0.5rem 0 0;
+  text-align: center;
+  opacity: 0.85;
+}
+.footer-meta em { font-style: italic; color: var(--fg); opacity: 0.85; }
 
 /* --- onboarding ---------------------------------------------- */
 
