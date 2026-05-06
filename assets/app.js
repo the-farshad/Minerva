@@ -11380,6 +11380,32 @@
         return resp.blob();
       });
     }
+    // PDF data extractor — wraps minerva-services' /pdf/extract route
+    // (opendataloader-pdf). The endpoint lives on the same container
+    // the user already pointed `ytDlpServer` at, so reuse that URL.
+    if (M.preview && typeof M.preview.setPdfExtractor === 'function') {
+      M.preview.setPdfExtractor(async function (pdfUrl) {
+        var endpoint = String((readConfig().ytDlpServer || '')).trim().replace(/\/+$/, '');
+        if (!endpoint) {
+          throw new Error('Set a yt-dlp / minerva-services URL in Settings first.');
+        }
+        var resp = await fetch(endpoint + '/pdf/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: pdfUrl })
+        });
+        var json;
+        try { json = await resp.json(); }
+        catch (e) {
+          var txt = await resp.text();
+          throw new Error('Non-JSON response: ' + txt.slice(0, 300));
+        }
+        if (!resp.ok || !json.ok) {
+          throw new Error(json.error || ('HTTP ' + resp.status));
+        }
+        return json.data;
+      });
+    }
     // Consume an OAuth implicit-flow callback fragment (#access_token=…)
     // if the URL carries one. On success the call cleans the URL and
     // the user lands back at the route they kicked off Connect from.

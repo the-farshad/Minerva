@@ -282,6 +282,32 @@
     head.appendChild(titleEl);
     head.appendChild(pageWrap);
     head.appendChild(openA);
+
+    // PDF data extractor button — only meaningful when the active item
+    // is a PDF and the app registered an extractor callback. Hidden
+    // otherwise; render() flips its visibility per-item.
+    var extractBtn = document.createElement('button');
+    extractBtn.type = 'button';
+    extractBtn.className = 'btn btn-ghost preview-extract-btn';
+    extractBtn.title = 'Run opendataloader-pdf on this PDF';
+    extractBtn.textContent = 'Extract';
+    extractBtn.style.display = 'none';
+    extractBtn.addEventListener('click', async function () {
+      var item = items[idx]; if (!item || !pdfExtractor) return;
+      var origLabel = extractBtn.textContent;
+      extractBtn.disabled = true;
+      extractBtn.textContent = 'Extracting…';
+      try {
+        var result = await pdfExtractor(item.url);
+        openExtractionModal(item.url, result);
+      } catch (e) {
+        openExtractionModal(item.url, 'Extraction failed: ' + (e && e.message || e));
+      } finally {
+        extractBtn.disabled = false;
+        extractBtn.textContent = origLabel;
+      }
+    });
+    head.appendChild(extractBtn);
     head.appendChild(fsBtn);
 
     // Bookmark button — adds a bookmark at the current playback time
@@ -478,6 +504,7 @@
       var isPdfNow = isPdf(url);
       var savedPage = isPdfNow ? readPdfPage(url) : 1;
       pageWrap.style.display = isPdfNow ? '' : 'none';
+      extractBtn.style.display = (isPdfNow && pdfExtractor) ? '' : 'none';
       if (isPdfNow) pageInput.value = String(savedPage);
 
       // Adjust the panel aspect to the content kind. YouTube embeds
@@ -807,6 +834,54 @@
   // viewer (drive.google.com/file/<id>/preview) ignores the fragment.
   var pdfBlobLoader = null;
   function setPdfBlobLoader(fn) { pdfBlobLoader = (typeof fn === 'function') ? fn : null; }
+
+  // Optional structured-data extractor (opendataloader-pdf). When set,
+  // the preview head renders an "Extract" button for PDFs that calls
+  // this callback with the current PDF URL and expects a Promise that
+  // resolves to either a JSON object or a string. The caller decides
+  // how to present it — see openExtractionModal below.
+  var pdfExtractor = null;
+  function setPdfExtractor(fn) { pdfExtractor = (typeof fn === 'function') ? fn : null; }
+
+  function openExtractionModal(url, payload) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay extract-overlay';
+    overlay.addEventListener('click', function () { overlay.remove(); });
+    var panel = document.createElement('div');
+    panel.className = 'modal-panel extract-panel';
+    panel.addEventListener('click', function (e) { e.stopPropagation(); });
+    var head = document.createElement('div');
+    head.className = 'extract-head';
+    var title = document.createElement('strong');
+    title.textContent = 'Extracted PDF data';
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'btn btn-ghost';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', function () { overlay.remove(); });
+    head.appendChild(title);
+    head.appendChild(closeBtn);
+    var body = document.createElement('pre');
+    body.className = 'extract-body';
+    var text;
+    if (typeof payload === 'string') {
+      text = payload;
+    } else if (payload && typeof payload === 'object') {
+      if (typeof payload.raw_text === 'string' && payload.raw_text) {
+        text = payload.raw_text;
+      } else {
+        try { text = JSON.stringify(payload, null, 2); }
+        catch (e) { text = String(payload); }
+      }
+    } else {
+      text = String(payload || '');
+    }
+    body.textContent = text;
+    panel.appendChild(head);
+    panel.appendChild(body);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+  }
   // Open the row's Drive mirror in a new tab if the offline lookup
   // resolves a driveFileId for this URL. Returns true when handled,
   // false when no Drive copy is known so the caller can fall back.
@@ -842,6 +917,7 @@
     setOfflineLookup: setOfflineLookup,
     clearOfflineLookup: clearOfflineLookup,
     setPdfBlobLoader: setPdfBlobLoader,
+    setPdfExtractor: setPdfExtractor,
     openInDrive: openInDrive
   };
 })();

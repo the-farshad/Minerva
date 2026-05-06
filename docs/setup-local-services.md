@@ -136,7 +136,13 @@ launchctl load ~/Library/LaunchAgents/com.minerva.services.plist
 | `POST` | `/download`                | `{ "url": "...", "format": "mp4" }`          |
 | `GET`  | `/proxy?<encoded-url>`     | (empty)                                      |
 | `POST` | `/proxy?<encoded-url>`     | forwarded as the upstream POST body          |
-| `GET`  | `/health`                  | returns `{ ok: true, service, endpoints }`   |
+| `POST` | `/pdf/extract`             | `{ "url": "<pdf url>" }` — runs `opendataloader-pdf`, returns extracted JSON |
+| `GET`  | `/db/health`               | returns `{ ok, configured }` for the PG mirror |
+| `GET`  | `/db/rows/<tab>?since=<ts>`| live rows in the named section                |
+| `POST` | `/db/upsert/<tab>`         | `{ "rows": [...] }`                          |
+| `POST` | `/db/delete/<tab>`         | `{ "ids": [...] , "hard": false }`           |
+| `GET`  | `/db/dump`                 | streams a `pg_dump` of the database          |
+| `GET`  | `/health`                  | returns `{ ok, service, endpoints, postgres, pdf_extractor }` |
 | `GET`  | `/`                        | minimal HTML status page                     |
 
 The CORS proxy enforces a host allow-list (`PROXY_ALLOWED_HOSTS` in
@@ -155,11 +161,19 @@ or point the Settings field at `https://localhost:8765` and set up a
 self-signed cert in front of the script (out of scope for this doc).
 
 **`yt-dlp failed: Sign in to confirm you're not a bot`**
-YouTube occasionally requires cookies for some videos. Edit
-`minerva-services.py` and add `'cookiefile': '/path/to/cookies.txt'`
-to `ydl_opts`. Cookies can be exported from your browser via the
-[Get cookies.txt](https://github.com/kairi003/Get-cookies.txt-LOCALLY)
-extension.
+YouTube increasingly gates videos behind a cookie check. Export a
+Netscape-format `cookies.txt` from a logged-in browser (the
+[Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY)
+extension produces the right format) and:
+
+- **Bare-script setup** — save it as `~/.minerva/cookies.txt`. The
+  service auto-detects this path on each download.
+- **Docker setup** — save it at `~/.minerva/cookies.txt` on the host,
+  then uncomment the `volumes:` block under `minerva-services` in
+  `docker-compose.yml` so the file shows up at `/srv/cookies.txt`
+  inside the container. Run `docker compose up -d` again to pick it up.
+
+Or override the path explicitly with `MINERVA_COOKIES_FILE=/some/path`.
 
 **`/proxy` returns 403 "Host 'X' is not in the allow-list"**
 The CORS proxy intentionally restricts forwarding. Add the host to

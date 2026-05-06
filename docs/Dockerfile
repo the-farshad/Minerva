@@ -28,7 +28,7 @@ COPY minerva-services.py /srv/minerva-services.py
 # The script self-bootstraps a venv on first run. Inside the
 # container we install deps directly so the image starts instantly
 # and survives ephemeral filesystems.
-RUN pip install --no-cache-dir flask yt-dlp requests "psycopg[binary]"
+RUN pip install --no-cache-dir flask yt-dlp requests "psycopg[binary]" opendataloader-pdf
 
 ENV MINERVA_HOST=0.0.0.0 \
     MINERVA_PORT=8765 \

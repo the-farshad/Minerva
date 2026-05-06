@@ -5129,6 +5129,37 @@ table.rows.rows-grouped tr.row-group-head td {
   padding: 0.1rem 0.5rem;
   line-height: 1.4;
 }
+
+/* --- PDF extraction modal ------------------------------------- */
+.extract-overlay {
+  z-index: 110;
+}
+.extract-panel {
+  max-width: 800px;
+  width: min(90vw, 800px);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.extract-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.extract-body {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0.9rem 1rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  background: var(--bg);
+  color: var(--fg);
+}
 .downloads-tray-body {
   pointer-events: auto;
   display: flex;

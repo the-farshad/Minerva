@@ -101,6 +101,13 @@ try:
 except Exception:  # noqa: BLE001
     _HAS_PSYCOPG = False
 
+def _first_existing(paths):
+    for p in paths:
+        if p and os.path.isfile(p):
+            return p
+    return None
+
+
 app = Flask(__name__)
 
 PROXY_ALLOWED_HOSTS = {
@@ -149,6 +156,22 @@ def download():
         "no_warnings": True,
         "merge_output_format": "mp4",
     }
+    # YouTube increasingly gates videos behind a "Sign in to confirm
+    # you're not a bot" check. yt-dlp can step past it with a Netscape-
+    # format cookies file exported from a logged-in browser. We look at
+    # MINERVA_COOKIES_FILE first, then a couple of conventional paths so
+    # a Docker volume mount at /srv/cookies.txt or ~/.minerva/cookies.txt
+    # is picked up automatically.
+    cookies_path = (
+        os.environ.get("MINERVA_COOKIES_FILE")
+        or _first_existing([
+            "/srv/cookies.txt",
+            os.path.expanduser("~/.minerva/cookies.txt"),
+            os.path.expanduser("~/cookies.txt"),
+        ])
+    )
+    if cookies_path and os.path.isfile(cookies_path):
+        ydl_opts["cookiefile"] = cookies_path
     if fmt == "mp3":
         ydl_opts["format"] = "bestaudio/best"
         ydl_opts["postprocessors"] = [
@@ -191,6 +214,101 @@ def download():
         download_name=os.path.basename(path),
         conditional=False,
     )
+
+
+# ---------- PDF data loader -----------------------------------------------
+#
+# Wraps `opendataloader-pdf` (https://pypi.org/project/opendataloader-pdf/).
+# The browser POSTs { "url": "<pdf url>" } and we:
+#   1. fetch the PDF (direct first; falls back to the configured proxy
+#      allow-list if the host blocks CORS),
+#   2. shell out to the loader CLI against the file,
+#   3. return the loader's JSON output verbatim so the front-end can
+#      render whatever it makes sense to render.
+#
+# The JSON is also returned with a "raw_text" string when present so a
+# minimal UI can show the extracted body without re-parsing the
+# structured representation.
+
+@app.route("/pdf/extract", methods=["POST", "OPTIONS"])
+def pdf_extract():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    body = request.get_json(silent=True) or {}
+    pdf_url = (body.get("url") or "").strip()
+    if not pdf_url:
+        return (jsonify({"ok": False, "error": "Missing 'url' in body."}), 400, _cors_dict())
+    if not shutil.which("opendataloader-pdf"):
+        return (
+            jsonify({
+                "ok": False,
+                "error": "opendataloader-pdf is not installed in this image. "
+                         "Rebuild minerva-services after the dep was added, "
+                         "or pip install opendataloader-pdf in your venv.",
+            }),
+            500,
+            _cors_dict(),
+        )
+    tmpdir = tempfile.mkdtemp(prefix="minerva-pdfextract-")
+    pdf_path = os.path.join(tmpdir, "in.pdf")
+    out_path = os.path.join(tmpdir, "out.json")
+    try:
+        try:
+            up = requests.get(pdf_url, timeout=60)
+            up.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            return (
+                jsonify({"ok": False, "error": f"PDF fetch failed: {exc}"}),
+                502,
+                _cors_dict(),
+            )
+        with open(pdf_path, "wb") as fh:
+            fh.write(up.content)
+        try:
+            proc = subprocess.run(
+                ["opendataloader-pdf", "--input", pdf_path, "--output", out_path],
+                capture_output=True, timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                jsonify({"ok": False, "error": "opendataloader-pdf timed out after 180s."}),
+                504,
+                _cors_dict(),
+            )
+        if proc.returncode != 0:
+            return (
+                jsonify({
+                    "ok": False,
+                    "error": "opendataloader-pdf exited non-zero.",
+                    "stderr": proc.stderr.decode("utf-8", "replace"),
+                }),
+                500,
+                _cors_dict(),
+            )
+        # The loader writes its result to --output; some builds also
+        # echo to stdout. Prefer the file when present.
+        payload = None
+        if os.path.isfile(out_path):
+            with open(out_path, "r", encoding="utf-8", errors="replace") as fh:
+                txt = fh.read()
+            try:
+                payload = __import__("json").loads(txt)
+            except Exception:  # noqa: BLE001
+                payload = {"raw_text": txt}
+        elif proc.stdout:
+            txt = proc.stdout.decode("utf-8", "replace")
+            try:
+                payload = __import__("json").loads(txt)
+            except Exception:  # noqa: BLE001
+                payload = {"raw_text": txt}
+        else:
+            payload = {"raw_text": ""}
+        return jsonify({"ok": True, "data": payload})
+    finally:
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 # ---------- CORS proxy -----------------------------------------------------
@@ -495,7 +613,7 @@ def health():
         "ok": True,
         "service": "minerva-services",
         "endpoints": [
-            "/download", "/proxy",
+            "/download", "/proxy", "/pdf/extract",
             "/db/health", "/db/rows/<tab>", "/db/upsert/<tab>",
             "/db/delete/<tab>", "/db/dump",
             "/health", "/shutdown", "/",
@@ -503,6 +621,9 @@ def health():
         "postgres": {
             "configured": bool(DATABASE_URL and _HAS_PSYCOPG),
             "ready": _DB_READY,
+        },
+        "pdf_extractor": {
+            "available": shutil.which("opendataloader-pdf") is not None,
         },
     }
     if "text/html" in accept and "application/json" not in accept:

@@ -43,6 +43,13 @@ services:
     #   1. Pull the published build:  docker compose pull && docker compose up -d
     #   2. Build from your checkout:   docker compose up -d --build
     # The image: name has to match the Docker Hub repo so (1) works.
+    #
+    # YouTube cookies: drop a Netscape-format cookies.txt at
+    #   ~/.minerva/cookies.txt
+    # on the host. The volume mount below makes it visible to yt-dlp,
+    # which uses it to clear "Sign in to confirm you're not a bot" walls.
+    # The mount is read-only and created lazily — the file isn't required
+    # for the container to start.
     build:
       context: .
       dockerfile: Dockerfile
@@ -58,6 +65,13 @@ services:
       MINERVA_HOST: "0.0.0.0"
       MINERVA_PORT: "8765"
       MINERVA_DATABASE_URL: "postgres://minerva:minerva@postgres:5432/minerva"
+      MINERVA_COOKIES_FILE: "/srv/cookies.txt"
+    # Uncomment to mount YouTube cookies into the container — required
+    # when yt-dlp hits "Sign in to confirm you're not a bot". Create
+    # ~/.minerva/cookies.txt first (Netscape-format export from a
+    # logged-in browser; see setup-local-services.md).
+    # volumes:
+    #   - ${HOME}/.minerva/cookies.txt:/srv/cookies.txt:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health').read()"]
       interval: 30s
