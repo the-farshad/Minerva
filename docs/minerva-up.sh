@@ -74,7 +74,25 @@ if [ "${MINERVA_NO_TIMER:-}" != "1" ] && command -v systemctl >/dev/null 2>&1; t
   fi
 fi
 
-# 5. Bring the stack up.
+# 5. Bring the stack up. If a previous run (or a prior project name)
+#    left orphan containers occupying the fixed container_name slots,
+#    Compose can't reuse them — detect that and clean up before retry.
 cd "$HERE"
-docker compose up -d
+
+up_log="$(mktemp)"
+trap 'rm -f "$up_log"' EXIT
+
+if docker compose up -d --remove-orphans 2>&1 | tee "$up_log"; then
+  : # success
+elif grep -q "is already in use by container" "$up_log"; then
+  echo "[minerva-up] orphan containers detected — removing and retrying…"
+  for c in minerva-services minerva-postgres; do
+    if docker ps -aq --filter "name=^/${c}$" | grep -q .; then
+      docker rm -f "$c" >/dev/null
+      echo "[minerva-up] removed $c"
+    fi
+  done
+  docker compose up -d --remove-orphans
+fi
+
 docker compose ps

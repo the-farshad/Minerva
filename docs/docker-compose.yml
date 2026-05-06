@@ -18,6 +18,12 @@
 # Override the bind port by setting MINERVA_PORT in the environment
 # before `docker compose up`.
 
+# Pinned project name so containers + volumes don't end up split
+# between "minerva" (when run from the repo root) and "docs" (when
+# run from this directory). Without this, switching dirs creates a
+# fresh volume and the old data appears to vanish.
+name: minerva
+
 services:
   postgres:
     image: postgres:16-alpine
