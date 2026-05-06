@@ -3544,6 +3544,9 @@
       // so preview.js can mount the Drive viewer instead of the live
       // arXiv URL (arxiv blocks iframe embedding).
       { name: 'offline',  type: 'text', before: 'read' },
+      // PDF.js text-layer highlights as JSON. The viewer reads on open
+      // and writes back via the standard upsert + push pipeline.
+      { name: 'highlights', type: 'longtext', before: 'read' },
       { name: 'abstract', type: 'markdown', before: 'read' },
       { name: 'category', type: 'multiselect(method,review,dataset,benchmark,position,survey,theory,application,other)', before: 'read' },
       { name: 'tags',     type: 'multiselect()', before: 'read' }
@@ -11476,6 +11479,37 @@
         );
         if (!resp.ok) throw new Error('Drive PDF fetch ' + resp.status);
         return resp.blob();
+      });
+    }
+    // PDF highlights pane — same dispatch as notes, against
+    // row.highlights. Stored as JSON-encoded text; the viewer parses
+    // on read and serializes on write so Sheets sees one cell.
+    if (M.preview && typeof M.preview.setHighlightsProvider === 'function') {
+      M.preview.setHighlightsProvider(async function (url) {
+        var lookup = currentOfflineLookup;
+        if (!lookup) return '';
+        var hit = lookup(url);
+        if (!hit || !hit.tab || !hit.rowId) return '';
+        var row = await M.db.getRow(hit.tab, hit.rowId);
+        return (row && row.highlights) || '';
+      });
+      M.preview.setHighlightsSaver(async function (url, jsonString) {
+        var lookup = currentOfflineLookup;
+        if (!lookup) throw new Error('No row context for highlights.');
+        var hit = lookup(url);
+        if (!hit || !hit.tab || !hit.rowId) throw new Error('Row not found.');
+        var meta = await M.db.getMeta(hit.tab);
+        if (!meta || (meta.headers || []).indexOf('highlights') < 0) {
+          throw new Error('This section has no highlights column.');
+        }
+        var row = await M.db.getRow(hit.tab, hit.rowId);
+        if (!row) throw new Error('Row gone.');
+        if ((row.highlights || '') === (jsonString || '')) return;
+        row.highlights = jsonString || '';
+        row._dirty = 1;
+        row._updated = new Date().toISOString();
+        await M.db.upsertRow(hit.tab, row);
+        schedulePush();
       });
     }
     // PDF notes pane — bound to the active row's `notes` column.

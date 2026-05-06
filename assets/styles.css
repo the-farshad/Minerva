@@ -5219,6 +5219,51 @@ table.rows.rows-grouped tr.row-group-head td {
   margin: 0.5rem 0 0.75rem;
 }
 
+/* --- PDF.js viewer + highlights ------------------------------- */
+.preview-pdfjs {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background: var(--bg);
+  padding: 0.6rem 0;
+}
+.pdfjs-host { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
+.pdfjs-page {
+  position: relative;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+}
+.pdfjs-canvas { display: block; }
+.pdfjs-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.2;
+  line-height: 1;
+  user-select: text;
+  cursor: text;
+}
+.pdfjs-text-layer span,
+.pdfjs-text-layer br {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  cursor: text;
+  transform-origin: 0 0;
+}
+.pdfjs-text-layer ::selection { background: rgba(255, 235, 59, 0.5); }
+.pdfjs-highlight-layer { position: absolute; inset: 0; pointer-events: none; }
+.pdfjs-highlight {
+  position: absolute;
+  background: #ffeb3b;
+  opacity: 0.4;
+  border-radius: 2px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: opacity .12s;
+}
+.pdfjs-highlight:hover { opacity: 0.65; }
+
 /* --- PDF extraction modal ------------------------------------- */
 .extract-overlay {
   z-index: 110;

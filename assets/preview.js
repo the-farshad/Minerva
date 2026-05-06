@@ -309,6 +309,23 @@
     });
     head.appendChild(extractBtn);
 
+    // Highlight button — only meaningful when a PDF.js viewer is
+    // mounted (set in render() when it succeeds). Captures the
+    // current text selection as a stored highlight on the row.
+    var highlightBtn = document.createElement('button');
+    highlightBtn.type = 'button';
+    highlightBtn.className = 'btn btn-ghost preview-highlight-btn';
+    highlightBtn.title = 'Highlight the current selection';
+    highlightBtn.textContent = 'Highlight';
+    highlightBtn.style.display = 'none';
+    highlightBtn.addEventListener('click', function () {
+      if (!activePdfView) return;
+      activePdfView.addHighlight('#ffeb3b');
+    });
+    head.appendChild(highlightBtn);
+
+    var activePdfView = null;
+
     // Notes toggle — opens the side pane bound to the row's notes
     // column. Visible only for PDFs when the section registered the
     // notes provider/saver hooks.
@@ -636,6 +653,11 @@
       overlay.classList.toggle('preview-overlay-pdf', isPdfNow);
 
       revokeBlobIframes();
+      if (activePdfView) {
+        try { activePdfView.destroy(); } catch (e) {}
+        activePdfView = null;
+      }
+      if (highlightBtn) highlightBtn.style.display = 'none';
       while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
       var resumeAt = isYt ? readVideoResume(url) : 0;
 
@@ -666,23 +688,57 @@
         loading.className = 'preview-loading muted small';
         loading.textContent = 'Loading PDF…';
         frameHost.appendChild(loading);
-        pdfBlobLoader(hit.driveFileId).then(function (blob) {
+        pdfBlobLoader(hit.driveFileId).then(async function (blob) {
           if (renderEpoch !== currentRenderEpoch) return;
-          var page = readPdfPage(url) || 1;
+          var savedPageNum = readPdfPage(url) || 1;
+          // When the section + app supply highlight read/write hooks
+          // *and* PDF.js is available, render through pdfviewer so the
+          // text layer + selection-based highlighting work. Otherwise
+          // fall back to the native browser PDF viewer via blob URL —
+          // it doesn't have highlights but still respects #page=N.
+          var canHighlight = highlightsProvider && highlightsSaver
+            && window.Minerva && Minerva.pdfviewer && Minerva.pdfviewer.mount;
+          if (canHighlight) {
+            try {
+              var initialHl = [];
+              try {
+                var raw = await highlightsProvider(url);
+                if (raw) initialHl = JSON.parse(raw);
+              } catch (e) { initialHl = []; }
+              if (renderEpoch !== currentRenderEpoch) return;
+              while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+              var pdfHost = document.createElement('div');
+              pdfHost.className = 'preview-pdfjs';
+              frameHost.appendChild(pdfHost);
+              var view = await Minerva.pdfviewer.mount(pdfHost, blob, {
+                startPage: savedPageNum,
+                initialHighlights: initialHl,
+                onHighlightsChange: function (next) {
+                  try { highlightsSaver(url, JSON.stringify(next)); } catch (e) {}
+                },
+                onPageChange: function (n) {
+                  try { writePdfPage(url, n); } catch (e) {}
+                  if (pageInput) pageInput.value = String(n);
+                }
+              });
+              activePdfView = view;
+              if (highlightBtn) highlightBtn.style.display = '';
+              return;
+            } catch (err) {
+              console.warn('[Minerva pdfviewer]', err);
+              // Drop through to the iframe fallback below.
+            }
+          }
+          if (renderEpoch !== currentRenderEpoch) return;
           var objUrl = URL.createObjectURL(blob);
           var iframe = document.createElement('iframe');
           iframe.className = 'preview-frame';
           iframe.referrerPolicy = 'no-referrer';
           iframe.allow = 'fullscreen';
-          iframe.src = objUrl + '#page=' + page;
+          iframe.src = objUrl + '#page=' + savedPageNum;
           iframe.title = 'PDF (Drive copy of original)';
           while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
           frameHost.appendChild(iframe);
-          // Revoke the blob URL when the modal closes so memory frees.
-          iframe.addEventListener('load', function () {
-            // Defer revoke until next render or close so the iframe can
-            // resolve its src; revoking too eagerly aborts the load.
-          });
           iframe.dataset.objUrl = objUrl;
         }).catch(function (err) {
           if (renderEpoch !== currentRenderEpoch) return;
@@ -745,6 +801,10 @@
       captureVideoResume();
       if (notesSaveTimer) { clearTimeout(notesSaveTimer); notesSaveTimer = null; }
       flushNotes();
+      if (activePdfView) {
+        try { activePdfView.destroy(); } catch (e) {}
+        activePdfView = null;
+      }
       cleanupBlobVideo();
       revokeBlobIframes();
       clearWatchTimer();
@@ -965,6 +1025,15 @@
   function setNotesProvider(fn) { notesProvider = (typeof fn === 'function') ? fn : null; }
   function setNotesSaver(fn)    { notesSaver    = (typeof fn === 'function') ? fn : null; }
 
+  // Highlights provider + saver. App registers these so the PDF.js
+  // path can persist the user's highlights to row.highlights as a
+  // JSON-encoded array. Same pattern as notes; missing → no PDF.js
+  // mount, fall back to the native iframe.
+  var highlightsProvider = null;
+  var highlightsSaver = null;
+  function setHighlightsProvider(fn) { highlightsProvider = (typeof fn === 'function') ? fn : null; }
+  function setHighlightsSaver(fn)    { highlightsSaver    = (typeof fn === 'function') ? fn : null; }
+
   // Optional structured-data extractor (opendataloader-pdf). When set,
   // the preview head renders an "Extract" button for PDFs that calls
   // this callback with the current PDF URL and expects a Promise that
@@ -1137,6 +1206,8 @@
     setPdfExtractDriveSaver: setPdfExtractDriveSaver,
     setNotesProvider: setNotesProvider,
     setNotesSaver: setNotesSaver,
+    setHighlightsProvider: setHighlightsProvider,
+    setHighlightsSaver: setHighlightsSaver,
     openInDrive: openInDrive
   };
 })();
