@@ -88,8 +88,18 @@ def _pip_install(specs):
 
 def _bootstrap_and_reexec() -> None:
     target = _venv_python()
-    current = pathlib.Path(sys.executable).resolve()
-    in_venv = target.exists() and current == target.resolve()
+    # Compare *without* resolving symlinks: both this venv and any
+    # other project venv on the same machine usually symlink python
+    # to the same /usr/bin/python3.x, so .resolve() collapses them
+    # together and we'd incorrectly assume we're already in our own
+    # venv. The literal path containment check distinguishes
+    # ~/.minerva-services/bin/python from any other venv path.
+    sys_exe = os.path.abspath(sys.executable)
+    venv_dir = os.path.abspath(str(VENV_DIR))
+    in_venv = target.exists() and (
+        sys_exe == str(target)
+        or sys_exe.startswith(venv_dir + os.sep)
+    )
 
     # Already running in the venv: just heal any missing deps in place
     # (catches the "stale venv was created before this require list
