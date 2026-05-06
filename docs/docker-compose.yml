@@ -57,8 +57,12 @@ services:
     # The mount is read-only and created lazily — the file isn't required
     # for the container to start.
     build:
-      context: .
-      dockerfile: Dockerfile
+      # Build context is the repo root so the Dockerfile can copy in
+      # the static SPA (index.html, assets/, sw.js, …) alongside the
+      # helper script. Without this, the build context would be docs/
+      # and the SPA wouldn't be visible to COPY.
+      context: ..
+      dockerfile: docs/Dockerfile
     image: thefarshad/minerva-services:latest
     container_name: minerva-services
     restart: unless-stopped

@@ -108,7 +108,16 @@ def _first_existing(paths):
     return None
 
 
-app = Flask(__name__)
+# When MINERVA_STATIC_DIR points at a directory that contains
+# index.html, the helper also serves the Minerva front-end so a single
+# `docker run` produces the whole app at http://localhost:8765/.
+STATIC_DIR = os.environ.get("MINERVA_STATIC_DIR", "/srv/static")
+SERVE_STATIC = os.path.isfile(os.path.join(STATIC_DIR, "index.html"))
+
+if SERVE_STATIC:
+    app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
+else:
+    app = Flask(__name__)
 
 PROXY_ALLOWED_HOSTS = {
     "export.arxiv.org", "arxiv.org",
@@ -678,8 +687,8 @@ def shutdown():
     return jsonify({"ok": True, "stopping": True})
 
 
-@app.route("/", methods=["GET"])
-def index():
+def _helper_status_html():
+    port = int(os.environ.get("MINERVA_PORT", "8765"))
     return (
         """<!doctype html>
 <html lang="en">
@@ -696,11 +705,11 @@ def index():
 </head>
 <body>
   <h1>Minerva local services <span class="ok">running</span></h1>
-  <p>One process, two endpoints. Wire them into Minerva at
+  <p>One process, multiple endpoints. Wire them into Minerva at
   <em>Settings</em>:</p>
   <ul>
-    <li>yt-dlp server &rarr; <code>http://localhost:""" + str(int(os.environ.get("MINERVA_PORT", "8765"))) + """</code></li>
-    <li>CORS proxy &rarr; <code>http://localhost:""" + str(int(os.environ.get("MINERVA_PORT", "8765"))) + """/proxy?</code></li>
+    <li>yt-dlp server &rarr; <code>http://localhost:""" + str(port) + """</code></li>
+    <li>CORS proxy &rarr; <code>http://localhost:""" + str(port) + """/proxy?</code></li>
   </ul>
   <p>Health: <a href="/health">/health</a>.</p>
 </body>
@@ -708,6 +717,21 @@ def index():
         200,
         {"Content-Type": "text/html; charset=utf-8"},
     )
+
+
+@app.route("/helper", methods=["GET"])
+def helper_status():
+    return _helper_status_html()
+
+
+@app.route("/", methods=["GET"])
+def index():
+    # Serve the Minerva SPA when baked into the image; otherwise fall
+    # back to the helper status page so a bare `docker run` of the old
+    # image still tells the user what they hit.
+    if SERVE_STATIC:
+        return send_file(os.path.join(STATIC_DIR, "index.html"))
+    return _helper_status_html()
 
 
 def _detach() -> None:
