@@ -7318,7 +7318,43 @@
       if (refresh) await refresh();
     } catch (err) {
       var msg = (err && err.message) || String(err);
-      job.fail('yt-dlp failed: ' + msg + ' — is your server running at ' + endpoint + '?');
+      // Map known yt-dlp failure modes to actionable messages instead
+      // of dumping the raw stderr to the user. The server appends a
+      // [diagnostic] block when cookies are involved (no file mounted,
+      // empty file, or YouTube rejected a populated file); pull it out.
+      var lower = msg.toLowerCase();
+      var friendly = '';
+      var diag = '';
+      var diagMatch = msg.match(/\[diagnostic\][^\n]*/);
+      if (diagMatch) diag = diagMatch[0];
+      if (lower.indexOf('sign in to confirm') >= 0
+          || lower.indexOf("you're not a bot") >= 0
+          || lower.indexOf('not a bot') >= 0
+          || lower.indexOf('cookies') >= 0) {
+        if (diag.indexOf('no cookies file') >= 0) {
+          friendly = 'YouTube needs cookies. Run ./minerva-up.sh once on your machine — '
+                   + 'it mounts your browser cookies into the container.';
+        } else if (diag.indexOf('size=0') >= 0 || diag.indexOf('empty') >= 0) {
+          friendly = 'Cookies file is empty. Refresh it: '
+                   + 'python3 docs/minerva-services.py --refresh-cookies firefox';
+        } else if (diag) {
+          friendly = 'YouTube session looks expired. Reopen youtube.com signed in, '
+                   + 'then run --refresh-cookies again.';
+        } else {
+          friendly = 'YouTube is gating this video behind a sign-in check. '
+                   + 'Run ./minerva-up.sh on your machine so the helper has cookies.';
+        }
+      } else if (lower.indexOf('failed to fetch') >= 0
+              || lower.indexOf('networkerror') >= 0
+              || lower.indexOf('econnrefused') >= 0) {
+        friendly = 'Local helper isn\'t reachable at ' + endpoint + '. '
+                 + 'Start it with: cd docs && ./minerva-up.sh';
+      } else if (lower.indexOf('http 5') >= 0 || lower.indexOf('server 5') >= 0) {
+        friendly = 'Helper returned an error. ' + msg.split('\n')[0];
+      } else {
+        friendly = 'Download failed: ' + msg.split('\n')[0];
+      }
+      job.fail(friendly);
     }
   }
 
