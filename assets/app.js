@@ -11635,14 +11635,19 @@
       loadDriveConfigIfPresent().catch(function () { /* ignore */ });
     }
 
-    // Restore last view if the user landed on a bare URL.
+    // Restore last view if the user landed on a bare URL. Settings is
+    // a configuration surface — never the user's "home" — so we
+    // explicitly skip it: typing the bare host should always land on
+    // the actual home page, not bounce you back into a settings sub-
+    // section just because that's where you last clicked. Same for
+    // share/auth/draw transient flows.
     if (!location.hash || location.hash === '' || location.hash === '#') {
       var s = readUi();
-      if (s && s.hash && s.hash !== '#/' && s.hash !== '#') {
-        // only restore if the saved hash is recent (< 7 days)
-        if (!s.when || Date.now() - s.when < 7 * 86400000) {
-          location.hash = s.hash;
-        }
+      var skip = !s || !s.hash
+        || s.hash === '#/' || s.hash === '#'
+        || /^#\/(settings|share|p|capture|search|draw|meet|avail)/.test(s.hash);
+      if (!skip && (!s.when || Date.now() - s.when < 7 * 86400000)) {
+        location.hash = s.hash;
       }
     }
     await route();
