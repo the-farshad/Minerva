@@ -1350,6 +1350,40 @@ def _cmd_logs():
     ).returncode
 
 
+def _cmd_test_cookies(url):
+    """Exercise yt-dlp inside the container with the active auth mode
+    and dump the raw outcome. Surfaces the genuine yt-dlp error when
+    `up` reports live mode but downloads still fail."""
+    print(f"[minerva] testing yt-dlp against {url} via the container's active auth…")
+    script = (
+        "import os, sys, json, traceback\n"
+        "import yt_dlp\n"
+        "opts = {'quiet': True, 'skip_download': True}\n"
+        "p = os.environ.get('MINERVA_BROWSER_PROFILE','')\n"
+        "k = os.environ.get('MINERVA_BROWSER_KIND','firefox') or 'firefox'\n"
+        "if p and os.path.isdir(p):\n"
+        "    opts['cookiesfrombrowser'] = (k, p, None, None)\n"
+        "    print('AUTH: live profile', k, p)\n"
+        "elif os.path.isfile('/srv/cookies.txt'):\n"
+        "    opts['cookiefile'] = '/srv/cookies.txt'\n"
+        "    print('AUTH: snapshot /srv/cookies.txt')\n"
+        "else:\n"
+        "    print('AUTH: none')\n"
+        "try:\n"
+        "    with yt_dlp.YoutubeDL(opts) as ydl:\n"
+        "        info = ydl.extract_info(sys.argv[1], download=False)\n"
+        "        print('OK title:', info.get('title'))\n"
+        "except Exception as exc:\n"
+        "    print('ERROR:', type(exc).__name__, exc)\n"
+        "    traceback.print_exc()\n"
+    )
+    rc = subprocess.run(
+        ["docker", "exec", "minerva-services", "python3", "-c", script, url],
+        check=False,
+    ).returncode
+    return rc
+
+
 def _cmd_status():
     here = pathlib.Path(__file__).resolve().parent
     return subprocess.run(
@@ -1368,6 +1402,9 @@ def _print_help():
         "  minerva-services.py status              docker compose ps\n"
         "  minerva-services.py refresh-cookies     dump cookies into ~/.minerva/cookies.txt\n"
         "  minerva-services.py install-timer       hourly systemd-user cookie refresh\n"
+        "  minerva-services.py test-cookies [url]  run yt-dlp against the configured auth\n"
+        "                                          and dump the raw outcome (handy when\n"
+        "                                          `up` says live mode but downloads fail)\n"
         "  minerva-services.py serve               run the Flask server (used inside\n"
         "                                          the container; not for end users)\n"
         "\n"
@@ -1408,6 +1445,9 @@ if __name__ == "__main__":
     if sub == "refresh-cookies":
         chosen = sys.argv[2] if len(sys.argv) > 2 else None
         sys.exit(_refresh_cookies(chosen))
+    if sub == "test-cookies":
+        target_url = sys.argv[2] if len(sys.argv) > 2 else "https://www.youtube.com/watch?v=a3iCti5W6PY"
+        sys.exit(_cmd_test_cookies(target_url))
     if sub == "install-timer":
         chosen = sys.argv[2] if len(sys.argv) > 2 else None
         sys.exit(_install_cookie_timer(chosen))
