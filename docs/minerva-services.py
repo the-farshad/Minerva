@@ -735,7 +735,59 @@ def _detach() -> None:
     os.dup2(f.fileno(), sys.stderr.fileno())
 
 
+def _refresh_cookies(browser):
+    """Dump cookies from a local browser into ~/.minerva/cookies.txt.
+
+    Lets a user keep yt-dlp authenticated against YouTube without
+    exporting cookies by hand. Run periodically (cron / systemd timer)
+    so the file stays fresh as the browser rotates session tokens.
+
+    Returns 0 on success, non-zero on failure.
+    """
+    target = pathlib.Path(
+        os.environ.get("MINERVA_COOKIES_FILE")
+        or (pathlib.Path.home() / ".minerva" / "cookies.txt")
+    ).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    candidates = [browser] if browser else [
+        "firefox", "chrome", "chromium", "brave", "edge", "vivaldi", "opera",
+    ]
+    last_err = None
+    for b in candidates:
+        if not b:
+            continue
+        try:
+            from yt_dlp.cookies import load_cookies  # type: ignore
+            cj = load_cookies(None, [b], None)
+            if not list(cj):
+                raise RuntimeError(f"{b}: no cookies found (is the browser logged in?)")
+            cj.save(str(target), ignore_discard=True, ignore_expires=True)
+            print(f"[minerva] wrote {target} from {b} ({sum(1 for _ in cj)} cookies)")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            if browser:
+                # Explicit pick — don't silently fall through.
+                break
+    print(
+        f"[minerva] could not refresh cookies: {last_err}\n"
+        f"  Try `--refresh-cookies <browser>` with one of: "
+        f"{', '.join(candidates)}",
+        file=sys.stderr,
+    )
+    return 1
+
+
 if __name__ == "__main__":
+    # --refresh-cookies [browser] runs the dump and exits without
+    # starting the Flask server. Useful in a cron entry like:
+    #     */60 * * * *  /usr/bin/python3 /path/to/minerva-services.py --refresh-cookies firefox
+    if "--refresh-cookies" in sys.argv:
+        i = sys.argv.index("--refresh-cookies")
+        chosen = sys.argv[i + 1] if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("-") else None
+        sys.exit(_refresh_cookies(chosen))
+
     host = os.environ.get("MINERVA_HOST", "127.0.0.1")
     port = int(os.environ.get("MINERVA_PORT", "8765"))
     detach = "--detach" in sys.argv or "-d" in sys.argv

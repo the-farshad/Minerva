@@ -161,19 +161,54 @@ or point the Settings field at `https://localhost:8765` and set up a
 self-signed cert in front of the script (out of scope for this doc).
 
 **`yt-dlp failed: Sign in to confirm you're not a bot`**
-YouTube increasingly gates videos behind a cookie check. Export a
-Netscape-format `cookies.txt` from a logged-in browser (the
+YouTube increasingly gates videos behind a cookie check. Two ways to
+keep yt-dlp authenticated:
+
+*Automatic refresh (recommended).* Run minerva-services with the
+`--refresh-cookies` flag once on the host to dump cookies straight from
+your logged-in browser into `~/.minerva/cookies.txt`:
+
+```sh
+python3 minerva-services.py --refresh-cookies firefox
+# or chrome, chromium, brave, edge, vivaldi, opera
+```
+
+Schedule it hourly so the file stays fresh as YouTube rotates session
+tokens. With cron:
+
+```cron
+0 * * * *  /usr/bin/python3 /path/to/minerva-services.py --refresh-cookies firefox
+```
+
+Or with a systemd timer (more reliable across reboots):
+`~/.config/systemd/user/minerva-cookies.service`
+```ini
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/projects/Minerva/docs/minerva-services.py --refresh-cookies firefox
+```
+`~/.config/systemd/user/minerva-cookies.timer`
+```ini
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+`systemctl --user enable --now minerva-cookies.timer`
+
+*Manual export* (use this if the automatic path fails — e.g. a Snap or
+Flatpak browser sandbox blocks reading the cookie DB). Install the
 [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY)
-extension produces the right format) and:
+extension, export, and save the file at `~/.minerva/cookies.txt`.
 
-- **Bare-script setup** — save it as `~/.minerva/cookies.txt`. The
-  service auto-detects this path on each download.
-- **Docker setup** — save it at `~/.minerva/cookies.txt` on the host,
-  then uncomment the `volumes:` block under `minerva-services` in
-  `docker-compose.yml` so the file shows up at `/srv/cookies.txt`
-  inside the container. Run `docker compose up -d` again to pick it up.
+For Docker, uncomment the `volumes:` block under `minerva-services` in
+`docker-compose.yml` so the file shows up at `/srv/cookies.txt` inside
+the container, then `docker compose up -d` to recreate the container.
 
-Or override the path explicitly with `MINERVA_COOKIES_FILE=/some/path`.
+Override the path with `MINERVA_COOKIES_FILE=/some/path` if you keep
+the file elsewhere.
 
 **`/proxy` returns 403 "Host 'X' is not in the allow-list"**
 The CORS proxy intentionally restricts forwarding. Add the host to
