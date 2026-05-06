@@ -152,7 +152,7 @@ body {
   display: flex;
   flex-direction: column;
 }
-main { flex: 1 0 auto; }
+main { flex: 1 1 auto; min-width: 0; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-2); }
 a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
@@ -3807,10 +3807,15 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 
 .settings-layout {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: 200px minmax(0, 1fr);
   gap: 2rem;
   align-items: start;
 }
+.settings-body { min-width: 0; }
+.settings-section { min-width: 0; }
+.settings-section pre,
+.settings-section code,
+.settings-section .docker-tip-cmd { overflow-x: auto; }
 .settings-toc {
   position: sticky;
   top: 1rem;
@@ -5128,6 +5133,14 @@ table.rows.rows-grouped tr.row-group-head td {
   font-size: 0.74rem;
   padding: 0.1rem 0.5rem;
   line-height: 1.4;
+}
+
+.pg-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.75rem;
 }
 
 /* --- PDF extraction modal ------------------------------------- */

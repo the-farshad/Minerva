@@ -7863,7 +7863,7 @@
         M.render.icon('upload-cloud'), ' Backup to Drive now');
       btn.onclick = function () { runPgBackup(btn); };
 
-      var refreshBtn = el('button', { type: 'button', class: 'btn btn-ghost btn-inline' },
+      var refreshBtn = el('button', { type: 'button', class: 'btn btn-ghost' },
         M.render.icon('refresh-cw'), ' Re-check');
       refreshBtn.onclick = function () {
         if (!Minerva.pg) return;
@@ -7879,8 +7879,8 @@
         ),
         el('div', { class: 'pg-status-row' },
           el('span', { class: pillClass }, pillText),
-          ' ',
-          refreshBtn
+          refreshBtn,
+          btn
         ),
         configured
           ? null
@@ -7892,11 +7892,10 @@
         el('hr'),
         el('h4', null, 'Drive backup'),
         el('p', { class: 'small muted' },
-          'Runs ', el('code', null, 'pg_dump'),
+          'The button above runs ', el('code', null, 'pg_dump'),
           ' on the local container and uploads the SQL file to Drive (rolling — same fileId is updated each time).'
         ),
-        lastLine,
-        btn
+        lastLine
       );
     }
 
