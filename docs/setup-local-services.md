@@ -45,6 +45,14 @@ when the server answers `/health`, red when the request fails.
 
 ## 2 · Docker (one container, both services)
 
+> **TL;DR for new users**: from the `docs/` directory, run `./minerva-up.sh`.
+> It refreshes cookies from your live browser, writes a `docker-compose.override.yml`
+> that mounts them into the container, installs a systemd-user timer for hourly
+> auto-refresh, and starts the stack. After that any plain `docker compose up -d`
+> keeps working — Compose auto-loads the generated override file.
+
+
+
 ```sh
 cd docs
 docker build -t minerva-services -f Dockerfile .
