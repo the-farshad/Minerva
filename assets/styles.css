@@ -136,6 +136,14 @@
 [hidden] { display: none !important; }
 
 html { scroll-behavior: smooth; }
+html {
+  /* Reserve space for the vertical scrollbar at all times. Without this
+     the viewport width changes by ~15px depending on whether the
+     current page is tall enough to need a scrollbar — switching
+     between Settings sub-sections (e.g. Connection ↔ Postgres mirror)
+     made the whole layout shift sideways every click. */
+  scrollbar-gutter: stable;
+}
 body {
   margin: 0;
   font-family: var(--font);
