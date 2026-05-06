@@ -59,7 +59,10 @@ jobs:
       - name: Build + push
         uses: docker/build-push-action@v6
         with:
-          context: docs
+          # Context is the repo root so the Dockerfile can COPY both
+          # docs/minerva-services.py and the static SPA assets at the
+          # top level (index.html, assets/, sw.js, …) into the image.
+          context: .
           file: docs/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
