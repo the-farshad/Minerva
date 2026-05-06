@@ -41,7 +41,12 @@ ENV MINERVA_HOST=0.0.0.0 \
 
 EXPOSE 8765
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+# Self-upgrade yt-dlp on container start. YouTube rotates anti-bot
+# logic frequently; an image built two weeks ago is often the reason
+# downloads start failing with "Sign in to confirm you're not a bot"
+# even when cookies are valid. The upgrade is bounded by a 30s timeout
+# so a flaky network can't block the helper from coming up.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health').read()"
 
-CMD ["python", "minerva-services.py"]
+CMD ["sh", "-c", "timeout 30 pip install --quiet --no-cache-dir --upgrade yt-dlp 2>/dev/null || true; exec python minerva-services.py"]
