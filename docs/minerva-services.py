@@ -1230,26 +1230,73 @@ def _cmd_up(browser):
     except Exception as exc:  # noqa: BLE001
         print(f"[minerva] yt-dlp upgrade in-container skipped: {exc}", file=sys.stderr)
 
-    print("[minerva] step 8/8: verifying cookies file has YouTube entries…")
+    print("[minerva] step 8/9: verifying cookies file has YouTube entries…")
     yt_count = _count_youtube_cookies(cookies_file)
     if yt_count == 0 and cookies_file.stat().st_size > 0:
         print(
             "[minerva] heads-up: cookies.txt is populated but contains 0 cookies for\n"
-            "          youtube.com domains. Open Firefox → youtube.com → confirm you're\n"
-            "          signed in (the home feed should show your channel) → re-run\n"
-            "          `python3 minerva-services.py refresh-cookies firefox`. Until\n"
-            "          then yt-dlp will keep hitting the bot wall on gated videos.",
+            "          youtube.com domains. (Snapshot mode only — ignore if you're\n"
+            "          on live-profile mode confirmed in the next step.)",
             file=sys.stderr,
         )
     elif yt_count == 0:
         print("[minerva] no cookies dumped — gated YouTube videos will fail to download.",
               file=sys.stderr)
     else:
-        print(f"[minerva] {yt_count} YouTube cookies present.")
+        print(f"[minerva] {yt_count} YouTube cookies present in snapshot.")
+
+    print("[minerva] step 9/9: confirming what the container actually sees…")
+    _probe_container_auth_mode()
 
     subprocess.run(["docker", "compose", "ps"], cwd=here, check=False)
     print("\n[minerva] ready: http://localhost:8765/")
     return 0
+
+
+def _probe_container_auth_mode():
+    """Ask the running container which auth mode it'll use for the
+    next yt-dlp call. Catches misconfigurations end-to-end:
+    - env var present but bind-mount empty (bad path on host),
+    - bind-mount present but no MINERVA_BROWSER_PROFILE (stale image
+      that doesn't know about the new env contract),
+    - neither (snapshot fallback).
+    """
+    try:
+        out = subprocess.run(
+            ["docker", "exec", "minerva-services", "python3", "-c", (
+                "import os, json; "
+                "p = os.environ.get('MINERVA_BROWSER_PROFILE',''); "
+                "k = os.environ.get('MINERVA_BROWSER_KIND',''); "
+                "live = bool(p) and os.path.isdir(p); "
+                "snap = '/srv/cookies.txt'; "
+                "snap_ok = os.path.isfile(snap) and os.path.getsize(snap) > 0; "
+                "print(json.dumps({'profile': p, 'kind': k, 'live': live, "
+                "  'profile_listing': sorted(os.listdir(p))[:5] if live else [], "
+                "  'snapshot_path': snap, 'snapshot_ok': snap_ok}))"
+            )],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode != 0:
+            print(f"[minerva]   probe failed: {out.stderr.strip()}", file=sys.stderr)
+            return
+        import json as _json
+        info = _json.loads(out.stdout.strip().splitlines()[-1])
+        if info.get("live"):
+            print(f"[minerva]   ✓ live mode: {info['kind']} profile at {info['profile']}")
+            print(f"[minerva]     profile contains: {', '.join(info['profile_listing']) or '(empty?)'}")
+            if not info["profile_listing"]:
+                print("[minerva]     bind mount looks empty — the host directory may be "
+                      "wrong or your browser profile lives elsewhere.", file=sys.stderr)
+        elif info.get("snapshot_ok"):
+            print(f"[minerva]   ⚠ snapshot mode: {info['snapshot_path']} (will go stale).")
+            print("[minerva]     If this is unexpected, the override didn't pick up your "
+                  "browser profile path. Paste docker-compose.override.yml and I'll "
+                  "diagnose.", file=sys.stderr)
+        else:
+            print("[minerva]   ✗ no auth available — both live profile and snapshot are "
+                  "unreachable. Gated YouTube videos will fail.", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[minerva]   probe failed: {exc}", file=sys.stderr)
 
 
 def _wait_for_health(url, timeout=60):
