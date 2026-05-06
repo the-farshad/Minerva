@@ -207,7 +207,32 @@ def download():
                         break
     except Exception as exc:  # noqa: BLE001
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return (f"yt-dlp failed: {exc}", 500)
+        msg = f"yt-dlp failed: {exc}"
+        # Annotate the bot-wall error with what the helper actually saw
+        # for cookies, so the user can tell whether the volume mount is
+        # broken (no cookies path) versus the file is empty (mount works
+        # but --refresh-cookies didn't write anything) versus the cookies
+        # are real but YouTube still rejected them (session expired).
+        if "Sign in to confirm" in str(exc) or "cookies" in str(exc).lower():
+            if cookies_path:
+                try:
+                    st = os.stat(cookies_path)
+                    msg += (
+                        f"\n[diagnostic] cookies file: {cookies_path}, "
+                        f"size={st.st_size}B, "
+                        f"mtime={int(st.st_mtime)}"
+                    )
+                    if st.st_size == 0:
+                        msg += " — file is empty. Run `--refresh-cookies` on the host."
+                except Exception:
+                    msg += f"\n[diagnostic] cookies file at {cookies_path} could not be stat()ed."
+            else:
+                msg += (
+                    "\n[diagnostic] no cookies file found inside the container. "
+                    "Check that the docker-compose.override.yml mounts your host's "
+                    "cookies.txt at /srv/cookies.txt, or set MINERVA_COOKIES_FILE."
+                )
+        return (msg, 500)
 
     @after_this_request
     def _cleanup(resp):
