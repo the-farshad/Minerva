@@ -787,9 +787,11 @@ def _detach() -> None:
 def _refresh_cookies(browser):
     """Dump cookies from a local browser into ~/.minerva/cookies.txt.
 
-    Lets a user keep yt-dlp authenticated against YouTube without
-    exporting cookies by hand. Run periodically (cron / systemd timer)
-    so the file stays fresh as the browser rotates session tokens.
+    Tries the requested browser first, then falls through every other
+    common browser so a user who specifies "firefox" but actually has
+    a Snap-sandboxed Firefox (cookie DB unreadable) still recovers via
+    Chrome / Brave / etc. Prints a per-browser breakdown on total
+    failure so the operator can see why each candidate refused.
 
     Returns 0 on success, non-zero on failure.
     """
@@ -799,30 +801,39 @@ def _refresh_cookies(browser):
     ).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    candidates = [browser] if browser else [
-        "firefox", "chrome", "chromium", "brave", "edge", "vivaldi", "opera",
-    ]
-    last_err = None
+    all_browsers = ["firefox", "chrome", "chromium", "brave", "edge", "vivaldi", "opera"]
+    if browser:
+        candidates = [browser] + [b for b in all_browsers if b != browser]
+    else:
+        candidates = all_browsers
+
+    errors = []
     for b in candidates:
         if not b:
             continue
         try:
             from yt_dlp.cookies import load_cookies  # type: ignore
             cj = load_cookies(None, [b], None)
-            if not list(cj):
-                raise RuntimeError(f"{b}: no cookies found (is the browser logged in?)")
+            n = sum(1 for _ in cj)
+            if n == 0:
+                errors.append(f"{b}: 0 cookies (not logged in or profile DB unreadable)")
+                continue
             cj.save(str(target), ignore_discard=True, ignore_expires=True)
-            print(f"[minerva] wrote {target} from {b} ({sum(1 for _ in cj)} cookies)")
+            print(f"[minerva] wrote {target} from {b} ({n} cookies)")
             return 0
         except Exception as exc:  # noqa: BLE001
-            last_err = exc
-            if browser:
-                # Explicit pick — don't silently fall through.
-                break
+            errors.append(f"{b}: {type(exc).__name__}: {exc}")
+            continue
+
+    print("[minerva] could not refresh cookies. Browsers tried:", file=sys.stderr)
+    for e in errors:
+        print(f"           {e}", file=sys.stderr)
     print(
-        f"[minerva] could not refresh cookies: {last_err}\n"
-        f"  Try `--refresh-cookies <browser>` with one of: "
-        f"{', '.join(candidates)}",
+        "[minerva] If every browser shows '0 cookies' or 'unreadable', the\n"
+        "          most common cause is a Snap / Flatpak / Mac App Store\n"
+        "          install — the cookie DB lives in a sandboxed path yt-dlp\n"
+        "          can't read. Install the native package (apt/dnf/brew/.deb)\n"
+        "          or fall back to a manual cookies.txt export.",
         file=sys.stderr,
     )
     return 1

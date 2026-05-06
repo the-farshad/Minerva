@@ -40,15 +40,22 @@ if [ ! -e "$COOKIES_FILE" ]; then
   : > "$COOKIES_FILE"
 fi
 
-# 2. Best-effort cookie refresh from the user's live browser.
-if python3 "$HERE/minerva-services.py" --refresh-cookies "$BROWSER" >/dev/null 2>&1; then
-  echo "[minerva-up] cookies refreshed from $BROWSER → $COOKIES_FILE"
+# 2. Best-effort cookie refresh from the user's live browser. The
+#    Python helper now falls through every common browser when the
+#    requested one fails, so a misconfigured MINERVA_BROWSER doesn't
+#    leave you without cookies if any other browser is logged in.
+refresh_log="$(mktemp)"
+if python3 "$HERE/minerva-services.py" --refresh-cookies "$BROWSER" >"$refresh_log" 2>&1; then
+  cat "$refresh_log"
 elif [ ! -s "$COOKIES_FILE" ]; then
-  echo "[minerva-up] no cookies yet — yt-dlp may hit YouTube's bot wall on gated videos."
-  echo "             Open $BROWSER, log in to youtube.com, then run this script again."
+  echo "[minerva-up] no cookies yet — yt-dlp will hit YouTube's bot wall on gated videos."
+  echo "             Refresh details:"
+  sed 's/^/             /' "$refresh_log"
 else
-  echo "[minerva-up] keeping the existing cookies.txt (refresh failed for $BROWSER)."
+  echo "[minerva-up] keeping the existing cookies.txt (every browser refresh failed)."
+  sed 's/^/             /' "$refresh_log"
 fi
+rm -f "$refresh_log"
 
 # 3. Drop / refresh the override that mounts cookies.txt into the
 #    container. Idempotent.
