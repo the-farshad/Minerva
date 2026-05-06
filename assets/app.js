@@ -7390,18 +7390,22 @@
           || lower.indexOf("you're not a bot") >= 0
           || lower.indexOf('not a bot') >= 0
           || lower.indexOf('cookies') >= 0) {
-        if (diag.indexOf('no cookies file') >= 0) {
-          friendly = 'YouTube needs cookies. Run ./minerva-up.sh once on your machine — '
-                   + 'it mounts your browser cookies into the container.';
+        if (diag.indexOf('live browser profile') >= 0) {
+          // Live profile is in use; --refresh-cookies won't help.
+          friendly = 'YouTube rejected your live browser session. Open the browser '
+                   + 'on your laptop, log in to youtube.com, play any video, then retry.';
+        } else if (diag.indexOf('no cookies file') >= 0) {
+          friendly = 'YouTube needs cookies. Run python3 docs/minerva-services.py up '
+                   + 'once on your machine — it mounts your browser into the container.';
         } else if (diag.indexOf('size=0') >= 0 || diag.indexOf('empty') >= 0) {
-          friendly = 'Cookies file is empty. Refresh it: '
-                   + 'python3 docs/minerva-services.py --refresh-cookies firefox';
+          friendly = 'Cookies file is empty. Run python3 docs/minerva-services.py up '
+                   + 'so the helper switches to live browser-profile mode.';
         } else if (diag) {
-          friendly = 'YouTube session looks expired. Reopen youtube.com signed in, '
-                   + 'then run --refresh-cookies again.';
+          friendly = 'Cookies snapshot is stale. Run python3 docs/minerva-services.py up '
+                   + 'to switch to live browser-profile mode (no more snapshot rot).';
         } else {
           friendly = 'YouTube is gating this video behind a sign-in check. '
-                   + 'Run ./minerva-up.sh on your machine so the helper has cookies.';
+                   + 'Run python3 docs/minerva-services.py up on your machine.';
         }
       } else if (lower.indexOf('failed to fetch') >= 0
               || lower.indexOf('networkerror') >= 0
