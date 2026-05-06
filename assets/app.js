@@ -5918,14 +5918,70 @@
           rmBtn.appendChild(M.render.icon('trash-2'));
           actionsHost.appendChild(rmBtn);
         } else {
+          // Route by URL kind: papers (PDF / arxiv abs+pdf / doi.org)
+          // can't be handled by yt-dlp — pushing one through it gives
+          // the "Unsupported URL" 500 the user just hit. Send those
+          // through uploadPaperPdfToDrive instead, write drive:<fileId>
+          // back to row.offline so the next click reads from the
+          // Drive-mirrored blob rather than the live host.
+          var looksLikePaper = /\.pdf(\?|#|$)/i.test(url)
+            || /arxiv\.org\/(?:abs|pdf)\//i.test(url)
+            || /doi\.org\//i.test(url);
           var dlBtn = el('button', {
             type: 'button',
             class: 'tile-action tile-download',
-            title: 'Download for offline playback (shift-click for options)',
+            title: looksLikePaper
+              ? 'Mirror this PDF to Drive so it opens offline'
+              : 'Download for offline playback (shift-click for options)',
             'aria-label': 'Download',
-            onclick: function (e) {
+            onclick: async function (e) {
               e.preventDefault();
               e.stopPropagation();
+              if (looksLikePaper) {
+                var paperUrl = (function () {
+                  // Prefer an explicit pdf column when present —
+                  // arxiv abs URLs aren't fetchable as PDF directly,
+                  // but the row's pdf column holds the real PDF link.
+                  if (r.pdf) return String(r.pdf).trim();
+                  if (/arxiv\.org\/abs\/(.+)$/i.test(url)) {
+                    return url.replace(/\/abs\//i, '/pdf/').replace(/(\.pdf)?$/i, '.pdf');
+                  }
+                  return url;
+                })();
+                var job = addDownloadJob({ title: r.title || r.id || 'PDF' });
+                try {
+                  job.setStatus('Fetching PDF…');
+                  var fid = await uploadPaperPdfToDrive(paperUrl, r.title || r.id);
+                  if (!fid) throw new Error('Drive upload returned no fileId.');
+                  // Persist the breadcrumb so preview.js routes the
+                  // next open through the Drive blob loader.
+                  var meta3 = await M.db.getMeta(tab);
+                  if (meta3 && (meta3.headers || []).indexOf('offline') >= 0) {
+                    var fresh3 = await M.db.getRow(tab, r.id);
+                    if (fresh3) {
+                      fresh3.offline = 'drive:' + fid;
+                      fresh3._dirty = 1;
+                      fresh3._updated = new Date().toISOString();
+                      await M.db.upsertRow(tab, fresh3);
+                      schedulePush();
+                    }
+                  }
+                  job.done('Saved to Drive', {
+                    label: 'Open',
+                    icon: 'cloud',
+                    run: function () {
+                      window.open(
+                        'https://drive.google.com/file/d/' + encodeURIComponent(fid) + '/view',
+                        '_blank', 'noopener'
+                      );
+                    }
+                  });
+                  if (refresh) await refresh();
+                } catch (err) {
+                  job.fail('PDF mirror failed: ' + (err && err.message || err));
+                }
+                return;
+              }
               if (e.shiftKey) {
                 showOfflineSetupDialog(tab, r, refresh);
                 return;
@@ -5942,7 +5998,7 @@
               copyYtDlpCommand(url);
             }
           });
-          dlBtn.appendChild(M.render.icon('download'));
+          dlBtn.appendChild(M.render.icon(looksLikePaper ? 'cloud' : 'download'));
           actionsHost.appendChild(dlBtn);
         }
         thumb.appendChild(actionsHost);
@@ -11451,6 +11507,43 @@
         row._updated = new Date().toISOString();
         await M.db.upsertRow(hit.tab, row);
         schedulePush();
+      });
+    }
+    // PDF extractor → Drive sibling. Uploads the extracted JSON to
+    // Drive next to the original PDF (same scope as the offline blob
+    // mirror) so structured data round-trips through the user's own
+    // storage. Returns { id, link } so the modal can render the
+    // open-in-Drive link.
+    if (M.preview && typeof M.preview.setPdfExtractDriveSaver === 'function') {
+      M.preview.setPdfExtractDriveSaver(async function (pdfUrl, payload) {
+        if (!M.auth || !M.sheets) {
+          throw new Error('Sign in first.');
+        }
+        var c = readConfig();
+        if (!c.clientId) throw new Error('Sign in first.');
+        var token = await M.auth.getToken(c.clientId);
+        // Pretty-print the JSON; fall back to raw_text if we got one.
+        var body;
+        if (payload && typeof payload === 'object') {
+          try { body = JSON.stringify(payload, null, 2); }
+          catch (e) { body = String(payload.raw_text || payload); }
+        } else {
+          body = String(payload || '');
+        }
+        // Derive a name from the URL's last segment so the Drive
+        // listing is at least vaguely identifiable.
+        var stem = (function () {
+          try {
+            var u = new URL(pdfUrl);
+            var last = (u.pathname.split('/').pop() || 'paper').replace(/\.pdf$/i, '');
+            return last || 'paper';
+          } catch (e) { return 'paper'; }
+        })();
+        var name = stem.replace(/[^\w.\- ]+/g, '_').slice(0, 80) + '.extract.json';
+        var resp = await M.sheets.uploadDriveFile(
+          token, name, 'application/json; charset=utf-8', body, null
+        );
+        return { id: resp.id, link: resp.webViewLink || null };
       });
     }
     // PDF data extractor — wraps minerva-services' /pdf/extract route

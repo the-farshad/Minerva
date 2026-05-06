@@ -973,6 +973,14 @@
   var pdfExtractor = null;
   function setPdfExtractor(fn) { pdfExtractor = (typeof fn === 'function') ? fn : null; }
 
+  // Optional "Save extracted JSON to Drive" sink. The app registers a
+  // function that takes (url, payload) and resolves to { id, link } so
+  // the modal can offer a one-click upload alongside Save-to-notes.
+  var pdfExtractDriveSaver = null;
+  function setPdfExtractDriveSaver(fn) {
+    pdfExtractDriveSaver = (typeof fn === 'function') ? fn : null;
+  }
+
   function openExtractionModal(url, payload) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay extract-overlay';
@@ -990,6 +998,10 @@
     saveBtn.type = 'button';
     saveBtn.className = 'btn';
     saveBtn.textContent = 'Save to notes';
+    var driveBtn = document.createElement('button');
+    driveBtn.type = 'button';
+    driveBtn.className = 'btn btn-ghost';
+    driveBtn.textContent = 'Save to Drive';
     var closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'btn btn-ghost';
@@ -998,6 +1010,7 @@
     head.appendChild(title);
     head.appendChild(status);
     head.appendChild(saveBtn);
+    head.appendChild(driveBtn);
     head.appendChild(closeBtn);
     var body = document.createElement('pre');
     body.className = 'extract-body';
@@ -1025,6 +1038,40 @@
     // clobber). When either is missing, hide the button.
     if (!notesSaver || !notesProvider) {
       saveBtn.style.display = 'none';
+    }
+    if (!pdfExtractDriveSaver) {
+      driveBtn.style.display = 'none';
+    }
+    driveBtn.addEventListener('click', async function () {
+      if (!pdfExtractDriveSaver) return;
+      driveBtn.disabled = true;
+      var orig = driveBtn.textContent;
+      driveBtn.textContent = 'Uploading…';
+      try {
+        var resp = await pdfExtractDriveSaver(url, payload);
+        if (resp && resp.link) {
+          status.textContent = 'Uploaded';
+          status.classList.add('is-saved');
+          var a = document.createElement('a');
+          a.href = resp.link;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.textContent = 'Open in Drive';
+          a.style.marginLeft = '0.5rem';
+          status.appendChild(a);
+        } else {
+          status.textContent = 'Uploaded';
+          status.classList.add('is-saved');
+        }
+      } catch (e) {
+        status.textContent = 'Upload failed: ' + (e && e.message || e);
+        status.classList.add('is-error');
+      } finally {
+        driveBtn.disabled = false;
+        driveBtn.textContent = orig;
+      }
+    });
+    if (!notesSaver || !notesProvider) {
       return;
     }
     saveBtn.addEventListener('click', async function () {
@@ -1087,6 +1134,7 @@
     clearOfflineLookup: clearOfflineLookup,
     setPdfBlobLoader: setPdfBlobLoader,
     setPdfExtractor: setPdfExtractor,
+    setPdfExtractDriveSaver: setPdfExtractDriveSaver,
     setNotesProvider: setNotesProvider,
     setNotesSaver: setNotesSaver,
     openInDrive: openInDrive

@@ -25,7 +25,41 @@
     return null;                                         // _log etc. — synthesize
   }
 
+  // Best-effort seed from the Postgres mirror when the local IDB has
+  // nothing for a tab yet. Lets a fresh device with the helper running
+  // show data instantly while a Sheets pull races in the background;
+  // also covers the "Sheets is down / not signed in" edge so the user
+  // is never left looking at an empty section if PG has the rows.
+  async function maybeSeedFromPg(tab) {
+    if (!Minerva.pg || typeof Minerva.pg.isLive !== 'function' || !Minerva.pg.isLive()) {
+      return 0;
+    }
+    var existing = await Minerva.db.countTab(tab);
+    if (existing > 0) return 0;
+    try {
+      var resp = await Minerva.pg.getRows(tab);
+      var rows = (resp && resp.rows) || [];
+      if (!rows.length) return 0;
+      // Annotate with the internal markers IDB readers expect — the
+      // /db/rows endpoint already injects id, _rowIndex, _deleted.
+      var out = rows.map(function (r) {
+        return Object.assign({ _dirty: 0, _localOnly: 0 }, r);
+      });
+      await Minerva.db.upsertRows(tab, out);
+      return out.length;
+    } catch (e) {
+      console.warn('[Minerva pg-seed]', tab, (e && e.message) || e);
+      return 0;
+    }
+  }
+
   async function pullTab(token, ssId, tab) {
+    // Cheap read-through: if the user just cleared IDB or is on a
+    // fresh device with the helper running, populate from PG before
+    // we even hit Sheets. The Sheets pull below still wins as the
+    // source of truth — this just prevents an empty render in the
+    // meantime.
+    try { await maybeSeedFromPg(tab); } catch (e) { /* non-fatal */ }
     var resp = await Minerva.sheets.getValues(token, ssId, tab + '!A:Z');
     var values = (resp && resp.values) || [];
 
@@ -361,6 +395,7 @@
     pushAll: pushAll,
     syncAll: syncAll,
     lastSync: lastSync,
-    stats: stats
+    stats: stats,
+    maybeSeedFromPg: maybeSeedFromPg
   };
 })();
