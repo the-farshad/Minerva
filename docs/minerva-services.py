@@ -37,7 +37,16 @@ import venv as _venv
 # Bootstrap.
 # ---------------------------------------------------------------------------
 
+# Hard requirements — no-import-no-server. yt-dlp + requests + flask
+# are baseline. psycopg is needed only by the Postgres mirror routes
+# but always-installed so the helper can answer /db/health on any
+# minerva-services container.
 REQUIREMENTS = ("flask", "yt-dlp", "requests", "psycopg[binary]")
+# Best-effort optional deps — if a name doesn't exist on PyPI on a
+# given day, or won't compile in the current Python, we keep going
+# instead of bricking the whole helper.
+OPTIONAL_REQUIREMENTS = ("opendataloader-pdf",)
+
 VENV_DIR = pathlib.Path(
     os.environ.get("MINERVA_VENV") or (pathlib.Path.home() / ".minerva-services")
 ).expanduser()
@@ -49,17 +58,74 @@ def _venv_python() -> pathlib.Path:
     return VENV_DIR / "bin" / "python"
 
 
+def _import_name_for(spec):
+    # Map "psycopg[binary]" → "psycopg", "yt-dlp" → "yt_dlp",
+    # "opendataloader-pdf" → "opendataloader_pdf".
+    base = spec.split('[', 1)[0]
+    return base.replace('-', '_')
+
+
+def _missing_requirements():
+    out = []
+    for spec in REQUIREMENTS:
+        try:
+            __import__(_import_name_for(spec))
+        except ImportError:
+            out.append(spec)
+    return out
+
+
+def _pip_install(specs):
+    if not specs:
+        return 0
+    print(f"[minerva] installing into venv: {', '.join(specs)}", file=sys.stderr)
+    proc = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "--quiet", *specs],
+        check=False,
+    )
+    return proc.returncode
+
+
 def _bootstrap_and_reexec() -> None:
     target = _venv_python()
     current = pathlib.Path(sys.executable).resolve()
-    if target.exists() and current == target.resolve():
+    in_venv = target.exists() and current == target.resolve()
+
+    # Already running in the venv: just heal any missing deps in place
+    # (catches the "stale venv was created before this require list
+    # grew a new entry" trap that surfaces as ModuleNotFoundError on
+    # imports below this function).
+    if in_venv:
+        missing = _missing_requirements()
+        if missing:
+            rc = _pip_install(missing)
+            if rc != 0:
+                print(
+                    f"[minerva] pip install failed for {missing}. Try manually:\n"
+                    f"    {sys.executable} -m pip install {' '.join(missing)}",
+                    file=sys.stderr,
+                )
+                sys.exit(rc)
+        # Optional deps are best-effort — log on failure, never abort.
+        for spec in OPTIONAL_REQUIREMENTS:
+            try:
+                __import__(_import_name_for(spec))
+            except ImportError:
+                rc = _pip_install([spec])
+                if rc != 0:
+                    print(
+                        f"[minerva] optional dep {spec!r} not available; "
+                        "the matching endpoint will return a 500 with a clear "
+                        "message until you install it manually.",
+                        file=sys.stderr,
+                    )
         return
 
     if not target.exists():
         print(f"[minerva] creating venv at {VENV_DIR} …", file=sys.stderr)
         _venv.create(VENV_DIR, with_pip=True, symlinks=os.name != "nt")
 
-    print(f"[minerva] installing {', '.join(REQUIREMENTS)} into venv (one-time) …", file=sys.stderr)
+    print(f"[minerva] installing into venv (one-time): {', '.join(REQUIREMENTS)}", file=sys.stderr)
     proc = subprocess.run(
         [str(target), "-m", "pip", "install", "--upgrade", "--quiet", *REQUIREMENTS],
         check=False,
@@ -71,6 +137,11 @@ def _bootstrap_and_reexec() -> None:
             file=sys.stderr,
         )
         sys.exit(proc.returncode)
+    # Optional — silent failure, the venv re-exec below still proceeds.
+    subprocess.run(
+        [str(target), "-m", "pip", "install", "--upgrade", "--quiet", *OPTIONAL_REQUIREMENTS],
+        check=False,
+    )
 
     os.execv(str(target), [str(target), os.path.abspath(__file__), *sys.argv[1:]])
 
