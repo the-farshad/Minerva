@@ -3869,10 +3869,21 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   align-items: start;
 }
 .settings-body { min-width: 0; }
-.settings-section { min-width: 0; }
+.settings-section {
+  min-width: 0;
+  /* Hard cap: anything inside is clipped to the body cell width so no
+     wide child (long URL placeholder, generated <pre>, intrinsic-sized
+     input) can shove the whole layout sideways when switching sections. */
+  max-width: 100%;
+  overflow-x: clip;
+}
 .settings-section pre,
 .settings-section code,
-.settings-section .docker-tip-cmd { overflow-x: auto; }
+.settings-section .docker-tip-cmd { overflow-x: auto; max-width: 100%; }
+.settings-section input[type="url"],
+.settings-section input[type="text"],
+.settings-section input[type="password"],
+.settings-section input[type="email"] { width: 100%; max-width: 100%; box-sizing: border-box; }
 .settings-toc {
   position: sticky;
   top: 1rem;

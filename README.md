@@ -13,6 +13,7 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 ### Data
 - **Connect Google** — sign in with your own OAuth client; Minerva auto-creates (or finds) a `Minerva` spreadsheet in your Drive and seeds it with the meta tabs (`_config`, `_prefs`, `_log`) and the section tabs (`goals`, `tasks`, `projects`, `notes`, `habits`, `habit_log`), each with a header row + a type-hint row that defines how the app renders it.
 - **Local IndexedDB mirror** — every connect pulls the spreadsheet into a private store in your browser. Settings shows per-tab row counts and last-sync time; **Sync now** does a manual push-then-pull.
+- **Optional Postgres mirror** — when `minerva-services` is reachable (Docker compose ships PG + the helper container together), every successful Sheets push is also written to a local Postgres database. Sheets stays the source of truth; PG is the read-fast cache and the source for a Drive-backed `pg_dump` you can roll on demand. Settings → *Postgres mirror* shows the live status pill and a **Backup to Drive now** button.
 - **Click-to-edit anywhere** — every cell becomes an inline editor on click. Type-aware editors for text, number, date, datetime, check, dropdown (`select`), URL, color, multi-select chips (`multiselect`), star rating (`rating`), progress slider (`progress`), and ref/ref-multi pickers populated from the referenced tab. Long-form fields get a textarea; markdown columns render as actual markdown.
 - **Add / delete rows** — `+ Add row` button per section, `×` per row. Edits write to local first (instant UI), then a coalescing dirty-queue pushes them back to your spreadsheet. Pulling preserves any pending local edits.
 
@@ -40,7 +41,7 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 - **Proposals** preset — `funder`, `deadline`, `status`, plus the structured markdown sections (abstract, aims, methods, broader_impacts, timeline, budget, notes) reviewers expect.
 - **Funder-by-funder rules**: [`docs/proposal-guide.md`](docs/proposal-guide.md) covers NSF, NIH, ERC, DOE — page limits, what each section must contain, common reasons proposals get returned without review, and a 48-hour pre-submission checklist.
 - **AI assistant prompts** for proposal work — *NSF / NIH / ERC structure*, *critique my abstract*, *broader impacts brainstorm*.
-- **Inline PDF and YouTube preview** — link cells get a 👁 button when the URL is a PDF or YouTube video; click opens an embedded viewer modal.
+- **Inline PDF and YouTube preview** — link cells get a 👁 button when the URL is a PDF or YouTube video; click opens an embedded viewer modal. Papers mirrored to Drive open the original PDF (browser-native viewer, page-resume via `#page=N`); a side **Notes** pane binds to the row's `notes` column with a "+ p.{N}" stamp helper, and an **Extract** button shells out to `opendataloader-pdf` (via `minerva-services`) so you can append the parsed text into the same notes column.
 - **BibTeX export** per row (in the row-detail modal) and bulk-from-selection (in the bulk action bar).
 - **KaTeX** rendering for `latex` columns.
 
@@ -68,6 +69,8 @@ A lightweight personal planner. Goals, tasks, projects, notes, habits — backed
 - **Undo** — `⌘/Ctrl+Z` reverses the last edit / add / delete (50-deep stack in `localStorage`).
 - **Per-row offline video** — a Download button on every YouTube row. Wire it to a tiny local **helper service** (see [`docs/setup-local-services.md`](docs/setup-local-services.md)) — one Python script (or one Docker container) that runs yt-dlp downloads + a CORS proxy from the same process — for one-click downloads with a progress bar, or to a [Cobalt](https://github.com/imputnet/cobalt) instance, or upload a file you already have. Saved videos live in IndexedDB; the row gets a **Watch offline** button that plays the local copy with resume-where-you-left-off.
    - Prebuilt image on Docker Hub: `docker run -d --name minerva-services --restart unless-stopped -p 8765:8765 thefarshad/minerva-services:latest`. Paste `http://localhost:8765` and `http://localhost:8765/proxy?` into Settings.
+   - Full stack (helper + Postgres) with no checkout: `curl -O https://raw.githubusercontent.com/the-farshad/Minerva/main/docs/docker-compose.yml && docker compose up -d`.
+   - YouTube cookies for "Sign in to confirm you're not a bot": `python3 docs/minerva-services.py --refresh-cookies firefox` dumps cookies from your live browser into `~/.minerva/cookies.txt`. `docs/minerva-up.sh` does the refresh + `docker compose up -d` in one shot — drop it in a cron entry for hands-off freshness.
 
 ### YouTube tracker
 - **Tiles view** — visual card grid grouped by playlist or category, with thumbnails. Toggle from the section header.
