@@ -5124,6 +5124,11 @@ table.rows.rows-grouped tr.row-group-head td {
   padding: 0 0.4rem;
   color: var(--muted);
 }
+.downloads-tray-clear {
+  font-size: 0.74rem;
+  padding: 0.1rem 0.5rem;
+  line-height: 1.4;
+}
 .downloads-tray-body {
   pointer-events: auto;
   display: flex;

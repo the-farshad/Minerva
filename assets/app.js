@@ -7028,6 +7028,16 @@
     var head = el('div', { class: 'downloads-tray-head' });
     var label = el('span', { class: 'downloads-tray-label' }, 'Downloads');
     var count = el('span', { class: 'downloads-tray-count small muted' }, '');
+    var clearBtn = el('button', { class: 'btn btn-ghost btn-inline downloads-tray-clear', type: 'button',
+      title: 'Dismiss every job in the tray',
+      'aria-label': 'Clear downloads',
+      onclick: function () {
+        var body = tray.querySelector('.downloads-tray-body');
+        if (!body) return;
+        while (body.firstChild) body.removeChild(body.firstChild);
+        refreshDownloadsCount(tray);
+      }
+    }, 'Clear');
     var minBtn = el('button', { class: 'icon-btn downloads-tray-min', type: 'button',
       title: 'Minimize',
       'aria-label': 'Toggle downloads tray',
@@ -7038,6 +7048,7 @@
     }, '–');
     head.appendChild(label);
     head.appendChild(count);
+    head.appendChild(clearBtn);
     head.appendChild(minBtn);
     tray.appendChild(head);
     var body = el('div', { class: 'downloads-tray-body' });
@@ -11351,6 +11362,23 @@
     // verdict instead of waiting for a network round-trip mid-flush.
     if (Minerva.pg && Minerva.pg.probe) {
       Minerva.pg.probe().catch(function () { /* probe is best-effort */ });
+    }
+    // Hand the preview module a Drive-backed PDF blob loader so paper
+    // rows with a `drive:<fileId>` breadcrumb open the original PDF in
+    // the browser's native viewer (with #page=N resume) instead of
+    // Drive's preview iframe (which ignores the page fragment).
+    if (M.preview && typeof M.preview.setPdfBlobLoader === 'function') {
+      M.preview.setPdfBlobLoader(async function (fileId) {
+        var c = readConfig();
+        if (!c.clientId) throw new Error('Sign in to load Drive-mirrored PDFs.');
+        var token = await M.auth.getToken(c.clientId);
+        var resp = await fetch(
+          'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media',
+          { headers: { Authorization: 'Bearer ' + token } }
+        );
+        if (!resp.ok) throw new Error('Drive PDF fetch ' + resp.status);
+        return resp.blob();
+      });
     }
     // Consume an OAuth implicit-flow callback fragment (#access_token=…)
     // if the URL carries one. On success the call cleans the URL and

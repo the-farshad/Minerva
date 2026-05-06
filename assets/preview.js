@@ -490,6 +490,7 @@
       overlay.classList.toggle('preview-overlay-yt', isYt);
       overlay.classList.toggle('preview-overlay-pdf', isPdfNow);
 
+      revokeBlobIframes();
       while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
       var resumeAt = isYt ? readVideoResume(url) : 0;
 
@@ -515,18 +516,35 @@
           if (renderEpoch !== currentRenderEpoch) return;
           mountRemoteIframe(url, savedPage, resumeAt, isYt);
         });
-      } else if (isPdfNow && hit && hit.driveFileId) {
-        var driveSrc = 'https://drive.google.com/file/d/' +
-          encodeURIComponent(hit.driveFileId) + '/preview';
-        var iframe = document.createElement('iframe');
-        iframe.src = driveSrc;
-        iframe.allow = 'autoplay';
-        iframe.referrerPolicy = 'no-referrer';
-        iframe.style.width = '100%';
-        iframe.style.height = '100%';
-        iframe.style.border = '0';
-        iframe.title = 'PDF (Drive)';
-        frameHost.appendChild(iframe);
+      } else if (isPdfNow && hit && hit.driveFileId && pdfBlobLoader) {
+        var loading = document.createElement('div');
+        loading.className = 'preview-loading muted small';
+        loading.textContent = 'Loading PDF…';
+        frameHost.appendChild(loading);
+        pdfBlobLoader(hit.driveFileId).then(function (blob) {
+          if (renderEpoch !== currentRenderEpoch) return;
+          var page = readPdfPage(url) || 1;
+          var objUrl = URL.createObjectURL(blob);
+          var iframe = document.createElement('iframe');
+          iframe.className = 'preview-frame';
+          iframe.referrerPolicy = 'no-referrer';
+          iframe.allow = 'fullscreen';
+          iframe.src = objUrl + '#page=' + page;
+          iframe.title = 'PDF (Drive copy of original)';
+          while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+          frameHost.appendChild(iframe);
+          // Revoke the blob URL when the modal closes so memory frees.
+          iframe.addEventListener('load', function () {
+            // Defer revoke until next render or close so the iframe can
+            // resolve its src; revoking too eagerly aborts the load.
+          });
+          iframe.dataset.objUrl = objUrl;
+        }).catch(function (err) {
+          if (renderEpoch !== currentRenderEpoch) return;
+          console.warn('[Minerva pdf-blob-load]', err);
+          while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+          mountRemoteIframe(url, savedPage, resumeAt, isYt);
+        });
       } else {
         mountRemoteIframe(url, savedPage, resumeAt, isYt);
       }
@@ -569,9 +587,19 @@
       } catch (e) { /* ignore */ }
     }
 
+    function revokeBlobIframes() {
+      try {
+        var iframes = frameHost.querySelectorAll('iframe[data-obj-url]');
+        Array.prototype.forEach.call(iframes, function (n) {
+          var u = n.dataset.objUrl;
+          if (u) try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ }
+        });
+      } catch (e) { /* ignore */ }
+    }
     function close() {
       captureVideoResume();
       cleanupBlobVideo();
+      revokeBlobIframes();
       clearWatchTimer();
       try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
       overlay.remove();
@@ -771,6 +799,14 @@
   var offlineLookup = null;
   function setOfflineLookup(fn) { offlineLookup = (typeof fn === 'function') ? fn : null; }
   function clearOfflineLookup() { offlineLookup = null; }
+
+  // Fetcher for Drive-mirrored PDFs. The app registers a function that
+  // takes a Drive fileId and resolves to a Blob (using the OAuth token
+  // it holds). Mounting via blob: URL keeps the browser's native PDF
+  // viewer in play, so #page=N for resume keeps working — Drive's own
+  // viewer (drive.google.com/file/<id>/preview) ignores the fragment.
+  var pdfBlobLoader = null;
+  function setPdfBlobLoader(fn) { pdfBlobLoader = (typeof fn === 'function') ? fn : null; }
   // Open the row's Drive mirror in a new tab if the offline lookup
   // resolves a driveFileId for this URL. Returns true when handled,
   // false when no Drive copy is known so the caller can fall back.
@@ -805,6 +841,7 @@
     getPlaylistContext: getPlaylistContext,
     setOfflineLookup: setOfflineLookup,
     clearOfflineLookup: clearOfflineLookup,
+    setPdfBlobLoader: setPdfBlobLoader,
     openInDrive: openInDrive
   };
 })();
