@@ -174,29 +174,21 @@ python3 minerva-services.py --refresh-cookies firefox
 ```
 
 Schedule it hourly so the file stays fresh as YouTube rotates session
-tokens. With cron:
+tokens. The script can install a systemd-user timer for you:
 
+```sh
+python3 minerva-services.py --install-cookie-timer firefox
+```
+
+That writes `~/.config/systemd/user/minerva-cookies.{service,timer}` and
+enables the timer. First refresh fires ~2 min after install, then once
+an hour. Inspect with `systemctl --user status minerva-cookies.timer`;
+disable later with `systemctl --user disable --now minerva-cookies.timer`.
+
+Cron alternative (works without systemd):
 ```cron
 0 * * * *  /usr/bin/python3 /path/to/minerva-services.py --refresh-cookies firefox
 ```
-
-Or with a systemd timer (more reliable across reboots):
-`~/.config/systemd/user/minerva-cookies.service`
-```ini
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/python3 %h/projects/Minerva/docs/minerva-services.py --refresh-cookies firefox
-```
-`~/.config/systemd/user/minerva-cookies.timer`
-```ini
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=1h
-Persistent=true
-[Install]
-WantedBy=timers.target
-```
-`systemctl --user enable --now minerva-cookies.timer`
 
 *Manual export* (use this if the automatic path fails — e.g. a Snap or
 Flatpak browser sandbox blocks reading the cookie DB). Install the

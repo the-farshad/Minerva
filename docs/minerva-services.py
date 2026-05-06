@@ -779,6 +779,70 @@ def _refresh_cookies(browser):
     return 1
 
 
+def _install_cookie_timer(browser):
+    """Install a systemd-user timer that runs --refresh-cookies hourly.
+
+    The timer + service unit pair lives under ~/.config/systemd/user/.
+    Once enabled, cookies stay fresh as long as the user is logged in
+    on the host — no cron entry to copy, no script to remember.
+    Idempotent: re-running rewrites both unit files and re-enables.
+    """
+    if os.name == "nt":
+        print("[minerva] systemd timer is Linux-only. Use Task Scheduler on Windows.", file=sys.stderr)
+        return 1
+    if not shutil.which("systemctl"):
+        print(
+            "[minerva] systemctl not found. On macOS use a launchd plist; on a "
+            "non-systemd Linux drop the cron snippet from setup-local-services.md instead.",
+            file=sys.stderr,
+        )
+        return 1
+    home = pathlib.Path.home()
+    config_dir = home / ".config" / "systemd" / "user"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    script_path = pathlib.Path(__file__).resolve()
+    py = sys.executable or "/usr/bin/python3"
+    chosen = browser or "firefox"
+
+    service = (
+        "[Unit]\n"
+        "Description=Minerva — refresh YouTube cookies for yt-dlp\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        f"ExecStart={py} {script_path} --refresh-cookies {chosen}\n"
+    )
+    timer = (
+        "[Unit]\n"
+        "Description=Refresh Minerva cookies on a schedule\n"
+        "\n"
+        "[Timer]\n"
+        "OnBootSec=2min\n"
+        "OnUnitActiveSec=1h\n"
+        "Persistent=true\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+    (config_dir / "minerva-cookies.service").write_text(service)
+    (config_dir / "minerva-cookies.timer").write_text(timer)
+    try:
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(
+            ["systemctl", "--user", "enable", "--now", "minerva-cookies.timer"],
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(f"[minerva] systemctl failed: {exc}", file=sys.stderr)
+        return exc.returncode or 1
+    print(f"[minerva] cookie-refresh timer installed (browser={chosen}).")
+    print("           First fire: ~2 min after this command. Then every hour.")
+    print("           Status:    systemctl --user status minerva-cookies.timer")
+    print("           Logs:      journalctl --user -u minerva-cookies.service")
+    print("           Stop:      systemctl --user disable --now minerva-cookies.timer")
+    return 0
+
+
 if __name__ == "__main__":
     # --refresh-cookies [browser] runs the dump and exits without
     # starting the Flask server. Useful in a cron entry like:
@@ -787,6 +851,12 @@ if __name__ == "__main__":
         i = sys.argv.index("--refresh-cookies")
         chosen = sys.argv[i + 1] if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("-") else None
         sys.exit(_refresh_cookies(chosen))
+    # --install-cookie-timer [browser] writes a systemd-user timer that
+    # runs the refresh hourly. One-shot setup; nothing to remember after.
+    if "--install-cookie-timer" in sys.argv:
+        i = sys.argv.index("--install-cookie-timer")
+        chosen = sys.argv[i + 1] if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("-") else None
+        sys.exit(_install_cookie_timer(chosen))
 
     host = os.environ.get("MINERVA_HOST", "127.0.0.1")
     port = int(os.environ.get("MINERVA_PORT", "8765"))
