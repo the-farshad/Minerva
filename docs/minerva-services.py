@@ -1451,6 +1451,14 @@ if __name__ == "__main__":
     if sub == "install-timer":
         chosen = sys.argv[2] if len(sys.argv) > 2 else None
         sys.exit(_install_cookie_timer(chosen))
+    # Catch typos: any non-empty `sub` that isn't an explicit `serve`
+    # is treated as an unknown subcommand. Without this, a fat-finger
+    # like `test-cockies` silently fell through to "start the Flask
+    # server", which then collided with whatever was already on 8765.
+    if sub and sub != "serve":
+        print(f"[minerva] unknown subcommand: {sub!r}", file=sys.stderr)
+        _print_help()
+        sys.exit(2)
     # Bare invocation (or `serve`) → start the Flask server. This is the
     # path the container's CMD uses; running it on the host with no
     # subcommand drops you straight into the helper, same as before.
