@@ -3470,6 +3470,7 @@
       { name: 'playlist',  type: 'text', before: 'url' },
       { name: 'category',  type: 'multiselect(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)', before: 'url' },
       { name: 'published', type: 'date', before: 'watched' },
+      { name: 'notes',     type: 'markdown', before: '_updated' },
       { name: 'offline',   type: 'text', before: '_updated' }
     ]);
   }
@@ -5787,6 +5788,7 @@
   // table-row routing.
   function renderTiles(meta, rows, tab, refresh, offlineIds) {
     var headers = (meta && meta.headers) || [];
+    var hasCategoryCol = headers.indexOf('category') >= 0;
     var groupCol = headers.indexOf('playlist') >= 0 ? 'playlist'
       : (headers.indexOf('category') >= 0 ? 'category'
         : (headers.indexOf('kind') >= 0 ? 'kind' : ''));
@@ -5890,6 +5892,19 @@
       // mirror-to-Drive flow (format: "yt-dlp · 12.3 MB · drive:1abc…").
       var driveIdMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
       var driveFileId = driveIdMatch ? driveIdMatch[1] : '';
+      // Host fallback marker — written by the IDB-quota fallback path
+      // in downloadOfflineViaYtDlp. Format: "host:/srv/files/videos/x.mp4".
+      var hostMatch = String(r.offline || '').match(/(?:^|\s)host:(\S+)/);
+      var hostPath = hostMatch ? hostMatch[1] : '';
+      function hostServeUrl() {
+        if (!hostPath) return '';
+        var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
+        if (!endpoint) return '';
+        return endpoint + '/file/serve?path=' + encodeURIComponent(hostPath);
+      }
+      if (rowHasBlob || hostPath || driveFileId) {
+        try { tile.classList.add('tile-has-offline'); } catch (e) {}
+      }
 
       // Tile actions: Watch / Mirror stays visible (added below).
       // Edit / Delete / Save-to-disk / Remove-offline live in a
@@ -6045,23 +6060,40 @@
       thumb.appendChild(actionsHost);
 
       if (hasOffline && hasUrl && url) {
-        if (rowHasBlob) {
+        if (rowHasBlob || hostPath) {
           var watchBtn = el('button', {
             type: 'button',
             class: 'tile-action tile-watch',
-            title: 'Play the locally-saved file',
+            title: hostPath
+              ? 'Play from ~/Minerva/videos via the helper'
+              : 'Play the locally-saved file',
             'aria-label': 'Watch offline',
             onclick: async function (e) {
               e.preventDefault();
               e.stopPropagation();
               try {
-                var rec = await M.db.getVideo(tab, r.id);
-                if (rec && rec.blob && M.preview && M.preview.showVideoBlob) {
-                  M.preview.showVideoBlob({
-                    url: URL.createObjectURL(rec.blob),
-                    title: r.title || (titleCol && r[titleCol]) || 'Offline video',
-                    sourceUrl: url
-                  });
+                if (rowHasBlob) {
+                  var rec = await M.db.getVideo(tab, r.id);
+                  if (rec && rec.blob && M.preview && M.preview.showVideoBlob) {
+                    M.preview.showVideoBlob({
+                      url: URL.createObjectURL(rec.blob),
+                      title: r.title || (titleCol && r[titleCol]) || 'Offline video',
+                      sourceUrl: url
+                    });
+                  }
+                } else if (hostPath) {
+                  var serveUrl = hostServeUrl();
+                  if (!serveUrl) {
+                    flash(document.body, 'Set the helper URL in Settings.', 'error');
+                    return;
+                  }
+                  if (M.preview && M.preview.showVideoBlob) {
+                    M.preview.showVideoBlob({
+                      url: serveUrl,
+                      title: r.title || (titleCol && r[titleCol]) || 'Offline video',
+                      sourceUrl: url
+                    });
+                  }
                 }
               } catch (err) { /* ignore */ }
             }
@@ -6214,6 +6246,20 @@
             }
           } catch (err) { /* fall through to URL preview */ }
         }
+        // Host-saved fallback (IDB quota path) — stream from the
+        // helper's /file/serve. Rendered as a normal in-app video
+        // panel so the user gets the same controls as the IDB path.
+        if (hostPath && M.preview && M.preview.showVideoBlob) {
+          var serveUrl = hostServeUrl();
+          if (serveUrl) {
+            M.preview.showVideoBlob({
+              url: serveUrl,
+              title: r.title || (titleCol && r[titleCol]) || 'Offline video',
+              sourceUrl: url
+            });
+            return;
+          }
+        }
         if (url && window.Minerva && Minerva.preview) {
           Minerva.preview.show(url);
         } else {
@@ -6335,32 +6381,82 @@
           });
           dlAllBtn.appendChild(M.render.icon('download'));
           head.appendChild(dlAllBtn);
+        }
 
-          // Per-group "delete all" — mirrors the list-view group
-          // delete. Wipes every row in the playlist and the offline
-          // blobs they own (deleteRow cascades to the videos store).
-          var rmAllBtn = el('button', {
+        // Per-group "set category" — only when (a) a category column
+        // exists on the section and (b) we're grouping by something
+        // *other* than category itself (otherwise the rename button
+        // already does this). Lets a user paint a category onto every
+        // row in a playlist in one shot.
+        if (hasCategoryCol && groupCol !== 'category') {
+          var groupRowsForCat = groupRows;
+          var catBtn = el('button', {
             type: 'button',
-            class: 'icon-btn row-group-rm tiles-group-rm',
-            title: 'Delete every video in "' + key + '" (and their offline copies)',
-            'aria-label': 'Delete playlist',
+            class: 'icon-btn tiles-group-cat',
+            title: 'Set category for every row in "' + key + '"',
+            'aria-label': 'Set category',
             onclick: async function (e) {
-              e.preventDefault();
-              e.stopPropagation();
-              var n = groupRowsClosure.length;
-              if (!n) return;
-              if (!confirm('Delete ' + n + ' video' + (n === 1 ? '' : 's') + ' from "' + key + '"? Offline copies are removed too.')) return;
-              for (var i = 0; i < n; i++) {
-                try { await deleteRow(tab, groupRowsClosure[i].id); }
-                catch (er) { console.warn('[Minerva grid-group-rm]', er); }
+              e.preventDefault(); e.stopPropagation();
+              var existing = '';
+              for (var ci = 0; ci < groupRowsForCat.length; ci++) {
+                var rr = groupRowsForCat[ci];
+                var cv = rr.category && String(rr.category).trim();
+                if (cv) { existing = cv; break; }
               }
+              var ans = window.prompt(
+                'Set category for ' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's')
+                + ' in "' + key + '" (comma-separated; leave blank to clear):',
+                existing
+              );
+              if (ans === null) return;
+              var next = String(ans).trim();
+              for (var cj = 0; cj < groupRowsForCat.length; cj++) {
+                var fr = await M.db.getRow(tab, groupRowsForCat[cj].id);
+                if (!fr) continue;
+                fr.category = next;
+                fr._dirty = 1;
+                fr._updated = new Date().toISOString();
+                await M.db.upsertRow(tab, fr);
+              }
+              schedulePush();
               if (refresh) await refresh();
-              flash(document.body, 'Deleted ' + n + ' video' + (n === 1 ? '' : 's') + '.');
+              flash(document.body,
+                next
+                  ? 'Set category to "' + next + '" on ' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's') + '.'
+                  : 'Cleared category on ' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's') + '.'
+              );
             }
           });
-          rmAllBtn.appendChild(M.render.icon('trash-2'));
-          head.appendChild(rmAllBtn);
+          catBtn.appendChild(M.render.icon('tag'));
+          head.appendChild(catBtn);
         }
+
+        // Per-group "delete all" — always offered when a group column
+        // is in play, not just when the section has offline+url. A
+        // papers section (no playlist column) groups by category and
+        // still needs a one-click way to wipe a category.
+        var groupRowsForDel = groupRows;
+        var rmAllBtn = el('button', {
+          type: 'button',
+          class: 'icon-btn row-group-rm tiles-group-rm',
+          title: 'Delete every row in "' + key + '"' + (hasOffline ? ' (and their offline copies)' : ''),
+          'aria-label': 'Delete group',
+          onclick: async function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var n = groupRowsForDel.length;
+            if (!n) return;
+            if (!confirm('Delete ' + n + ' row' + (n === 1 ? '' : 's') + ' from "' + key + '"?' + (hasOffline ? ' Offline copies are removed too.' : ''))) return;
+            for (var i = 0; i < n; i++) {
+              try { await deleteRow(tab, groupRowsForDel[i].id); }
+              catch (er) { console.warn('[Minerva grid-group-rm]', er); }
+            }
+            if (refresh) await refresh();
+            flash(document.body, 'Deleted ' + n + ' row' + (n === 1 ? '' : 's') + '.');
+          }
+        });
+        rmAllBtn.appendChild(M.render.icon('trash-2'));
+        head.appendChild(rmAllBtn);
         wrap.appendChild(head);
         if (!isCol) {
           var grid = el('div', { class: 'tiles-grid' });
@@ -7480,7 +7576,16 @@
       resp = await fetch(pdfUrl);
       if (!resp.ok) throw new Error('direct ' + resp.status);
     } catch (e) {
-      var prefix = (readConfig().corsProxy || '').trim();
+      var cfg = readConfig();
+      var prefix = (cfg.corsProxy || '').trim();
+      // Helper service exposes /proxy?<url> as a no-CORS-needed
+      // passthrough. Use it as the implicit fallback when the user
+      // hasn't configured an external CORS proxy — saves a round-trip
+      // through corsproxy.io for users running the local helper.
+      if (!prefix) {
+        var helper = (cfg.ytDlpServer || '').trim().replace(/\/+$/, '');
+        if (helper) prefix = helper + '/proxy?';
+      }
       if (!prefix) throw new Error('PDF fetch blocked by CORS and no proxy configured');
       resp = await fetch(prefix + encodeURIComponent(pdfUrl));
       if (!resp.ok) throw new Error('proxy ' + resp.status);
@@ -10520,6 +10625,20 @@
         row._dirty = 1;
         await M.db.upsertRow(tab, row);
         schedulePush();
+        // Clear any active category filter that would otherwise hide
+        // the new row (the most common "I added it but I don't see
+        // it" report is a user with category=X filter on, adding a
+        // paper without that category). Resolves cleanly when the
+        // chosen category matches the filter — writeCategoryFilter
+        // is a no-op for matches.
+        try {
+          var activeFilter = readCategoryFilter(tab);
+          var rowCats = String(row.category || '')
+            .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+          if (activeFilter && rowCats.indexOf(activeFilter) < 0) {
+            writeCategoryFilter(tab, '');
+          }
+        } catch (e) { /* non-fatal */ }
         overlay.remove();
         flash(document.body, 'Added: ' + (fetched.title || fetched.url || 'row'));
         // Mirror the PDF to Drive when the user opted in. Best-effort:

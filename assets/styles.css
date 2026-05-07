@@ -2184,8 +2184,18 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   z-index: 500;
 }
 .tile-actions { z-index: 5; }
-.tile { overflow: visible; }
+/* Tile clips its children so the thumbnail's sharp corners follow
+   the tile's border-radius. The kebab menu portals to <body>, so
+   it doesn't need overflow: visible to escape any more. */
+.tile { overflow: hidden; }
 .tile-thumb { position: relative; }
+.tile-thumb img {
+  /* Cover the thumb area edge-to-edge but never spill past it. */
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .tile-menu-item {
   display: inline-flex;
   align-items: center;

@@ -895,6 +895,38 @@ def file_save():
     return jsonify({"ok": True, "path": str(safe)})
 
 
+@app.route("/file/serve", methods=["GET", "OPTIONS"])
+def file_serve():
+    """Stream a previously /file/save'd file back to the browser.
+
+    The browser stores `host:<path>` in the row's offline column when
+    IDB hits its quota. Playback then needs to read the bytes back —
+    that's this endpoint. Path must resolve inside MINERVA_FILES_ROOT.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    raw = (request.args.get("path") or "").strip()
+    if not raw:
+        return (jsonify({"ok": False, "error": "Missing 'path'."}), 400, _cors_dict())
+    p = pathlib.Path(raw).expanduser()
+    try:
+        p_resolved = p.resolve()
+        p_resolved.relative_to(MINERVA_FILES_ROOT.resolve())
+    except Exception:
+        return (jsonify({"ok": False, "error": "Path outside files root."}), 400, _cors_dict())
+    if not p_resolved.exists() or not p_resolved.is_file():
+        return (jsonify({"ok": False, "error": "Not found."}), 404, _cors_dict())
+    # Best-effort mime from extension; default to octet-stream so the
+    # <video> tag's source-detection still tries to play it.
+    import mimetypes as _mt
+    mime, _ = _mt.guess_type(p_resolved.name)
+    resp = send_file(str(p_resolved), mimetype=mime or "application/octet-stream",
+                     conditional=True)
+    for k, v in _cors_dict().items():
+        resp.headers[k] = v
+    return resp
+
+
 @app.route("/file/reveal", methods=["POST", "OPTIONS"])
 def file_reveal():
     if request.method == "OPTIONS":
