@@ -938,6 +938,22 @@ def _refresh_cookies(browser):
                 errors.append(f"{b}: 0 cookies (not logged in or profile DB unreadable)")
                 continue
             cj.save(str(target), ignore_discard=True, ignore_expires=True)
+            # yt-dlp's loader is strict about the first line — if for
+            # any reason the saved file lacks the Netscape header,
+            # prepend it so a downstream `cookiefile=` read doesn't
+            # throw "does not look like a Netscape format cookies file".
+            try:
+                with open(str(target), "r", encoding="utf-8", errors="replace") as fh:
+                    head = fh.read(80)
+                if not head.startswith("# Netscape HTTP Cookie File"):
+                    with open(str(target), "r", encoding="utf-8", errors="replace") as fh:
+                        body = fh.read()
+                    with open(str(target), "w", encoding="utf-8") as fh:
+                        fh.write("# Netscape HTTP Cookie File\n")
+                        fh.write("# https://curl.se/docs/http-cookies.html\n")
+                        fh.write(body if body.startswith("\n") else body)
+            except Exception:
+                pass
             print(f"[minerva] wrote {target} from {b} ({n} cookies)")
             return 0
         except Exception as exc:  # noqa: BLE001
