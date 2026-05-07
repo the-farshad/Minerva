@@ -7186,6 +7186,22 @@
         card.classList.remove('is-running');
         card.classList.add('is-error');
         statusEl.textContent = text;
+        // Surface a Retry button when the caller supplied a retry
+        // function in addDownloadJob({retry: fn}). Clicking it removes
+        // the failed card and re-runs the original async work, so a
+        // transient yt-dlp / network failure doesn't force the user
+        // to find the source row and click Download again.
+        if (typeof opts.retry === 'function' && !card.querySelector('.dl-job-retry')) {
+          var retryBtn = el('button', {
+            class: 'btn dl-job-action dl-job-retry', type: 'button',
+            onclick: function () {
+              try { card.remove(); refreshDownloadsCount(tray); } catch (e) {}
+              try { opts.retry(); } catch (e) {}
+            }
+          }, M.render.icon('refresh-cw'), ' Retry');
+          card.appendChild(retryBtn);
+          if (M.render && M.render.refreshIcons) M.render.refreshIcons();
+        }
       }
     };
   }
@@ -7293,7 +7309,10 @@
       return;
     }
     var fmt = cfg.ytDlpFormat || 'mp4';
-    var job = addDownloadJob({ title: row.title || row.url });
+    var job = addDownloadJob({
+      title: row.title || row.url,
+      retry: function () { downloadOfflineViaYtDlp(tab, row, refresh); }
+    });
     job.setStatus('Asking yt-dlp server…');
 
     try {

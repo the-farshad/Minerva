@@ -379,29 +379,50 @@
         var chip = document.createElement('button');
         chip.className = 'preview-bm';
         chip.type = 'button';
-        chip.title = 'Jump to ' + label + (mk.label ? ' — ' + mk.label : '');
-        chip.textContent = label + (mk.label ? ' · ' + mk.label : '');
-        chip.addEventListener('click', function () {
-          if (mk.kind === 'video' && ytPlayer && typeof ytPlayer.seekTo === 'function') {
-            try { ytPlayer.seekTo(mk.ref, true); ytPlayer.playVideo && ytPlayer.playVideo(); } catch (e) {}
-          } else if (mk.kind === 'pdf') {
-            pageInput.value = String(mk.ref);
-            writePdfPage(item.url, mk.ref);
-            while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
-            frameHost.appendChild(buildIframeForUrl(item.url, mk.ref));
-          }
+        var hasNote = mk.note && mk.note.trim();
+        var titleParts = ['Jump to ' + label];
+        if (mk.label) titleParts.push(mk.label);
+        if (hasNote) titleParts.push(mk.note.split('\n')[0].slice(0, 80) + (mk.note.length > 80 ? '…' : ''));
+        chip.title = titleParts.join(' — ');
+        chip.textContent = label
+          + (mk.label ? ' · ' + mk.label : '')
+          + (hasNote ? ' 📝' : '');
+        (function (mark, idx) {
+          chip.addEventListener('click', function () {
+            if (mark.kind === 'video' && ytPlayer && typeof ytPlayer.seekTo === 'function') {
+              try { ytPlayer.seekTo(mark.ref, true); ytPlayer.playVideo && ytPlayer.playVideo(); } catch (e) {}
+            } else if (mark.kind === 'pdf') {
+              pageInput.value = String(mark.ref);
+              writePdfPage(item.url, mark.ref);
+              while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+              frameHost.appendChild(buildIframeForUrl(item.url, mark.ref));
+            }
+          });
+        })(mk, i);
+        var ed = document.createElement('button');
+        ed.className = 'preview-bm-edit';
+        ed.type = 'button';
+        ed.title = hasNote ? 'View / edit note' : 'Add a markdown note';
+        ed.textContent = hasNote ? '📝' : '✎';
+        ed.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openBookmarkEditor(item.url, mk);
         });
         var rm = document.createElement('button');
         rm.className = 'preview-bm-rm';
         rm.type = 'button';
         rm.title = 'Remove bookmark';
         rm.textContent = '×';
-        rm.addEventListener('click', function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          removeBookmark(item.url, i);
-          paintBookmarks();
-        });
+        (function (idx) {
+          rm.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            removeBookmark(item.url, idx);
+            paintBookmarks();
+          });
+        })(i);
+        chip.appendChild(ed);
         chip.appendChild(rm);
         bmDrawer.appendChild(chip);
       });
@@ -415,16 +436,98 @@
         var t = 0;
         try { if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') t = Math.floor(ytPlayer.getCurrentTime() || 0); }
         catch (e) {}
-        var label = window.prompt('Bookmark label (optional):', '') || '';
-        addBookmark(url, { kind: 'video', ref: t, label: label.trim(), ts: Date.now() });
-        paintBookmarks();
+        openBookmarkEditor(url, { kind: 'video', ref: t, label: '', note: '', ts: Date.now() });
       } else if (isPdfNow) {
         var p = parseInt(pageInput.value, 10) || 1;
-        var lbl = window.prompt('Bookmark label for page ' + p + ' (optional):', '') || '';
-        addBookmark(url, { kind: 'pdf', ref: p, label: lbl.trim(), ts: Date.now() });
-        paintBookmarks();
+        openBookmarkEditor(url, { kind: 'pdf', ref: p, label: '', note: '', ts: Date.now() });
       }
     });
+
+    // Markdown-aware bookmark editor. Opens a small overlay with a
+    // single-line label + a markdown body, so a bookmark can carry
+    // structured notes ("## why this matters") tied to a video time
+    // or a PDF page. Existing bookmarks open the same editor so the
+    // body can be edited in place.
+    function openBookmarkEditor(url, mark) {
+      var existingIndex = -1;
+      var list = readBookmarks(url);
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].kind === mark.kind && list[i].ref === mark.ref) {
+          existingIndex = i;
+          mark = Object.assign({ note: '' }, list[i]);
+          break;
+        }
+      }
+      var overlay = document.createElement('div');
+      overlay.className = 'modal-overlay bm-editor-overlay';
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) overlay.remove();
+      });
+      var panel = document.createElement('div');
+      panel.className = 'modal-panel bm-editor-panel';
+      var refLabel = mark.kind === 'video'
+        ? Math.floor(mark.ref / 60) + ':' + String(mark.ref % 60).padStart(2, '0')
+        : ('p.' + mark.ref);
+      var head = document.createElement('div');
+      head.className = 'bm-editor-head';
+      head.appendChild(document.createTextNode('Bookmark ' + refLabel));
+      var labelInput = document.createElement('input');
+      labelInput.type = 'text';
+      labelInput.className = 'bm-editor-label';
+      labelInput.placeholder = 'Label (one line)';
+      labelInput.value = mark.label || '';
+      var noteArea = document.createElement('textarea');
+      noteArea.className = 'bm-editor-note';
+      noteArea.placeholder = 'Markdown notes for this bookmark — ## headings, **bold**, lists, etc.';
+      noteArea.value = mark.note || '';
+      var actions = document.createElement('div');
+      actions.className = 'bm-editor-actions';
+      var saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'btn';
+      saveBtn.textContent = existingIndex >= 0 ? 'Update' : 'Save';
+      var deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn btn-ghost';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.style.display = existingIndex >= 0 ? '' : 'none';
+      var cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'btn btn-ghost';
+      cancelBtn.textContent = 'Cancel';
+      saveBtn.addEventListener('click', function () {
+        var next = Object.assign({}, mark, {
+          label: labelInput.value.trim(),
+          note: noteArea.value,
+          ts: mark.ts || Date.now()
+        });
+        var fresh = readBookmarks(url);
+        if (existingIndex >= 0) fresh[existingIndex] = next;
+        else fresh.push(next);
+        writeBookmarks(url, fresh);
+        paintBookmarks();
+        overlay.remove();
+      });
+      deleteBtn.addEventListener('click', function () {
+        if (existingIndex < 0) return;
+        var fresh = readBookmarks(url);
+        fresh.splice(existingIndex, 1);
+        writeBookmarks(url, fresh);
+        paintBookmarks();
+        overlay.remove();
+      });
+      cancelBtn.addEventListener('click', function () { overlay.remove(); });
+      actions.appendChild(saveBtn);
+      actions.appendChild(deleteBtn);
+      actions.appendChild(cancelBtn);
+      panel.appendChild(head);
+      panel.appendChild(labelInput);
+      panel.appendChild(noteArea);
+      panel.appendChild(actions);
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+      labelInput.focus();
+    }
 
     var frameHost = document.createElement('div');
     frameHost.className = 'preview-frame-host';

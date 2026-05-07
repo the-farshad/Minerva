@@ -5219,6 +5219,59 @@ table.rows.rows-grouped tr.row-group-head td {
   margin: 0.5rem 0 0.75rem;
 }
 
+/* --- Bookmark editor ------------------------------------------- */
+.bm-editor-overlay { z-index: 120; }
+.bm-editor-panel {
+  width: min(540px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+}
+.bm-editor-head { font-weight: 600; }
+.bm-editor-label {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.95rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.bm-editor-note {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 200px;
+  resize: vertical;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 0.85rem var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  line-height: 1.5;
+}
+.bm-editor-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+.preview-bm-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.25rem;
+  padding: 0 0.25rem;
+  font-size: 0.8rem;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  cursor: pointer;
+}
+.preview-bm-edit:hover { color: var(--fg); }
+
 /* --- PDF.js viewer + highlights ------------------------------- */
 .preview-pdfjs {
   width: 100%;
