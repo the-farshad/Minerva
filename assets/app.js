@@ -5891,110 +5891,148 @@
       var driveIdMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
       var driveFileId = driveIdMatch ? driveIdMatch[1] : '';
 
-      // Edit affordance is always present on every tile so the user
-      // can change categories / tags / any other column without
-      // leaving grid view. Opens the full row-detail modal.
+      // Tile actions: Watch / Mirror stays visible (added below).
+      // Edit / Delete / Save-to-disk / Remove-offline live in a
+      // kebab popover so the action strip doesn't crowd the
+      // thumbnail.
       var actionsHost = el('div', { class: 'tile-actions' });
-      var editBtn = el('button', {
-        type: 'button',
-        class: 'tile-action tile-edit',
-        title: 'Edit row (categories, tags, all fields)',
-        'aria-label': 'Edit row',
-        onclick: function (e) {
-          e.preventDefault(); e.stopPropagation();
-          if (typeof showRowDetail === 'function') showRowDetail(tab, r.id);
-        }
-      });
-      editBtn.appendChild(M.render.icon('pencil'));
-      actionsHost.appendChild(editBtn);
 
-      var delBtn = el('button', {
-        type: 'button',
-        class: 'tile-action tile-delete',
-        title: 'Delete this row entirely (not just the offline copy)',
-        'aria-label': 'Delete row',
-        onclick: async function (e) {
-          e.preventDefault(); e.stopPropagation();
-          if (!confirm('Delete this row? Your local copy is removed and the next sync deletes it from the spreadsheet.')) return;
-          try {
-            await deleteRow(tab, r.id);
-            if (refresh) await refresh();
-          } catch (err) {
-            flash(document.body, 'Delete failed: ' + (err && err.message || err), 'error');
-          }
-        }
-      });
-      delBtn.appendChild(M.render.icon('trash-2'));
-      actionsHost.appendChild(delBtn);
-
-      // Save-to-host disk button — visible whenever the row has an
-      // offline blob in IDB (videos) or a Drive copy (papers). One
-      // click writes to ~/Minerva/<kind>/<title>.<ext> via the helper.
-      if (rowHasBlob || driveFileId) {
-        var diskBtn = el('button', {
+      function tileMenuItem(icon, label, danger, run) {
+        var b = el('button', {
           type: 'button',
-          class: 'tile-action tile-disk',
-          title: 'Save a copy to ~/Minerva on your host (so you can open it in your file manager)',
-          'aria-label': 'Save to disk',
-          onclick: async function (e) {
+          class: 'tile-menu-item' + (danger ? ' is-danger' : ''),
+          onclick: function (e) {
             e.preventDefault(); e.stopPropagation();
-            var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
-            if (!endpoint) {
-              flash(document.body, 'Set the helper URL in Settings first.', 'error');
-              return;
-            }
-            var origTitle = diskBtn.title;
-            diskBtn.disabled = true;
-            try {
-              var bytes, ext, kind;
-              if (rowHasBlob) {
-                var rec = await M.db.getVideo(tab, r.id);
-                if (!rec || !rec.blob) throw new Error('No offline blob.');
-                bytes = await rec.blob.arrayBuffer();
-                ext = (rec.mime && /mp4/i.test(rec.mime)) ? '.mp4' : '';
-                kind = 'videos';
-              } else {
-                var c = readConfig();
-                if (!c.clientId) throw new Error('Sign in first.');
-                var token = await M.auth.getToken(c.clientId);
-                var resp = await fetch(
-                  'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(driveFileId) + '?alt=media',
-                  { headers: { Authorization: 'Bearer ' + token } }
-                );
-                if (!resp.ok) throw new Error('Drive ' + resp.status);
-                bytes = await resp.arrayBuffer();
-                ext = '.pdf';
-                kind = 'papers';
-              }
-              var stem = String(r.title || r.id || 'file').replace(/[^\w.\- ]+/g, '_').slice(0, 100);
-              if (ext && !stem.toLowerCase().endsWith(ext)) stem += ext;
-              var saveResp = await fetch(
-                endpoint + '/file/save?kind=' + encodeURIComponent(kind) + '&name=' + encodeURIComponent(stem),
-                { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }
-              );
-              var saveJson = await saveResp.json();
-              if (!saveJson.ok) throw new Error(saveJson.error || ('save ' + saveResp.status));
-              var revealResp = await fetch(endpoint + '/file/reveal', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: saveJson.path })
-              });
-              var revealJson = {};
-              try { revealJson = await revealResp.json(); } catch (er) {}
-              flash(document.body,
-                revealJson.in_container
-                  ? ('Saved to ~/Minerva/' + kind + ' on your host.')
-                  : ('Opened ' + saveJson.path + ' in your file manager.'), 'ok');
-            } catch (err) {
-              flash(document.body, 'Save failed: ' + (err && err.message || err), 'error');
-            } finally {
-              diskBtn.disabled = false;
-              diskBtn.title = origTitle;
-            }
+            try { run(); } finally { closeTileMenu(); }
           }
         });
-        diskBtn.appendChild(M.render.icon('hard-drive'));
-        actionsHost.appendChild(diskBtn);
+        b.appendChild(M.render.icon(icon));
+        b.appendChild(document.createTextNode(' ' + label));
+        return b;
       }
+      var openMenu = null;
+      function closeTileMenu() {
+        if (openMenu) {
+          try { openMenu.remove(); } catch (e) {}
+          openMenu = null;
+          document.removeEventListener('click', closeTileMenu);
+        }
+      }
+      var kebabBtn = el('button', {
+        type: 'button',
+        class: 'tile-action tile-kebab',
+        title: 'More actions',
+        'aria-label': 'More actions',
+        onclick: function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (openMenu) { closeTileMenu(); return; }
+          var menu = el('div', { class: 'tile-menu' });
+          menu.addEventListener('click', function (ev) { ev.stopPropagation(); });
+          menu.appendChild(tileMenuItem('pencil', 'Edit row', false, function () {
+            if (typeof showRowDetail === 'function') showRowDetail(tab, r.id);
+          }));
+          if (rowHasBlob || driveFileId) {
+            menu.appendChild(tileMenuItem('hard-drive', 'Save to ~/Minerva', false, function () {
+              saveTileToHost();
+            }));
+          }
+          if (rowHasBlob) {
+            menu.appendChild(tileMenuItem('cloud-off', 'Remove offline copy', false, function () {
+              dropOfflineBlob();
+            }));
+          }
+          menu.appendChild(tileMenuItem('trash-2', 'Delete row', true, async function () {
+            if (!confirm('Delete this row? Your local copy is removed and the next sync deletes it from the spreadsheet.')) return;
+            try {
+              await deleteRow(tab, r.id);
+              if (refresh) await refresh();
+            } catch (err) {
+              flash(document.body, 'Delete failed: ' + (err && err.message || err), 'error');
+            }
+          }));
+          actionsHost.appendChild(menu);
+          openMenu = menu;
+          // Close on next click anywhere else.
+          setTimeout(function () { document.addEventListener('click', closeTileMenu); }, 0);
+        }
+      });
+      kebabBtn.appendChild(M.render.icon('more-vertical'));
+      actionsHost.appendChild(kebabBtn);
+
+      async function dropOfflineBlob() {
+        if (!confirm('Drop the local offline copy? The row stays — you can re-download later.')) return;
+        try { await M.db.deleteVideo(tab, r.id); } catch (err) {}
+        if (hasOffline && r.offline) {
+          pushUndo({ kind: 'edit', tab: tab, rowId: r.id, field: 'offline', prevValue: r.offline });
+          r.offline = '';
+          r._updated = new Date().toISOString();
+          r._dirty = 1;
+          await M.db.upsertRow(tab, r);
+          schedulePush();
+        }
+        if (refresh) await refresh();
+      }
+
+      async function saveTileToHost() {
+        var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
+        if (!endpoint) {
+          flash(document.body, 'Set the helper URL in Settings first.', 'error');
+          return;
+        }
+        try {
+          var bytes, ext, kind;
+          if (rowHasBlob) {
+            var rec = await M.db.getVideo(tab, r.id);
+            if (!rec || !rec.blob) throw new Error('No offline blob.');
+            bytes = await rec.blob.arrayBuffer();
+            ext = (rec.mime && /mp4/i.test(rec.mime)) ? '.mp4' : '';
+            kind = 'videos';
+            // Trigger a normal browser download too — works even
+            // when the helper runs in a Docker container that can't
+            // open the host's file manager via xdg-open.
+            try {
+              var dlA = document.createElement('a');
+              dlA.href = URL.createObjectURL(rec.blob);
+              dlA.download = (r.title || r.id || 'video') + (ext || '.mp4');
+              document.body.appendChild(dlA); dlA.click(); dlA.remove();
+              setTimeout(function () { try { URL.revokeObjectURL(dlA.href); } catch (e) {} }, 30000);
+            } catch (e) { /* tolerate */ }
+          } else {
+            var c = readConfig();
+            if (!c.clientId) throw new Error('Sign in first.');
+            var token = await M.auth.getToken(c.clientId);
+            var resp = await fetch(
+              'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(driveFileId) + '?alt=media',
+              { headers: { Authorization: 'Bearer ' + token } }
+            );
+            if (!resp.ok) throw new Error('Drive ' + resp.status);
+            var pdfBlob = await resp.blob();
+            bytes = await pdfBlob.arrayBuffer();
+            ext = '.pdf';
+            kind = 'papers';
+            try {
+              var dlA2 = document.createElement('a');
+              dlA2.href = URL.createObjectURL(pdfBlob);
+              dlA2.download = (r.title || r.id || 'paper') + ext;
+              document.body.appendChild(dlA2); dlA2.click(); dlA2.remove();
+              setTimeout(function () { try { URL.revokeObjectURL(dlA2.href); } catch (e) {} }, 30000);
+            } catch (e) { /* tolerate */ }
+          }
+          var stem = String(r.title || r.id || 'file').replace(/[^\w.\- ]+/g, '_').slice(0, 100);
+          if (ext && !stem.toLowerCase().endsWith(ext)) stem += ext;
+          var saveResp = await fetch(
+            endpoint + '/file/save?kind=' + encodeURIComponent(kind) + '&name=' + encodeURIComponent(stem),
+            { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }
+          );
+          var saveJson = await saveResp.json();
+          if (!saveJson.ok) throw new Error(saveJson.error || ('save ' + saveResp.status));
+          flash(document.body,
+            'Saved to ~/Minerva/' + kind + ' (and triggered a browser download).', 'ok');
+        } catch (err) {
+          flash(document.body, 'Save failed: ' + (err && err.message || err), 'error');
+        }
+      }
+
       thumb.appendChild(actionsHost);
 
       if (hasOffline && hasUrl && url) {
@@ -6040,33 +6078,10 @@
             actionsHost.appendChild(driveBtn);
           }
 
-          var rmBtn = el('button', {
-            type: 'button',
-            class: 'tile-action tile-remove',
-            title: 'Free space: drop the offline copy but keep the row',
-            'aria-label': 'Remove offline copy (keep row)',
-            onclick: async function (e) {
-              e.preventDefault();
-              e.stopPropagation();
-              if (!confirm('Drop the local offline copy? The row stays — you can re-download later.')) return;
-              try { await M.db.deleteVideo(tab, r.id); } catch (err) {}
-              if (hasOffline && r.offline) {
-                pushUndo({ kind: 'edit', tab: tab, rowId: r.id, field: 'offline', prevValue: r.offline });
-                r.offline = '';
-                r._updated = new Date().toISOString();
-                r._dirty = 1;
-                await M.db.upsertRow(tab, r);
-                schedulePush();
-              }
-              if (refresh) await refresh();
-            }
-          });
-          // Distinct icon from tile-delete so the two buttons read as
-          // separate operations: ⊘ "drop the cached blob" vs 🗑 "delete
-          // the entire row." Without this users hit two trash icons in
-          // a row and assume one is broken.
-          rmBtn.appendChild(M.render.icon('cloud-off'));
-          actionsHost.appendChild(rmBtn);
+          // "Remove offline copy (keep row)" lives in the kebab menu
+          // above; no separate primary-action button here. Less
+          // duplication, less confusion between two trash-shaped
+          // icons.
         } else {
           // Route by URL kind: papers (PDF / arxiv abs+pdf / doi.org)
           // can't be handled by yt-dlp — pushing one through it gives

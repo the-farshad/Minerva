@@ -2166,6 +2166,38 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
    "this row has an offline copy" signal reads at a glance — translucent
    base on these buttons made the watch / drive actions disappear into
    the thumbnail. */
+.tile-kebab { background: rgba(0, 0, 0, 0.55); color: #fff; }
+.tile-kebab:hover { background: var(--accent); }
+.tile-menu {
+  position: absolute;
+  right: 0;
+  top: 2.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+  padding: 0.25rem;
+  z-index: 60;
+}
+.tile-menu-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 0.84rem;
+  text-align: left;
+  cursor: pointer;
+}
+.tile-menu-item:hover { background: var(--surface-2); }
+.tile-menu-item.is-danger { color: var(--error); }
+.tile-menu-item svg { width: 1em; height: 1em; }
 .tile-watch { background: var(--ok, #2c8c3e); color: #fff; }
 .tile-watch:hover { background: var(--ok, #2c8c3e); filter: brightness(1.08); }
 .tile-drive { background: var(--accent); color: #fff; }
