@@ -11636,6 +11636,45 @@
         schedulePush();
       });
     }
+    // PDF auto-mirror on demand. Lets preview.js trigger a Drive
+    // upload + breadcrumb-write the moment the user opens a paper
+    // without an offline copy yet, so the preview ends up showing
+    // the offline PDF instead of trying to iframe an X-Frame-blocked
+    // arxiv URL.
+    if (M.preview && typeof M.preview.setPdfMirrorOnDemand === 'function') {
+      M.preview.setPdfMirrorOnDemand(async function (tab, rowId) {
+        var meta = await M.db.getMeta(tab);
+        if (!meta || (meta.headers || []).indexOf('offline') < 0) {
+          throw new Error('Section has no offline column.');
+        }
+        var row = await M.db.getRow(tab, rowId);
+        if (!row) throw new Error('Row gone.');
+        // Re-check whether another flow already populated the
+        // breadcrumb between when the preview opened and when we
+        // got here — avoid a duplicate upload.
+        var existing = String(row.offline || '').match(/drive:([\w-]{20,})/);
+        if (existing) return existing[1];
+        var pdfUrl = String(row.pdf || '').trim() || (function () {
+          var u = String(row.url || '').trim();
+          if (/arxiv\.org\/abs\//i.test(u)) {
+            return u.replace(/\/abs\//i, '/pdf/').replace(/(\.pdf)?$/i, '.pdf');
+          }
+          return u;
+        })();
+        if (!pdfUrl) throw new Error('No PDF URL on row.');
+        var fid = await uploadPaperPdfToDrive(pdfUrl, row.title || row.id);
+        if (!fid) throw new Error('Drive upload returned no fileId.');
+        var fresh = await M.db.getRow(tab, rowId);
+        if (fresh) {
+          fresh.offline = 'drive:' + fid;
+          fresh._dirty = 1;
+          fresh._updated = new Date().toISOString();
+          await M.db.upsertRow(tab, fresh);
+          schedulePush();
+        }
+        return fid;
+      });
+    }
     // PDF extractor → Drive sibling. Uploads the extracted JSON to
     // Drive next to the original PDF (same scope as the offline blob
     // mirror) so structured data round-trips through the user's own

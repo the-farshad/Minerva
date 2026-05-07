@@ -797,71 +797,130 @@
           if (renderEpoch !== currentRenderEpoch) return;
           mountRemoteIframe(url, savedPage, resumeAt, isYt);
         });
+      } else if (isPdfNow && hit && hit.tab && hit.rowId && !hit.driveFileId
+                 && pdfMirrorOnDemand && pdfBlobLoader) {
+        // Auto-mirror: row is a paper without a Drive copy yet.
+        // Call the registered mirror function, get a fileId, then
+        // mount the resulting blob. Skips the X-Frame-blocked
+        // arxiv iframe entirely — the user just sees "Mirroring to
+        // Drive…" briefly, then the actual PDF.
+        var mirroring = document.createElement('div');
+        mirroring.className = 'preview-loading muted small';
+        mirroring.textContent = 'Mirroring PDF to Drive…';
+        frameHost.appendChild(mirroring);
+        (async function () {
+          try {
+            var newFileId = await pdfMirrorOnDemand(hit.tab, hit.rowId);
+            if (renderEpoch !== currentRenderEpoch) return;
+            if (!newFileId) throw new Error('mirror returned no fileId');
+            var blob = await pdfBlobLoader(newFileId);
+            if (renderEpoch !== currentRenderEpoch) return;
+            mountPdfBlob(blob, url);
+          } catch (err) {
+            if (renderEpoch !== currentRenderEpoch) return;
+            console.warn('[Minerva pdf-auto-mirror]', err);
+            mountFriendlyExternal(url,
+              'Could not mirror this PDF automatically. Open it externally — ' +
+              'embedding is blocked by ' + (hostOf(url) || 'the source'));
+          }
+        })();
       } else if (isPdfNow && hit && hit.driveFileId && pdfBlobLoader) {
         var loading = document.createElement('div');
         loading.className = 'preview-loading muted small';
         loading.textContent = 'Loading PDF…';
         frameHost.appendChild(loading);
-        pdfBlobLoader(hit.driveFileId).then(async function (blob) {
+        pdfBlobLoader(hit.driveFileId).then(function (blob) {
           if (renderEpoch !== currentRenderEpoch) return;
-          var savedPageNum = readPdfPage(url) || 1;
-          // When the section + app supply highlight read/write hooks
-          // *and* PDF.js is available, render through pdfviewer so the
-          // text layer + selection-based highlighting work. Otherwise
-          // fall back to the native browser PDF viewer via blob URL —
-          // it doesn't have highlights but still respects #page=N.
-          var canHighlight = highlightsProvider && highlightsSaver
-            && window.Minerva && Minerva.pdfviewer && Minerva.pdfviewer.mount;
-          if (canHighlight) {
-            try {
-              var initialHl = [];
-              try {
-                var raw = await highlightsProvider(url);
-                if (raw) initialHl = JSON.parse(raw);
-              } catch (e) { initialHl = []; }
-              if (renderEpoch !== currentRenderEpoch) return;
-              while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
-              var pdfHost = document.createElement('div');
-              pdfHost.className = 'preview-pdfjs';
-              frameHost.appendChild(pdfHost);
-              var view = await Minerva.pdfviewer.mount(pdfHost, blob, {
-                startPage: savedPageNum,
-                initialHighlights: initialHl,
-                onHighlightsChange: function (next) {
-                  try { highlightsSaver(url, JSON.stringify(next)); } catch (e) {}
-                },
-                onPageChange: function (n) {
-                  try { writePdfPage(url, n); } catch (e) {}
-                  if (pageInput) pageInput.value = String(n);
-                }
-              });
-              activePdfView = view;
-              if (highlightBtn) highlightBtn.style.display = '';
-              return;
-            } catch (err) {
-              console.warn('[Minerva pdfviewer]', err);
-              // Drop through to the iframe fallback below.
-            }
-          }
-          if (renderEpoch !== currentRenderEpoch) return;
-          var objUrl = URL.createObjectURL(blob);
-          var iframe = document.createElement('iframe');
-          iframe.className = 'preview-frame';
-          iframe.referrerPolicy = 'no-referrer';
-          iframe.allow = 'fullscreen';
-          iframe.src = objUrl + '#page=' + savedPageNum;
-          iframe.title = 'PDF (Drive copy of original)';
-          while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
-          frameHost.appendChild(iframe);
-          iframe.dataset.objUrl = objUrl;
+          mountPdfBlob(blob, url);
         }).catch(function (err) {
           if (renderEpoch !== currentRenderEpoch) return;
           console.warn('[Minerva pdf-blob-load]', err);
           while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
-          mountRemoteIframe(url, savedPage, resumeAt, isYt);
+          if (X_FRAME_BLOCKED.test(url)) {
+            mountFriendlyExternal(url,
+              hostOf(url) + ' refuses to be embedded. Open the PDF externally.');
+          } else {
+            mountRemoteIframe(url, savedPage, resumeAt, isYt);
+          }
         });
+      } else if (X_FRAME_BLOCKED.test(url) && !hit) {
+        // No row context to mirror against — best we can do is
+        // surface a clean "open in new tab" affordance instead of
+        // letting the browser render its embedded-error page.
+        mountFriendlyExternal(url,
+          hostOf(url) + ' refuses to be embedded. Open the PDF externally.');
       } else {
         mountRemoteIframe(url, savedPage, resumeAt, isYt);
+      }
+
+      // Hoisted-friendly helper: takes a Blob and mounts it the same
+      // way the existing-fileId path does (PDF.js when highlight hooks
+      // are wired, otherwise a native blob iframe with #page=N resume).
+      async function mountPdfBlob(blob, sourceUrl) {
+        if (renderEpoch !== currentRenderEpoch) return;
+        var savedPageNum = readPdfPage(sourceUrl) || 1;
+        var canHighlight = highlightsProvider && highlightsSaver
+          && window.Minerva && Minerva.pdfviewer && Minerva.pdfviewer.mount;
+        if (canHighlight) {
+          try {
+            var initialHl = [];
+            try {
+              var raw = await highlightsProvider(sourceUrl);
+              if (raw) initialHl = JSON.parse(raw);
+            } catch (e) { initialHl = []; }
+            if (renderEpoch !== currentRenderEpoch) return;
+            while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+            var pdfHost = document.createElement('div');
+            pdfHost.className = 'preview-pdfjs';
+            frameHost.appendChild(pdfHost);
+            var view = await Minerva.pdfviewer.mount(pdfHost, blob, {
+              startPage: savedPageNum,
+              initialHighlights: initialHl,
+              onHighlightsChange: function (next) {
+                try { highlightsSaver(sourceUrl, JSON.stringify(next)); } catch (e) {}
+              },
+              onPageChange: function (n) {
+                try { writePdfPage(sourceUrl, n); } catch (e) {}
+                if (pageInput) pageInput.value = String(n);
+              }
+            });
+            activePdfView = view;
+            if (highlightBtn) highlightBtn.style.display = '';
+            return;
+          } catch (err) {
+            console.warn('[Minerva pdfviewer]', err);
+            // Drop through to native iframe fallback.
+          }
+        }
+        if (renderEpoch !== currentRenderEpoch) return;
+        var objUrl = URL.createObjectURL(blob);
+        var iframe = document.createElement('iframe');
+        iframe.className = 'preview-frame';
+        iframe.referrerPolicy = 'no-referrer';
+        iframe.allow = 'fullscreen';
+        iframe.src = objUrl + '#page=' + savedPageNum;
+        iframe.title = 'PDF (Drive copy)';
+        while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+        frameHost.appendChild(iframe);
+        iframe.dataset.objUrl = objUrl;
+      }
+
+      function mountFriendlyExternal(targetUrl, message) {
+        while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
+        var wrap = document.createElement('div');
+        wrap.className = 'preview-blocked';
+        var msg = document.createElement('p');
+        msg.className = 'preview-blocked-msg';
+        msg.textContent = message;
+        var open = document.createElement('a');
+        open.className = 'btn';
+        open.href = targetUrl;
+        open.target = '_blank';
+        open.rel = 'noopener';
+        open.textContent = 'Open in new tab ↗';
+        wrap.appendChild(msg);
+        wrap.appendChild(open);
+        frameHost.appendChild(wrap);
       }
       // Notify any listener that a URL is being played — the section view
       // uses this to auto-mark a matching row as watched. Delayed so a
@@ -1164,6 +1223,25 @@
     pdfExtractDriveSaver = (typeof fn === 'function') ? fn : null;
   }
 
+  // Auto-mirror callback. When set, render() invokes it for any PDF
+  // row that doesn't yet have a drive:<fileId> breadcrumb — the
+  // callback fetches the PDF, uploads to Drive, persists the fileId
+  // back into the row, and resolves with the new fileId so we can
+  // mount it via the regular blob loader. This is what makes a fresh
+  // "click on paper" produce an offline-rendered PDF instead of the
+  // X-Frame-blocked arxiv iframe, even before any explicit mirror
+  // action.
+  var pdfMirrorOnDemand = null;
+  function setPdfMirrorOnDemand(fn) {
+    pdfMirrorOnDemand = (typeof fn === 'function') ? fn : null;
+  }
+
+  // Hosts that explicitly refuse third-party iframe embedding via
+  // X-Frame-Options / CSP. Falling through to a remote iframe for one
+  // of these surfaces the browser's "this page can't be embedded"
+  // error page and is universally a worse UX than a clean message.
+  var X_FRAME_BLOCKED = /https?:\/\/(?:[^/]*\.)?(?:arxiv\.org|biorxiv\.org|medrxiv\.org)\//i;
+
   function openExtractionModal(url, payload) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay extract-overlay';
@@ -1316,6 +1394,7 @@
     setOfflineLookup: setOfflineLookup,
     clearOfflineLookup: clearOfflineLookup,
     setPdfBlobLoader: setPdfBlobLoader,
+    setPdfMirrorOnDemand: setPdfMirrorOnDemand,
     setPdfExtractor: setPdfExtractor,
     setPdfExtractDriveSaver: setPdfExtractDriveSaver,
     setNotesProvider: setNotesProvider,

@@ -5272,6 +5272,18 @@ table.rows.rows-grouped tr.row-group-head td {
 }
 .preview-bm-edit:hover { color: var(--fg); }
 
+.preview-blocked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted);
+}
+.preview-blocked-msg { margin: 0; max-width: 50ch; }
+
 /* --- PDF.js viewer + highlights ------------------------------- */
 .preview-pdfjs {
   width: 100%;
