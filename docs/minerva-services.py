@@ -1268,11 +1268,28 @@ def _cmd_up(browser):
     else:
         print("[minerva] step 4/5: skipping timer (MINERVA_NO_TIMER=1).")
 
-    print("[minerva] step 5/8: pulling latest image and starting the stack…")
-    try:
-        subprocess.run(["docker", "compose", "pull"], cwd=here, check=False)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[minerva] docker compose pull failed: {exc}", file=sys.stderr)
+    # Prefer building from local source when a Dockerfile is present
+    # next to the compose file — that's the case for anyone with a
+    # checkout, and it sidesteps the lag between a `services-v*` tag
+    # push and Docker Hub finishing the multi-arch build. Falls back
+    # to pull when there's no local Dockerfile (the no-checkout path).
+    has_local_dockerfile = (here / "Dockerfile").is_file()
+    if has_local_dockerfile:
+        print("[minerva] step 5/8: building image from local source…")
+        try:
+            subprocess.run(
+                ["docker", "compose", "build", "--pull"],
+                cwd=here, check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            print(f"[minerva] docker compose build failed: {exc}", file=sys.stderr)
+            return exc.returncode or 1
+    else:
+        print("[minerva] step 5/8: pulling latest image and starting the stack…")
+        try:
+            subprocess.run(["docker", "compose", "pull"], cwd=here, check=False)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[minerva] docker compose pull failed: {exc}", file=sys.stderr)
 
     _reap_orphan_containers(["minerva-services", "minerva-postgres"])
 
