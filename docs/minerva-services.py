@@ -196,7 +196,11 @@ STATIC_DIR = os.environ.get("MINERVA_STATIC_DIR", "/srv/static")
 SERVE_STATIC = os.path.isfile(os.path.join(STATIC_DIR, "index.html"))
 
 if SERVE_STATIC:
-    app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
+    # SPA gets mounted under /app/ — that keeps `/` available for the
+    # status page (which is what most folks land on when checking the
+    # helper is alive). Static assets resolve to /app/assets/...
+    # automatically because the SPA's index.html uses relative paths.
+    app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/app")
 else:
     app = Flask(__name__)
 
@@ -838,7 +842,8 @@ def _helper_status_html():
     <li>yt-dlp server &rarr; <code>http://localhost:""" + str(port) + """</code></li>
     <li>CORS proxy &rarr; <code>http://localhost:""" + str(port) + """/proxy?</code></li>
   </ul>
-  <p>Health: <a href="/health">/health</a>.</p>
+  <p>Run the bundled SPA: <a href=\"/app/\">/app/</a>.
+  Health probe: <a href=\"/health\">/health</a>.</p>
 </body>
 </html>""",
         200,
@@ -853,12 +858,24 @@ def helper_status():
 
 @app.route("/", methods=["GET"])
 def index():
-    # Serve the Minerva SPA when baked into the image; otherwise fall
-    # back to the helper status page so a bare `docker run` of the old
-    # image still tells the user what they hit.
-    if SERVE_STATIC:
-        return send_file(os.path.join(STATIC_DIR, "index.html"))
+    # `/` is always the status page — the SPA lives at /app/ so a
+    # bare "is the helper alive?" hit doesn't bounce the user into
+    # client-side routing they didn't ask for.
     return _helper_status_html()
+
+
+@app.route("/app", methods=["GET"])
+def spa_redirect():
+    # Trailing-slash form is what the static URL path expects.
+    from flask import redirect
+    return redirect("/app/", code=302)
+
+
+@app.route("/app/", methods=["GET"])
+def spa_index():
+    if not SERVE_STATIC:
+        return ("Minerva SPA isn't baked into this image.", 404, _cors_dict())
+    return send_file(os.path.join(STATIC_DIR, "index.html"))
 
 
 def _detach() -> None:
@@ -1249,7 +1266,9 @@ def _cmd_up(browser):
     _probe_container_auth_mode()
 
     subprocess.run(["docker", "compose", "ps"], cwd=here, check=False)
-    print("\n[minerva] ready: http://localhost:8765/")
+    print("\n[minerva] ready:")
+    print("           status:  http://localhost:8765/")
+    print("           app:     http://localhost:8765/app/")
     return 0
 
 
@@ -1475,7 +1494,8 @@ if __name__ == "__main__":
     print("─" * 60)
     print(f"  Settings → yt-dlp server   {base}")
     print(f"  Settings → CORS proxy      {base}/proxy?")
-    print(f"  Open in browser:           {base}/")
+    print(f"  Status page:               {base}/")
+    print(f"  Bundled SPA:               {base}/app/")
     print(f"  Health check:              {base}/health")
     print(f"  Stop the server:           POST {base}/shutdown")
     print(f"  Docs:                      docs/setup-local-services.md")
