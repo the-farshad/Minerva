@@ -5906,7 +5906,7 @@
       var delBtn = el('button', {
         type: 'button',
         class: 'tile-action tile-delete',
-        title: 'Delete row',
+        title: 'Delete this row entirely (not just the offline copy)',
         'aria-label': 'Delete row',
         onclick: async function (e) {
           e.preventDefault(); e.stopPropagation();
@@ -5921,6 +5921,75 @@
       });
       delBtn.appendChild(M.render.icon('trash-2'));
       actionsHost.appendChild(delBtn);
+
+      // Save-to-host disk button — visible whenever the row has an
+      // offline blob in IDB (videos) or a Drive copy (papers). One
+      // click writes to ~/Minerva/<kind>/<title>.<ext> via the helper.
+      if (rowHasBlob || driveFileId) {
+        var diskBtn = el('button', {
+          type: 'button',
+          class: 'tile-action tile-disk',
+          title: 'Save a copy to ~/Minerva on your host (so you can open it in your file manager)',
+          'aria-label': 'Save to disk',
+          onclick: async function (e) {
+            e.preventDefault(); e.stopPropagation();
+            var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
+            if (!endpoint) {
+              flash(document.body, 'Set the helper URL in Settings first.', 'error');
+              return;
+            }
+            var origTitle = diskBtn.title;
+            diskBtn.disabled = true;
+            try {
+              var bytes, ext, kind;
+              if (rowHasBlob) {
+                var rec = await M.db.getVideo(tab, r.id);
+                if (!rec || !rec.blob) throw new Error('No offline blob.');
+                bytes = await rec.blob.arrayBuffer();
+                ext = (rec.mime && /mp4/i.test(rec.mime)) ? '.mp4' : '';
+                kind = 'videos';
+              } else {
+                var c = readConfig();
+                if (!c.clientId) throw new Error('Sign in first.');
+                var token = await M.auth.getToken(c.clientId);
+                var resp = await fetch(
+                  'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(driveFileId) + '?alt=media',
+                  { headers: { Authorization: 'Bearer ' + token } }
+                );
+                if (!resp.ok) throw new Error('Drive ' + resp.status);
+                bytes = await resp.arrayBuffer();
+                ext = '.pdf';
+                kind = 'papers';
+              }
+              var stem = String(r.title || r.id || 'file').replace(/[^\w.\- ]+/g, '_').slice(0, 100);
+              if (ext && !stem.toLowerCase().endsWith(ext)) stem += ext;
+              var saveResp = await fetch(
+                endpoint + '/file/save?kind=' + encodeURIComponent(kind) + '&name=' + encodeURIComponent(stem),
+                { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }
+              );
+              var saveJson = await saveResp.json();
+              if (!saveJson.ok) throw new Error(saveJson.error || ('save ' + saveResp.status));
+              var revealResp = await fetch(endpoint + '/file/reveal', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: saveJson.path })
+              });
+              var revealJson = {};
+              try { revealJson = await revealResp.json(); } catch (er) {}
+              flash(document.body,
+                revealJson.in_container
+                  ? ('Saved to ~/Minerva/' + kind + ' on your host.')
+                  : ('Opened ' + saveJson.path + ' in your file manager.'), 'ok');
+            } catch (err) {
+              flash(document.body, 'Save failed: ' + (err && err.message || err), 'error');
+            } finally {
+              diskBtn.disabled = false;
+              diskBtn.title = origTitle;
+            }
+          }
+        });
+        diskBtn.appendChild(M.render.icon('hard-drive'));
+        actionsHost.appendChild(diskBtn);
+      }
       thumb.appendChild(actionsHost);
 
       if (hasOffline && hasUrl && url) {
@@ -6073,7 +6142,7 @@
           dlBtn.appendChild(M.render.icon(looksLikePaper ? 'cloud' : 'download'));
           actionsHost.appendChild(dlBtn);
         }
-        if (rowHasBlob) tile.classList.add('tile-has-offline');
+        if (rowHasBlob || driveFileId) tile.classList.add('tile-has-offline');
       }
 
       var body = el('div', { class: 'tile-body' });
@@ -11741,26 +11810,59 @@
     // PDF highlights pane — same dispatch as notes, against
     // row.highlights. Stored as JSON-encoded text; the viewer parses
     // on read and serializes on write so Sheets sees one cell.
-    // Resolve a row from either the passed-in ctx (preferred — set
-    // by preview at open time so saves work even after user
-    // navigates) or fall back to the runtime offlineLookup.
-    function resolveRowCtx(url, ctx) {
+    // Resolve a row from (in order of preference):
+    //   1. Passed-in ctx — captured by preview at open time, survives
+    //      section nav.
+    //   2. Section's byUrl + the cross-section globalUrlIndex.
+    //   3. A one-shot IDB scan for any row with matching url. The
+    //      scan is async so callers must `await` resolveRowCtx in
+    //      the new contract; existing sync callers fall through to
+    //      whatever the lookup gave them.
+    async function resolveRowCtx(url, ctx) {
       if (ctx && ctx.tab && ctx.rowId) return { tab: ctx.tab, rowId: ctx.rowId };
       var lookup = currentOfflineLookup;
-      if (!lookup) return null;
-      var hit = lookup(url);
-      if (hit && hit.tab && hit.rowId) return { tab: hit.tab, rowId: hit.rowId };
+      if (lookup) {
+        var hit = lookup(url);
+        if (hit && hit.tab && hit.rowId) return { tab: hit.tab, rowId: hit.rowId };
+      }
+      // Last-ditch: walk every section once to find a row with this url.
+      try {
+        var u = String(url || '').trim();
+        var allMeta = await M.db.getAllMeta();
+        for (var i = 0; i < allMeta.length; i++) {
+          var t = allMeta[i].tab;
+          if (t && t.charAt(0) === '_') continue;
+          var headers = allMeta[i].headers || [];
+          if (headers.indexOf('url') < 0) continue;
+          var rows = await M.db.getAllRows(t);
+          for (var j = 0; j < rows.length; j++) {
+            var r = rows[j];
+            if (r._deleted) continue;
+            if (String(r.url || '').trim() === u) {
+              // Top up globalUrlIndex so future lookups skip the scan.
+              try {
+                var driveMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
+                globalUrlIndex[u] = {
+                  tab: t, rowId: r.id, title: r.title || '',
+                  driveFileId: driveMatch ? driveMatch[1] : ''
+                };
+              } catch (e) {}
+              return { tab: t, rowId: r.id };
+            }
+          }
+        }
+      } catch (e) { /* tolerate */ }
       return null;
     }
     if (M.preview && typeof M.preview.setHighlightsProvider === 'function') {
       M.preview.setHighlightsProvider(async function (url, ctx) {
-        var ref = resolveRowCtx(url, ctx);
+        var ref = await resolveRowCtx(url, ctx);
         if (!ref) return '';
         var row = await M.db.getRow(ref.tab, ref.rowId);
         return (row && row.highlights) || '';
       });
       M.preview.setHighlightsSaver(async function (url, jsonString, ctx) {
-        var ref = resolveRowCtx(url, ctx);
+        var ref = await resolveRowCtx(url, ctx);
         if (!ref) throw new Error('No row context for highlights.');
         var row = await M.db.getRow(ref.tab, ref.rowId);
         if (!row) throw new Error('Row gone.');
@@ -11777,13 +11879,13 @@
     // builds, so both YouTube and Papers sections plug in for free.
     if (M.preview && typeof M.preview.setNotesProvider === 'function') {
       M.preview.setNotesProvider(async function (url, ctx) {
-        var ref = resolveRowCtx(url, ctx);
+        var ref = await resolveRowCtx(url, ctx);
         if (!ref) return '';
         var row = await M.db.getRow(ref.tab, ref.rowId);
         return (row && row.notes) || '';
       });
       M.preview.setNotesSaver(async function (url, markdown, ctx) {
-        var ref = resolveRowCtx(url, ctx);
+        var ref = await resolveRowCtx(url, ctx);
         if (!ref) throw new Error('No row context for these notes.');
         var row = await M.db.getRow(ref.tab, ref.rowId);
         if (!row) throw new Error('Row gone.');
@@ -11819,6 +11921,24 @@
           }
         }
         return fid;
+      });
+    }
+    // Async URL → row resolver. Preview falls through to this when
+    // its sync lookup misses; we walk every IDB-backed section and
+    // top up the global URL index so future hits are fast.
+    if (M.preview && typeof M.preview.setRowResolver === 'function') {
+      M.preview.setRowResolver(async function (url) {
+        var ref = await resolveRowCtx(url, null);
+        if (!ref) return null;
+        var row = await M.db.getRow(ref.tab, ref.rowId);
+        if (!row) return null;
+        var driveMatch = String(row.offline || '').match(/drive:([\w-]{20,})/);
+        return {
+          tab: ref.tab,
+          rowId: ref.rowId,
+          title: row.title || '',
+          driveFileId: driveMatch ? driveMatch[1] : ''
+        };
       });
     }
     // Cross-row link picker for the notes pane. Renders a small

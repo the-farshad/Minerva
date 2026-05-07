@@ -815,6 +815,20 @@
       activeRowCtx = earlyHit && earlyHit.tab && earlyHit.rowId
         ? { tab: earlyHit.tab, rowId: earlyHit.rowId, url: url }
         : null;
+      // If section + global lookup missed but we have a rowResolver
+      // hook, kick a background scan; once it finds the row, top up
+      // activeRowCtx and re-render so the auto-mirror / blob-loader
+      // paths fire instead of the X-Frame fallback.
+      if (!earlyHit && rowResolver) {
+        var pendingEpoch = currentRenderEpoch + 1;
+        Promise.resolve(rowResolver(url)).then(function (hit) {
+          if (currentRenderEpoch !== pendingEpoch) return;
+          if (hit && hit.tab && hit.rowId) {
+            activeRowCtx = { tab: hit.tab, rowId: hit.rowId, url: url };
+            render();
+          }
+        }).catch(function () {});
+      }
       var isPdfNow = isPdf(url) || !!(earlyHit && earlyHit.driveFileId);
       var savedPage = isPdfNow ? readPdfPage(url) : 1;
       pageWrap.style.display = isPdfNow ? '' : 'none';
@@ -1348,6 +1362,15 @@
     rowPicker = (typeof fn === 'function') ? fn : null;
   }
 
+  // Async URL → row resolver. Invoked by render() when neither the
+  // section's byUrl nor the global URL index has the URL — e.g. a
+  // freshly-imported paper opened before any section has rendered
+  // it. Resolves to {tab, rowId, driveFileId, ...} or null.
+  var rowResolver = null;
+  function setRowResolver(fn) {
+    rowResolver = (typeof fn === 'function') ? fn : null;
+  }
+
   // Hosts that explicitly refuse third-party iframe embedding via
   // X-Frame-Options / CSP. Falling through to a remote iframe for one
   // of these surfaces the browser's "this page can't be embedded"
@@ -1512,6 +1535,7 @@
     setPdfExtractDriveSaver: setPdfExtractDriveSaver,
     setSaveToHost: setSaveToHost,
     setRowPicker: setRowPicker,
+    setRowResolver: setRowResolver,
     setNotesProvider: setNotesProvider,
     setNotesSaver: setNotesSaver,
     setHighlightsProvider: setHighlightsProvider,

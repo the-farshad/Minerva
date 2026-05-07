@@ -2138,7 +2138,10 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   top: 0.4rem;
   display: inline-flex;
   gap: 0.3rem;
-  opacity: 0;
+  /* Always visible — every tile carries Edit + Delete now, so hiding
+     them until hover left users (especially on touch) thinking the
+     buttons weren't there. */
+  opacity: 0.85;
   transition: opacity .12s;
 }
 .tile:hover .tile-actions,
