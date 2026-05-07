@@ -309,7 +309,14 @@ def download():
     elif fmt == "bestvideo+bestaudio/best":
         ydl_opts["format"] = "bestvideo+bestaudio/best"
     else:
-        ydl_opts["format"] = "mp4"
+        # Default mp4 path: prefer a single-file mp4 when one exists,
+        # but fall back to "pick any best video + audio and let ffmpeg
+        # merge into mp4". Using a hard "mp4" string fails on videos
+        # that publish only DASH-split streams (older lectures, some
+        # MIT OCW uploads) — yt-dlp returns "Requested format is not
+        # available". The combined expression below succeeds on both
+        # progressive-mp4 and DASH-only cases.
+        ydl_opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best"
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
