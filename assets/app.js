@@ -7285,10 +7285,80 @@
     }
   }
 
+  // Shared "mirror this paper PDF to Drive" entry point. Every caller
+  // that used to invoke downloadOfflineViaYtDlp on a paper-shaped URL
+  // (table action, bulk grid action, kebab menu, keyboard shortcut)
+  // now lands here when the URL looks like a paper, so the user
+  // never sees yt-dlp's "Unsupported URL" again. Writes drive:<fileId>
+  // back into row.offline so the next preview opens via the Drive
+  // blob loader instead of trying to iframe arxiv.
+  async function mirrorPaperRowToDrive(tab, row, refresh) {
+    var rawUrl = String(row.url || '').trim();
+    if (!rawUrl) {
+      flash(document.body, 'No URL on this row to mirror.', 'error');
+      return;
+    }
+    // Resolve to an actual PDF URL: prefer row.pdf when present,
+    // otherwise translate arxiv abs → pdf so the fetch returns the
+    // PDF bytes rather than the HTML abstract page.
+    var pdfUrl = String(row.pdf || '').trim() || (function () {
+      if (/arxiv\.org\/abs\//i.test(rawUrl)) {
+        return rawUrl.replace(/\/abs\//i, '/pdf/').replace(/(\.pdf)?$/i, '.pdf');
+      }
+      return rawUrl;
+    })();
+    var job = addDownloadJob({
+      title: row.title || row.id || 'PDF',
+      retry: function () { mirrorPaperRowToDrive(tab, row, refresh); }
+    });
+    try {
+      job.setStatus('Fetching PDF…');
+      var fid = await uploadPaperPdfToDrive(pdfUrl, row.title || row.id);
+      if (!fid) throw new Error('Drive upload returned no fileId.');
+      var meta = await M.db.getMeta(tab);
+      if (meta && (meta.headers || []).indexOf('offline') >= 0) {
+        var fresh = await M.db.getRow(tab, row.id);
+        if (fresh) {
+          fresh.offline = 'drive:' + fid;
+          fresh._dirty = 1;
+          fresh._updated = new Date().toISOString();
+          await M.db.upsertRow(tab, fresh);
+          schedulePush();
+        }
+      }
+      job.done('Mirrored to Drive', {
+        label: 'Open',
+        icon: 'cloud',
+        run: function () {
+          window.open(
+            'https://drive.google.com/file/d/' + encodeURIComponent(fid) + '/view',
+            '_blank', 'noopener'
+          );
+        }
+      });
+      if (refresh) await refresh();
+    } catch (err) {
+      job.fail('PDF mirror failed: ' + (err && err.message || err));
+    }
+  }
+
   async function downloadOfflineViaYtDlp(tab, row, refresh) {
     if (!row.url) {
       flash(document.body, 'No URL on this row to download.', 'error');
       return;
+    }
+    // Hand-off to the paper PDF mirror when the row's URL looks like
+    // a paper (.pdf, arxiv abs/pdf, doi.org). yt-dlp can't ingest
+    // arxiv abs URLs and returns "Unsupported URL: ..." with HTTP 500
+    // — every caller of this function (table action, bulk download,
+    // keyboard shortcut, kebab menu) used to fall into that trap.
+    // Routing centrally so every entry-point inherits the fix.
+    var paperUrl = String(row.url || '').trim();
+    var looksLikePaper = /\.pdf(\?|#|$)/i.test(paperUrl)
+      || /arxiv\.org\/(?:abs|pdf)\//i.test(paperUrl)
+      || /doi\.org\//i.test(paperUrl);
+    if (looksLikePaper) {
+      return await mirrorPaperRowToDrive(tab, row, refresh);
     }
     // Skip when an offline blob is already cached for this row. Users
     // remove the blob explicitly via the row's trash icon (or the bulk
