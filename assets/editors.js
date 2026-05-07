@@ -256,31 +256,87 @@
         String(v || '').split(',').forEach(function (x) {
           var tx = x.trim(); if (tx) picked[tx] = true;
         });
-        (t.options || []).forEach(function (opt) {
+        var extras = document.createElement('span');
+        extras.className = 'editor-multi-extras';
+        function addChip(host, opt, predefined) {
           var btn = document.createElement('button');
           btn.type = 'button';
-          btn.className = 'chip-btn' + (picked[opt] ? ' on' : '');
+          btn.className = 'chip-btn' + (picked[opt] ? ' on' : '')
+            + (predefined ? '' : ' chip-custom');
           btn.textContent = opt;
           btn.addEventListener('click', function (e) {
             e.preventDefault();
             if (picked[opt]) { delete picked[opt]; btn.classList.remove('on'); }
             else { picked[opt] = true; btn.classList.add('on'); }
           });
-          mw.appendChild(btn);
+          host.appendChild(btn);
+          return btn;
+        }
+        var schemaOpts = (t.options || []).slice();
+        schemaOpts.forEach(function (opt) { addChip(mw, opt, true); });
+        // Show any user-added values that aren't in the schema list as
+        // already-on chips so the user can deselect them. Keeping these
+        // separate from the predefined chips avoids order surprises.
+        Object.keys(picked).forEach(function (val) {
+          if (schemaOpts.indexOf(val) < 0) addChip(extras, val, false);
         });
+        mw.appendChild(extras);
+        // Free-form input: type a new value, press Enter or click Add to
+        // include it. Lets the user expand the schema-defined option set
+        // without round-tripping to the spreadsheet.
+        var addInput = document.createElement('input');
+        addInput.type = 'text';
+        addInput.className = 'editor-multi-add';
+        addInput.placeholder = 'Add custom…';
+        addInput.size = 12;
+        function commitNew() {
+          var raw = String(addInput.value || '').trim();
+          addInput.value = '';
+          if (!raw) return;
+          // Allow comma-separated batches.
+          raw.split(',').forEach(function (chunk) {
+            var v = chunk.trim();
+            if (!v || picked[v]) return;
+            picked[v] = true;
+            addChip(extras, v, false).classList.add('on');
+          });
+        }
+        addInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            commitNew();
+          } else if (e.key === 'Escape' && onCancel) {
+            onCancel();
+          }
+        });
+        var addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'btn btn-ghost btn-inline editor-multi-addbtn';
+        addBtn.textContent = '+';
+        addBtn.title = 'Add this value';
+        addBtn.addEventListener('click', function (e) {
+          e.preventDefault();
+          commitNew();
+          addInput.focus();
+        });
+        mw.appendChild(addInput);
+        mw.appendChild(addBtn);
         var done = document.createElement('button');
         done.type = 'button';
         done.className = 'btn done-btn';
         done.textContent = 'Done';
         done.addEventListener('click', function (e) {
           e.preventDefault();
+          // Flush whatever's in the add input first so a user can type
+          // and press Done without the add round trip.
+          commitNew();
           var keys = Object.keys(picked);
           onCommit(keys.join(', '));
         });
         mw.appendChild(done);
         mw.addEventListener('keydown', function (e) {
           if (e.key === 'Escape' && onCancel) onCancel();
-          else if (e.key === 'Enter') {
+          else if (e.key === 'Enter' && document.activeElement !== addInput) {
             e.preventDefault();
             done.click();
           }

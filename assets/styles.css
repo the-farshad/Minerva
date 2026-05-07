@@ -3157,11 +3157,27 @@ table.rows tr.row-dirty td:first-child {
   transition: border-color .12s, color .12s, background .12s;
 }
 .chip-btn:hover { color: var(--fg); border-color: var(--accent); }
+.chip-btn.chip-custom { border-style: dashed; }
 .chip-btn.on {
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent);
 }
+.editor-multi-add {
+  width: 9rem;
+  padding: 0.18rem 0.4rem;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.78rem;
+}
+.editor-multi-addbtn {
+  font-size: 0.85rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+}
+.editor-multi-extras { display: contents; }
 .editor-multi .done-btn {
   margin-left: auto;
   padding: 0.25rem 0.6rem;
@@ -3561,9 +3577,12 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
    so they don't render squashed inside a portrait box. */
 .preview-overlay { padding: 2rem 1rem; align-items: stretch; }
 .preview-panel {
-  max-width: 1080px;
+  /* Use almost the whole viewport so PDFs / videos render large by
+     default. Capped at sane max so an ultra-wide monitor doesn't
+     stretch text-heavy layouts. */
+  max-width: min(1600px, calc(100vw - 1rem));
   width: 100%;
-  height: calc(100vh - 4rem);
+  height: calc(100vh - 1.5rem);
   display: flex;
   flex-direction: column;
   padding: 0;
