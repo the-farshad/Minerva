@@ -5926,7 +5926,7 @@
         onclick: function (e) {
           e.preventDefault(); e.stopPropagation();
           if (openMenu) { closeTileMenu(); return; }
-          var menu = el('div', { class: 'tile-menu' });
+          var menu = el('div', { class: 'tile-menu tile-menu-portal' });
           menu.addEventListener('click', function (ev) { ev.stopPropagation(); });
           menu.appendChild(tileMenuItem('pencil', 'Edit row', false, function () {
             if (typeof showRowDetail === 'function') showRowDetail(tab, r.id);
@@ -5950,7 +5950,16 @@
               flash(document.body, 'Delete failed: ' + (err && err.message || err), 'error');
             }
           }));
-          actionsHost.appendChild(menu);
+          // Portal to <body> with absolute coords. Otherwise the menu
+          // ends up inside .tile-thumb whose stacking context is
+          // capped by the surrounding grid, hiding it behind the next
+          // row. body has the highest stacking baseline available.
+          var rect = kebabBtn.getBoundingClientRect();
+          menu.style.position = 'fixed';
+          menu.style.top = Math.round(rect.bottom + 4) + 'px';
+          menu.style.right = Math.round(window.innerWidth - rect.right) + 'px';
+          menu.style.left = '';
+          document.body.appendChild(menu);
           openMenu = menu;
           // Close on next click anywhere else.
           setTimeout(function () { document.addEventListener('click', closeTileMenu); }, 0);

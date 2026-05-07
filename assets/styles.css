@@ -2168,26 +2168,21 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
    the thumbnail. */
 .tile-kebab { background: rgba(0, 0, 0, 0.55); color: #fff; }
 .tile-kebab:hover { background: var(--accent); }
-.tile-menu {
-  position: absolute;
-  right: 0;
-  top: 2.4rem;
+.tile-menu.tile-menu-portal {
+  /* Portaled to <body>, positioned via inline top/right by JS. We
+     keep the size/look but drop any in-grid stacking constraints. */
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
   display: flex;
   flex-direction: column;
-  min-width: 12rem;
+  min-width: 13rem;
   padding: 0.25rem;
-  /* Sit above sibling tiles, the watched-toggle pill, and the
-     tile body content — anything inside the grid renders below
-     this. */
-  z-index: 200;
+  z-index: 1000;
 }
-.tile-actions { z-index: 100; }
-.tile { /* let absolutely-positioned children render outside without
-           being clipped by the rounded thumbnail. */ overflow: visible; }
+.tile-actions { z-index: 5; }
+.tile { overflow: visible; }
 .tile-thumb { position: relative; }
 .tile-menu-item {
   display: inline-flex;
