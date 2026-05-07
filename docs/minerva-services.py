@@ -436,9 +436,16 @@ def pdf_extract():
             )
         with open(pdf_path, "wb") as fh:
             fh.write(up.content)
+        out_dir = os.path.join(tmpdir, "out")
+        os.makedirs(out_dir, exist_ok=True)
         try:
+            # opendataloader-pdf takes the PDF as a positional, writes
+            # the result(s) into -o OUTPUT_DIR, format selected via -f.
+            # Markdown output is the most useful single representation
+            # for "show me the extracted text" — falls back to JSON
+            # whenever the markdown file isn't there.
             proc = subprocess.run(
-                ["opendataloader-pdf", "--input", pdf_path, "--output", out_path],
+                ["opendataloader-pdf", "-q", "-f", "markdown", "-o", out_dir, pdf_path],
                 capture_output=True, timeout=180,
             )
         except subprocess.TimeoutExpired:
@@ -453,28 +460,49 @@ def pdf_extract():
                     "ok": False,
                     "error": "opendataloader-pdf exited non-zero.",
                     "stderr": proc.stderr.decode("utf-8", "replace"),
+                    "stdout": proc.stdout.decode("utf-8", "replace"),
                 }),
                 500,
                 _cors_dict(),
             )
-        # The loader writes its result to --output; some builds also
-        # echo to stdout. Prefer the file when present.
+        # Walk the output dir and pull the first .md or .json found.
         payload = None
-        if os.path.isfile(out_path):
-            with open(out_path, "r", encoding="utf-8", errors="replace") as fh:
-                txt = fh.read()
-            try:
-                payload = __import__("json").loads(txt)
-            except Exception:  # noqa: BLE001
-                payload = {"raw_text": txt}
-        elif proc.stdout:
-            txt = proc.stdout.decode("utf-8", "replace")
-            try:
-                payload = __import__("json").loads(txt)
-            except Exception:  # noqa: BLE001
-                payload = {"raw_text": txt}
-        else:
-            payload = {"raw_text": ""}
+        try:
+            picked = None
+            for root, _dirs, files in os.walk(out_dir):
+                for name in sorted(files):
+                    lower = name.lower()
+                    if lower.endswith(".md") or lower.endswith(".markdown"):
+                        picked = os.path.join(root, name); break
+                if picked:
+                    break
+            if not picked:
+                for root, _dirs, files in os.walk(out_dir):
+                    for name in sorted(files):
+                        if name.lower().endswith(".json"):
+                            picked = os.path.join(root, name); break
+                    if picked:
+                        break
+            if picked:
+                with open(picked, "r", encoding="utf-8", errors="replace") as fh:
+                    txt = fh.read()
+                if picked.lower().endswith(".json"):
+                    try:
+                        payload = __import__("json").loads(txt)
+                    except Exception:  # noqa: BLE001
+                        payload = {"raw_text": txt}
+                else:
+                    payload = {"raw_text": txt, "format": "markdown"}
+            elif proc.stdout:
+                payload = {"raw_text": proc.stdout.decode("utf-8", "replace")}
+            else:
+                payload = {"raw_text": ""}
+        except Exception as exc:  # noqa: BLE001
+            return (
+                jsonify({"ok": False, "error": f"output read failed: {exc}"}),
+                500,
+                _cors_dict(),
+            )
         return jsonify({"ok": True, "data": payload})
     finally:
         try:

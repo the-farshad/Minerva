@@ -7298,6 +7298,16 @@
       flash(document.body, 'No URL on this row to mirror.', 'error');
       return;
     }
+    // Idempotency: if the row already has a drive:<fileId> breadcrumb,
+    // don't re-upload. Tell the user it's already mirrored and surface
+    // an "Open in Drive" affordance via flash. Same row's repeated
+    // click otherwise produces duplicate Drive files.
+    var existingMatch = String(row.offline || '').match(/drive:([\w-]{20,})/);
+    if (existingMatch) {
+      flash(document.body,
+        'Already mirrored to Drive. Open the preview to read it.', 'ok');
+      return existingMatch[1];
+    }
     // Resolve to an actual PDF URL: prefer row.pdf when present,
     // otherwise translate arxiv abs → pdf so the fetch returns the
     // PDF bytes rather than the HTML abstract page.
