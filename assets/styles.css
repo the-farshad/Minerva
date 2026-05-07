@@ -5283,6 +5283,13 @@ table.rows.rows-grouped tr.row-group-head td {
   color: var(--muted);
 }
 .preview-blocked-msg { margin: 0; max-width: 50ch; }
+.preview-blocked-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.preview-blocked-attach { cursor: pointer; }
 
 /* --- PDF.js viewer + highlights ------------------------------- */
 .preview-pdfjs {

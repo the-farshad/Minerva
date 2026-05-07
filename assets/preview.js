@@ -928,14 +928,48 @@
         var msg = document.createElement('p');
         msg.className = 'preview-blocked-msg';
         msg.textContent = message;
+        var actions = document.createElement('div');
+        actions.className = 'preview-blocked-actions';
         var open = document.createElement('a');
         open.className = 'btn';
         open.href = targetUrl;
         open.target = '_blank';
         open.rel = 'noopener';
         open.textContent = 'Open in new tab ↗';
+        actions.appendChild(open);
+        // Manual-attach affordance: if we have a row context AND a
+        // Drive-blob handler, let the user pick a PDF they already
+        // downloaded. We upload it to Drive, persist the breadcrumb
+        // back to the row, then mount it via the same path as a
+        // pre-existing copy.
+        if (activeRowCtx && pdfMirrorOnDemand && pdfBlobLoader && pdfAttachLocal) {
+          var attachLabel = document.createElement('label');
+          attachLabel.className = 'btn btn-ghost preview-blocked-attach';
+          attachLabel.textContent = 'Attach a PDF I have locally';
+          var fileInput = document.createElement('input');
+          fileInput.type = 'file';
+          fileInput.accept = 'application/pdf,.pdf';
+          fileInput.style.display = 'none';
+          attachLabel.appendChild(fileInput);
+          fileInput.addEventListener('change', async function () {
+            var f = fileInput.files && fileInput.files[0];
+            if (!f) return;
+            wrap.classList.add('is-attaching');
+            msg.textContent = 'Uploading ' + (f.name || 'file') + ' to Drive…';
+            try {
+              var fid = await pdfAttachLocal(activeRowCtx.tab, activeRowCtx.rowId, f);
+              if (!fid) throw new Error('Drive upload returned no fileId');
+              var blob = await pdfBlobLoader(fid);
+              mountPdfBlob(blob, targetUrl);
+            } catch (e) {
+              wrap.classList.remove('is-attaching');
+              msg.textContent = 'Attach failed: ' + (e && e.message || e);
+            }
+          });
+          actions.appendChild(attachLabel);
+        }
         wrap.appendChild(msg);
-        wrap.appendChild(open);
+        wrap.appendChild(actions);
         frameHost.appendChild(wrap);
       }
       // Notify any listener that a URL is being played — the section view
@@ -1252,6 +1286,15 @@
     pdfMirrorOnDemand = (typeof fn === 'function') ? fn : null;
   }
 
+  // Manual-attach callback. Invoked from the X-Frame fallback panel
+  // when the user picks a local PDF they already downloaded. The
+  // callback uploads the file to Drive and writes drive:<fileId>
+  // back to the row, then we mount it via the regular blob loader.
+  var pdfAttachLocal = null;
+  function setPdfAttachLocal(fn) {
+    pdfAttachLocal = (typeof fn === 'function') ? fn : null;
+  }
+
   // Hosts that explicitly refuse third-party iframe embedding via
   // X-Frame-Options / CSP. Falling through to a remote iframe for one
   // of these surfaces the browser's "this page can't be embedded"
@@ -1411,6 +1454,7 @@
     clearOfflineLookup: clearOfflineLookup,
     setPdfBlobLoader: setPdfBlobLoader,
     setPdfMirrorOnDemand: setPdfMirrorOnDemand,
+    setPdfAttachLocal: setPdfAttachLocal,
     setPdfExtractor: setPdfExtractor,
     setPdfExtractDriveSaver: setPdfExtractDriveSaver,
     setNotesProvider: setNotesProvider,

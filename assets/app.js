@@ -5853,8 +5853,26 @@
       // mirror-to-Drive flow (format: "yt-dlp · 12.3 MB · drive:1abc…").
       var driveIdMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
       var driveFileId = driveIdMatch ? driveIdMatch[1] : '';
+
+      // Edit affordance is always present on every tile so the user
+      // can change categories / tags / any other column without
+      // leaving grid view. Opens the full row-detail modal.
+      var actionsHost = el('div', { class: 'tile-actions' });
+      var editBtn = el('button', {
+        type: 'button',
+        class: 'tile-action tile-edit',
+        title: 'Edit row (categories, tags, all fields)',
+        'aria-label': 'Edit row',
+        onclick: function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (typeof showRowDetail === 'function') showRowDetail(tab, r.id);
+        }
+      });
+      editBtn.appendChild(M.render.icon('pencil'));
+      actionsHost.appendChild(editBtn);
+      thumb.appendChild(actionsHost);
+
       if (hasOffline && hasUrl && url) {
-        var actionsHost = el('div', { class: 'tile-actions' });
         if (rowHasBlob) {
           var watchBtn = el('button', {
             type: 'button',
@@ -6004,7 +6022,6 @@
           dlBtn.appendChild(M.render.icon(looksLikePaper ? 'cloud' : 'download'));
           actionsHost.appendChild(dlBtn);
         }
-        thumb.appendChild(actionsHost);
         if (rowHasBlob) tile.classList.add('tile-has-offline');
       }
 
@@ -11639,6 +11656,32 @@
         row._updated = new Date().toISOString();
         await M.db.upsertRow(ref.tab, row);
         schedulePush();
+      });
+    }
+    // PDF manual-attach. The X-Frame fallback panel offers a "I
+    // have a local copy" file picker; that ends up here. Upload the
+    // chosen File blob to Drive (using the existing offline-blob
+    // pipeline), persist drive:<fileId> back to row.offline so the
+    // next preview-open routes through the Drive blob loader.
+    if (M.preview && typeof M.preview.setPdfAttachLocal === 'function') {
+      M.preview.setPdfAttachLocal(async function (tab, rowId, file) {
+        if (!file) throw new Error('No file selected.');
+        var name = String(file.name || 'paper.pdf').replace(/[^\w.\- ]+/g, '_').slice(0, 80);
+        if (!/\.pdf$/i.test(name)) name += '.pdf';
+        var fid = await uploadOfflineToDrive(file, name);
+        if (!fid) throw new Error('Drive upload failed.');
+        var meta = await M.db.getMeta(tab);
+        if (meta && (meta.headers || []).indexOf('offline') >= 0) {
+          var row = await M.db.getRow(tab, rowId);
+          if (row) {
+            row.offline = 'drive:' + fid;
+            row._dirty = 1;
+            row._updated = new Date().toISOString();
+            await M.db.upsertRow(tab, row);
+            schedulePush();
+          }
+        }
+        return fid;
       });
     }
     // PDF auto-mirror on demand. Lets preview.js trigger a Drive
