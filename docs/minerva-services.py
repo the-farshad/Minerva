@@ -249,6 +249,14 @@ def download():
         "quiet": True,
         "no_warnings": True,
         "merge_output_format": "mp4",
+        # YouTube serves an n-parameter JS challenge yt-dlp must
+        # execute to get usable stream URLs. Without the EJS solver
+        # script published on GitHub, the response is stripped to
+        # storyboard images and every download fails with "Requested
+        # format is not available." Deno is installed in the image
+        # to run the script. The flag tells yt-dlp where to fetch the
+        # solver lib from on first need (cached after that).
+        "remote_components": ["ejs:github"],
     }
     # YouTube increasingly gates videos behind a "Sign in to confirm
     # you're not a bot" check. yt-dlp can step past it with a Netscape-

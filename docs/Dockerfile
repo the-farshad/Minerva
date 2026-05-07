@@ -17,9 +17,29 @@ FROM python:3.12-slim
 
 # ffmpeg lets yt-dlp merge separate video / audio streams and produce
 # mp3. postgresql-client provides pg_dump for the /db/dump endpoint.
+# unzip + curl are needed to fetch the Deno tarball below.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates postgresql-client \
+    && apt-get install -y --no-install-recommends \
+       ffmpeg ca-certificates postgresql-client curl unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Deno is the JS runtime yt-dlp's EJS solver uses to crack YouTube's
+# n-challenge — without it, recent uploads return only storyboard
+# images and every download fails with "Requested format not available."
+# Pin a known-good version so the build is reproducible. Multi-arch
+# Docker selects amd64/arm64 via TARGETARCH.
+ARG TARGETARCH
+RUN set -e; \
+    case "${TARGETARCH:-amd64}" in \
+        amd64) DENO_ARCH=x86_64-unknown-linux-gnu ;; \
+        arm64) DENO_ARCH=aarch64-unknown-linux-gnu ;; \
+        *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/denoland/deno/releases/download/v2.0.6/deno-${DENO_ARCH}.zip" -o /tmp/deno.zip; \
+    unzip -q /tmp/deno.zip -d /usr/local/bin; \
+    chmod +x /usr/local/bin/deno; \
+    rm /tmp/deno.zip; \
+    deno --version
 
 # Python deps. The script self-bootstraps a venv on first host-side run;
 # inside the container we install system-wide so startup is instant.
