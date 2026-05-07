@@ -126,21 +126,44 @@
     });
   }
 
-  // --- rows -----------------------------------------------------
-
-  async function upsertRow(tab, row) {
-    var db = await open();
-    var rec = Object.assign({}, row, { _t: tab });
-    return reqP(tx(db, 'rows', 'readwrite').put(rec));
+  // IDB ops can fail with InvalidStateError / "database not allowed
+  // to mutate" when another Minerva tab triggered a schema upgrade
+  // and our handle got closed mid-op. retry() reruns the closure
+  // once with a fresh open() so the user doesn't see a cryptic
+  // failure on every refresh.
+  function retryOnClose(fn) {
+    return fn().catch(function (err) {
+      var name = err && err.name;
+      var msg = (err && err.message) || String(err);
+      if (name === 'InvalidStateError'
+          || /not allowed to mutate|database is closed|connection is closing/i.test(msg)) {
+        if (_db) { try { _db.close(); } catch (e) {} _db = null; }
+        _opening = null;
+        return fn();
+      }
+      throw err;
+    });
   }
 
-  async function upsertRows(tab, rows) {
-    if (!rows || !rows.length) return [];
-    var db = await open();
-    var store = tx(db, 'rows', 'readwrite');
-    return Promise.all(rows.map(function (r) {
-      return reqP(store.put(Object.assign({}, r, { _t: tab })));
-    }));
+  // --- rows -----------------------------------------------------
+
+  function upsertRow(tab, row) {
+    return retryOnClose(async function () {
+      var db = await open();
+      var rec = Object.assign({}, row, { _t: tab });
+      return reqP(tx(db, 'rows', 'readwrite').put(rec));
+    });
+  }
+
+  function upsertRows(tab, rows) {
+    if (!rows || !rows.length) return Promise.resolve([]);
+    return retryOnClose(async function () {
+      var db = await open();
+      var store = tx(db, 'rows', 'readwrite');
+      return Promise.all(rows.map(function (r) {
+        return reqP(store.put(Object.assign({}, r, { _t: tab })));
+      }));
+    });
   }
 
   async function getRow(tab, id) {
@@ -160,9 +183,11 @@
     return reqP(idx.count(IDBKeyRange.only(tab)));
   }
 
-  async function deleteRow(tab, id) {
-    var db = await open();
-    return reqP(tx(db, 'rows', 'readwrite').delete([tab, id]));
+  function deleteRow(tab, id) {
+    return retryOnClose(async function () {
+      var db = await open();
+      return reqP(tx(db, 'rows', 'readwrite').delete([tab, id]));
+    });
   }
 
   async function clearTab(tab) {
@@ -255,10 +280,12 @@
     return reqP(tx(db, 'videos').get([tab, rowId]));
   }
 
-  async function putVideo(tab, rowId, payload) {
-    var db = await open();
-    var rec = Object.assign({}, payload, { tab: tab, rowId: rowId, savedAt: Date.now() });
-    return reqP(tx(db, 'videos', 'readwrite').put(rec));
+  function putVideo(tab, rowId, payload) {
+    return retryOnClose(async function () {
+      var db = await open();
+      var rec = Object.assign({}, payload, { tab: tab, rowId: rowId, savedAt: Date.now() });
+      return reqP(tx(db, 'videos', 'readwrite').put(rec));
+    });
   }
 
   async function deleteVideo(tab, rowId) {
