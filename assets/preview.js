@@ -1096,12 +1096,11 @@
       } else if (e.key === 'ArrowRight' && items.length > 1) {
         e.preventDefault();
         go(idx + 1);
-      } else if (e.key === 'f' || e.key === 'F') {
-        // Quick fullscreen shortcut — matches typical media player UX.
-        e.preventDefault();
-        if (document.fullscreenElement) { document.exitFullscreen().catch(function () {}); }
-        else if (panel.requestFullscreen) { panel.requestFullscreen().catch(function () {}); }
       }
+      // Note: no 'f' fullscreen shortcut — Firefox / Chrome's built-in
+      // PDF viewer captures single-letter keys for its own controls
+      // (Ctrl-F find, page navigation, annotations). Use the
+      // dedicated fullscreen button in the toolbar instead.
     };
     document.addEventListener('keydown', onKey);
 
@@ -1253,11 +1252,8 @@
     }
     var onKey = function (e) {
       if (e.key === 'Escape') { e.preventDefault(); close(); }
-      else if (e.key === 'f' || e.key === 'F') {
-        e.preventDefault();
-        if (document.fullscreenElement) { document.exitFullscreen().catch(function () {}); }
-        else if (panel.requestFullscreen) { panel.requestFullscreen().catch(function () {}); }
-      }
+      // No 'f' shortcut — keep keyboard space free for the
+      // surrounding viewer / video controls.
     };
     document.addEventListener('keydown', onKey);
     if (window.Minerva && Minerva.render && Minerva.render.refreshIcons) {
