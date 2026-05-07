@@ -2175,13 +2175,20 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
   display: flex;
   flex-direction: column;
   min-width: 12rem;
   padding: 0.25rem;
-  z-index: 60;
+  /* Sit above sibling tiles, the watched-toggle pill, and the
+     tile body content — anything inside the grid renders below
+     this. */
+  z-index: 200;
 }
+.tile-actions { z-index: 100; }
+.tile { /* let absolutely-positioned children render outside without
+           being clipped by the rounded thumbnail. */ overflow: visible; }
+.tile-thumb { position: relative; }
 .tile-menu-item {
   display: inline-flex;
   align-items: center;
@@ -2198,6 +2205,17 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
 .tile-menu-item:hover { background: var(--surface-2); }
 .tile-menu-item.is-danger { color: var(--error); }
 .tile-menu-item svg { width: 1em; height: 1em; }
+.tiles-group-title-rename {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px dashed transparent;
+}
+.tiles-group-title-rename:hover { border-bottom-color: var(--accent); color: var(--accent); }
 .tile-watch { background: var(--ok, #2c8c3e); color: #fff; }
 .tile-watch:hover { background: var(--ok, #2c8c3e); filter: brightness(1.08); }
 .tile-drive { background: var(--accent); color: #fff; }

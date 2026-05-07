@@ -737,6 +737,10 @@
     });
 
     var ytPlayer = null;
+    // URLs we've already kicked the rowResolver for in this modal
+    // session — prevents repeat fires that would re-render the panel
+    // and steal selection focus / look like the page is "refreshing".
+    var triedResolverFor = {};
     // Monotonic counter incremented at the start of each render() so
     // an in-flight async blob lookup that resolves after the user
     // already navigated to a different item is ignored.
@@ -856,13 +860,15 @@
         ? { tab: earlyHit.tab, rowId: earlyHit.rowId, url: url }
         : null;
       // If section + global lookup missed but we have a rowResolver
-      // hook, kick a background scan; once it finds the row, top up
-      // activeRowCtx and re-render so the auto-mirror / blob-loader
-      // paths fire instead of the X-Frame fallback.
-      if (!earlyHit && rowResolver) {
-        var pendingEpoch = currentRenderEpoch + 1;
+      // hook, kick a background scan once per URL; on success top
+      // up activeRowCtx and re-render. The triedResolverFor set
+      // prevents a second resolver kick for the same URL — without
+      // it a resolver that returns a hit which still doesn't satisfy
+      // offlineLookup (e.g. a stale globalUrlIndex top-up race)
+      // could ping-pong the modal.
+      if (!earlyHit && rowResolver && !triedResolverFor[url]) {
+        triedResolverFor[url] = true;
         Promise.resolve(rowResolver(url)).then(function (hit) {
-          if (currentRenderEpoch !== pendingEpoch) return;
           if (hit && hit.tab && hit.rowId) {
             activeRowCtx = { tab: hit.tab, rowId: hit.rowId, url: url };
             render();

@@ -6241,7 +6241,37 @@
         });
         caret.appendChild(M.render.icon(isCol ? 'chevron-right' : 'chevron-down'));
         head.appendChild(caret);
-        head.appendChild(el('span', { class: 'tiles-group-title' }, key));
+        var titleSpan = el('button', {
+          type: 'button',
+          class: 'tiles-group-title tiles-group-title-rename',
+          title: 'Rename: changes the ' + (groupCol || 'group') + ' column on every row in this group',
+          onclick: function (e) {
+            e.preventDefault(); e.stopPropagation();
+            if (!groupCol) return;
+            var fresh = window.prompt('Rename "' + key + '" to:', key);
+            if (fresh === null) return;
+            var trimmed = String(fresh).trim();
+            if (trimmed === key) return;
+            (async function () {
+              for (var gi = 0; gi < groupRows.length; gi++) {
+                var gr = groupRows[gi];
+                var fr = await M.db.getRow(tab, gr.id);
+                if (!fr) continue;
+                fr[groupCol] = trimmed;
+                fr._dirty = 1;
+                fr._updated = new Date().toISOString();
+                await M.db.upsertRow(tab, fr);
+              }
+              schedulePush();
+              if (refresh) await refresh();
+              flash(document.body,
+                'Renamed ' + groupRows.length + ' row' + (groupRows.length === 1 ? '' : 's') + ' to "' + trimmed + '".', 'ok');
+            })().catch(function (err) {
+              flash(document.body, 'Rename failed: ' + (err && err.message || err), 'error');
+            });
+          }
+        }, key);
+        head.appendChild(titleSpan);
         head.appendChild(el('span', { class: 'small muted' }, ' · ' + groupRows.length));
 
         // Per-group Download-all — same routing as the table view's
