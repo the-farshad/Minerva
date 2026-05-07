@@ -5192,15 +5192,47 @@
       };
     });
     var lookupFn = function (url) {
-      return byUrl[String(url || '').trim()] || null;
+      var key = String(url || '').trim();
+      return byUrl[key] || globalUrlIndex[key] || null;
     };
     currentOfflineLookup = lookupFn;
+    // Contribute these rows to the cross-section index so a preview
+    // opened from a non-papers context (search, graph, home, deep
+    // link) still resolves the row.
+    Object.keys(byUrl).forEach(function (k) { globalUrlIndex[k] = byUrl[k]; });
     M.preview.setOfflineLookup(lookupFn);
   }
-  // Mirror of the most recent offlineLookup so the notes pane (and any
-  // other consumer outside the section render path) can resolve a URL
-  // back to its tab + rowId without re-walking every section's rows.
+
+  // Global URL → { tab, rowId, driveFileId, ... } index that lives
+  // across section switches. Each registerOfflineLookup call merges
+  // its section's rows in; rebuildGlobalUrlIndex() walks every tab
+  // once at boot so even a brand-new tab finds papers / videos
+  // without first navigating to their section.
+  var globalUrlIndex = {};
   var currentOfflineLookup = null;
+  async function rebuildGlobalUrlIndex() {
+    try {
+      var allMeta = await M.db.getAllMeta();
+      for (var i = 0; i < allMeta.length; i++) {
+        var tab = allMeta[i].tab;
+        var headers = allMeta[i].headers || [];
+        if (headers.indexOf('url') < 0) continue;
+        var rows = await M.db.getAllRows(tab);
+        rows.forEach(function (r) {
+          if (r._deleted) return;
+          var u = r.url && String(r.url).trim();
+          if (!u) return;
+          var driveMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
+          globalUrlIndex[u] = {
+            tab: tab,
+            rowId: r.id,
+            title: r.title || '',
+            driveFileId: driveMatch ? driveMatch[1] : ''
+          };
+        });
+      }
+    } catch (e) { console.warn('[Minerva url-index]', e); }
+  }
 
   function registerYouTubePlaylistContext(meta, rows) {
     if (!M.preview || typeof M.preview.setPlaylistContext !== 'function') return;
@@ -5870,6 +5902,25 @@
       });
       editBtn.appendChild(M.render.icon('pencil'));
       actionsHost.appendChild(editBtn);
+
+      var delBtn = el('button', {
+        type: 'button',
+        class: 'tile-action tile-delete',
+        title: 'Delete row',
+        'aria-label': 'Delete row',
+        onclick: async function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (!confirm('Delete this row? Your local copy is removed and the next sync deletes it from the spreadsheet.')) return;
+          try {
+            await deleteRow(tab, r.id);
+            if (refresh) await refresh();
+          } catch (err) {
+            flash(document.body, 'Delete failed: ' + (err && err.message || err), 'error');
+          }
+        }
+      });
+      delBtn.appendChild(M.render.icon('trash-2'));
+      actionsHost.appendChild(delBtn);
       thumb.appendChild(actionsHost);
 
       if (hasOffline && hasUrl && url) {
@@ -11621,6 +11672,12 @@
     });
 
     registerServiceWorker();
+    // Pre-warm the URL → row index so previews opened from non-
+    // section contexts (search, graph, home, deep links) still
+    // resolve their offline / Drive-mirror status. The full IDB
+    // walk runs once at boot; section views top up as the user
+    // navigates.
+    rebuildGlobalUrlIndex().catch(function () { /* best-effort */ });
     // Warm the Postgres-mirror probe so the first push has a cached
     // verdict instead of waiting for a network round-trip mid-flush.
     if (Minerva.pg && Minerva.pg.probe) {
@@ -11724,6 +11781,58 @@
           }
         }
         return fid;
+      });
+    }
+    // Save-to-host. Visible in preview when the helper is reachable
+    // and the active item is a PDF or an offline-blob video. Pulls
+    // the bytes (Drive blob loader for PDFs, IDB videos store for
+    // YouTube), POSTs to /file/save, then asks /file/reveal to open
+    // the host file manager.
+    if (M.preview && typeof M.preview.setSaveToHost === 'function') {
+      M.preview.setSaveToHost(async function (kind, suggestedName, sourceUrl) {
+        var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
+        if (!endpoint) throw new Error('Set the helper URL in Settings first.');
+        var lookup = currentOfflineLookup;
+        var hit = lookup ? lookup(sourceUrl) : null;
+        var bytes = null;
+        var ext = '';
+        if (hit && hit.driveFileId) {
+          var c = readConfig();
+          if (!c.clientId) throw new Error('Sign in first.');
+          var token = await M.auth.getToken(c.clientId);
+          var resp = await fetch(
+            'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(hit.driveFileId) + '?alt=media',
+            { headers: { Authorization: 'Bearer ' + token } }
+          );
+          if (!resp.ok) throw new Error('Drive fetch ' + resp.status);
+          bytes = await resp.arrayBuffer();
+          ext = '.pdf';
+        } else if (hit && hit.tab && hit.rowId) {
+          var rec = await M.db.getVideo(hit.tab, hit.rowId);
+          if (!rec || !rec.blob) throw new Error('No offline blob to save.');
+          bytes = await rec.blob.arrayBuffer();
+          ext = (rec.mime && /mp4/i.test(rec.mime)) ? '.mp4' : '';
+        } else {
+          throw new Error('No source data on this row.');
+        }
+        var name = suggestedName + (ext && !suggestedName.toLowerCase().endsWith(ext) ? ext : '');
+        var saveResp = await fetch(
+          endpoint + '/file/save?kind=' + encodeURIComponent(kind)
+            + '&name=' + encodeURIComponent(name),
+          { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }
+        );
+        var saveJson = await saveResp.json();
+        if (!saveJson.ok) throw new Error(saveJson.error || ('save ' + saveResp.status));
+        var revealResp = await fetch(endpoint + '/file/reveal', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: saveJson.path })
+        });
+        var revealJson = {};
+        try { revealJson = await revealResp.json(); } catch (e) {}
+        return {
+          path: saveJson.path,
+          in_container: !!revealJson.in_container
+        };
       });
     }
     // PDF auto-mirror on demand. Lets preview.js trigger a Drive

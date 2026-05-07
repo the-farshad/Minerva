@@ -839,6 +839,101 @@ def db_dump():
     return Response(proc.stdout, status=200, headers=headers)
 
 
+# ---------- save-to-host + reveal-in-file-manager ------------------------
+#
+# These let the SPA put a downloaded blob in a known place on the host
+# (default ~/Minerva/<kind>/...) and open the user's file manager there.
+# Both routes are loopback-only by default so a tab that ends up on
+# minerva.thefarshad.com can't accidentally reach them; the SPA served
+# from the same container is on 127.0.0.1.
+
+MINERVA_FILES_ROOT = pathlib.Path(
+    os.environ.get("MINERVA_FILES_ROOT", str(pathlib.Path.home() / "Minerva"))
+).expanduser()
+
+
+def _safe_join(root, *parts):
+    """Join + normalise; refuse to break out of root via .. or absolute
+    components. Returns the resolved absolute path or None."""
+    base = root.resolve()
+    candidate = base
+    for part in parts:
+        if not part:
+            continue
+        sub = pathlib.Path(part)
+        if sub.is_absolute() or ".." in sub.parts:
+            return None
+        candidate = candidate / sub
+    try:
+        candidate = candidate.resolve()
+    except Exception:
+        return None
+    try:
+        candidate.relative_to(base)
+    except Exception:
+        return None
+    return candidate
+
+
+@app.route("/file/save", methods=["POST", "OPTIONS"])
+def file_save():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    kind = (request.args.get("kind") or "misc").strip().lower()
+    name = (request.args.get("name") or "").strip()
+    if not name:
+        return (jsonify({"ok": False, "error": "Missing 'name'."}), 400, _cors_dict())
+    safe = _safe_join(MINERVA_FILES_ROOT, kind, name)
+    if not safe:
+        return (jsonify({"ok": False, "error": "Path outside files root."}), 400, _cors_dict())
+    safe.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(str(safe), "wb") as fh:
+            fh.write(request.get_data())
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": f"write failed: {exc}"}), 500, _cors_dict())
+    return jsonify({"ok": True, "path": str(safe)})
+
+
+@app.route("/file/reveal", methods=["POST", "OPTIONS"])
+def file_reveal():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    body = request.get_json(silent=True) or {}
+    path = (body.get("path") or "").strip()
+    if not path:
+        return (jsonify({"ok": False, "error": "Missing 'path'."}), 400, _cors_dict())
+    p = pathlib.Path(path).expanduser()
+    try:
+        p_resolved = p.resolve()
+        # Only allow paths inside MINERVA_FILES_ROOT — never expose
+        # arbitrary host filesystem to the network even on loopback.
+        p_resolved.relative_to(MINERVA_FILES_ROOT.resolve())
+    except Exception:
+        return (jsonify({"ok": False, "error": "Path outside files root."}), 400, _cors_dict())
+    if not p_resolved.exists():
+        return (jsonify({"ok": False, "error": "Path not found."}), 404, _cors_dict())
+    # Inside Docker, xdg-open won't reach the host's display server.
+    # Detect: if /.dockerenv exists, return the path so the browser
+    # surface (which IS on the host) can do the work via a download
+    # affordance instead. Otherwise spawn the OS opener.
+    in_container = pathlib.Path("/.dockerenv").exists()
+    if in_container:
+        return jsonify({"ok": True, "path": str(p_resolved), "in_container": True})
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(p_resolved)])
+        elif os.name == "nt":
+            subprocess.Popen(["explorer", "/select,", str(p_resolved)])
+        else:
+            # xdg-open on the parent dir reveals the file in most file
+            # managers (which highlight the most recent entry).
+            subprocess.Popen(["xdg-open", str(p_resolved.parent)])
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": f"reveal failed: {exc}"}), 500, _cors_dict())
+    return jsonify({"ok": True, "path": str(p_resolved), "in_container": False})
+
+
 # ---------- meta endpoints ------------------------------------------------
 
 @app.route("/health", methods=["GET"])
@@ -1251,24 +1346,29 @@ def _write_cookies_override(here, cookies_path, browser_profile=None):
     cookies file into the minerva-services container at /srv/cookies.txt
     AND, when present, bind-mounts the host's browser profile into
     /host-browser so yt-dlp can use --cookies-from-browser for live
-    (non-snapshot) cookies. Compose auto-loads override files, so this
+    (non-snapshot) cookies. Also mounts the host's ~/Minerva tree at
+    /srv/files so /file/save lands files where the user can find them
+    in their file manager. Compose auto-loads override files, so this
     composes with whatever the upstream docker-compose.yml says.
     """
     target = here / "docker-compose.override.yml"
+    files_dir = pathlib.Path.home() / "Minerva"
+    files_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Auto-generated by `minerva-services.py up` — safe to delete.",
-        "# Bind-mounts your host cookies.txt + browser profile so",
-        "# yt-dlp can authenticate live against your YouTube session.",
+        "# Bind-mounts cookies.txt + browser profile + the host Minerva",
+        "# files dir so authenticated downloads + Save-to-disk land in",
+        "# ~/Minerva on the host where you can open them in a file manager.",
         "services:",
         "  minerva-services:",
+        "    environment:",
+        "      MINERVA_FILES_ROOT: /srv/files",
+        "      MINERVA_FILES_HOST: " + str(files_dir),
     ]
     if browser_profile is not None:
         host_path, kind = browser_profile
-        # Use a kind-specific mount path so multiple browsers could be
-        # mounted later without colliding.
         container_path = "/host-browser/" + kind
         lines += [
-            "    environment:",
             f"      MINERVA_BROWSER_PROFILE: {container_path}",
             f"      MINERVA_BROWSER_KIND: {kind}",
         ]
@@ -1276,11 +1376,13 @@ def _write_cookies_override(here, cookies_path, browser_profile=None):
             "    volumes:",
             f"      - {cookies_path}:/srv/cookies.txt:ro",
             f"      - {host_path}:{container_path}:ro",
+            f"      - {files_dir}:/srv/files",
         ]
     else:
         lines += [
             "    volumes:",
             f"      - {cookies_path}:/srv/cookies.txt:ro",
+            f"      - {files_dir}:/srv/files",
         ]
     target.write_text("\n".join(lines) + "\n")
     return target

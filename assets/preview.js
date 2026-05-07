@@ -309,6 +309,45 @@
     });
     head.appendChild(extractBtn);
 
+    var saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'btn btn-ghost preview-save-btn';
+    saveBtn.title = 'Save the current PDF / video to ~/Minerva on your host';
+    saveBtn.textContent = 'Save';
+    saveBtn.style.display = 'none';
+    saveBtn.addEventListener('click', async function () {
+      if (!saveToHost) return;
+      var item = items[idx]; if (!item) return;
+      saveBtn.disabled = true;
+      var orig = saveBtn.textContent;
+      saveBtn.textContent = 'Saving…';
+      try {
+        var kind = isPdf(item.url) || (offlineLookup && (offlineLookup(item.url) || {}).driveFileId)
+          ? 'papers' : 'videos';
+        var suggested = (item.title || hostOf(item.url) || 'file')
+          .replace(/[^\w.\- ]+/g, '_').slice(0, 100);
+        var info = await saveToHost(kind, suggested, item.url);
+        if (info && info.path) {
+          saveBtn.textContent = '✓ Saved';
+          saveBtn.title = 'Saved to ' + info.path + (info.in_container
+            ? ' (visible at ~/Minerva on your host)'
+            : ' (file manager opened)');
+        } else {
+          saveBtn.textContent = '✗ Failed';
+        }
+      } catch (e) {
+        saveBtn.textContent = '✗ Failed';
+        saveBtn.title = String(e && e.message || e);
+      } finally {
+        setTimeout(function () {
+          saveBtn.disabled = false;
+          saveBtn.textContent = orig;
+          saveBtn.title = 'Save the current PDF / video to ~/Minerva on your host';
+        }, 4000);
+      }
+    });
+    head.appendChild(saveBtn);
+
     // Native PDF viewer carries its own highlight tools (Firefox's
     // built-in PDF viewer has the highlighter; Chrome's lets you
     // copy the selection). No app-level highlight button needed —
@@ -757,6 +796,17 @@
       var savedPage = isPdfNow ? readPdfPage(url) : 1;
       pageWrap.style.display = isPdfNow ? '' : 'none';
       extractBtn.style.display = (isPdfNow && pdfExtractor) ? '' : 'none';
+      // Save-to-disk button shows when:
+      //  • a save-to-host callback is wired (helper available)
+      //  • AND the active item is either a PDF (we'll fetch the
+      //    Drive blob to save) or a YouTube row with an offline
+      //    blob (we'll pull from IDB).
+      var savable = saveToHost && (
+        (isPdfNow && earlyHit && earlyHit.driveFileId)
+        || (isYt && earlyHit && earlyHit.tab && earlyHit.rowId
+            && window.Minerva && Minerva.db && Minerva.db.getVideo)
+      );
+      saveBtn.style.display = savable ? '' : 'none';
       var notesAvailable = isPdfNow && (notesProvider || notesSaver);
       notesBtn.style.display = notesAvailable ? '' : 'none';
       if (!notesAvailable) panel.classList.remove('preview-notes-open');
@@ -1258,6 +1308,14 @@
     pdfAttachLocal = (typeof fn === 'function') ? fn : null;
   }
 
+  // Save-to-host callback. App registers it; preview's Save button
+  // calls it with (kind, suggestedName, blob) and gets back a path
+  // string the user can find in their file manager.
+  var saveToHost = null;
+  function setSaveToHost(fn) {
+    saveToHost = (typeof fn === 'function') ? fn : null;
+  }
+
   // Hosts that explicitly refuse third-party iframe embedding via
   // X-Frame-Options / CSP. Falling through to a remote iframe for one
   // of these surfaces the browser's "this page can't be embedded"
@@ -1420,6 +1478,7 @@
     setPdfAttachLocal: setPdfAttachLocal,
     setPdfExtractor: setPdfExtractor,
     setPdfExtractDriveSaver: setPdfExtractDriveSaver,
+    setSaveToHost: setSaveToHost,
     setNotesProvider: setNotesProvider,
     setNotesSaver: setNotesSaver,
     setHighlightsProvider: setHighlightsProvider,
