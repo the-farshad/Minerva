@@ -3671,14 +3671,27 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 .preview-head {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.85rem;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.35rem 0.6rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
+.preview-head .btn,
+.preview-head .icon-btn {
+  /* Compact every toolbar button so the title + nav + open + extract
+     + notes + fullscreen + bookmark + close all fit on one row even
+     on narrow viewports. The wrap fallback above covers tiny screens. */
+  font-size: 0.78rem;
+  padding: 0.2rem 0.55rem;
+  min-height: 0;
+  line-height: 1.4;
+}
+.preview-head .icon-btn { padding: 0.2rem 0.4rem; }
 .preview-title {
-  flex: 1;
-  font-size: 0.85rem;
+  flex: 1 1 6rem;
+  min-width: 0;
+  font-size: 0.82rem;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: nowrap;

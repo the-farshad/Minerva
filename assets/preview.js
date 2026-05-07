@@ -309,21 +309,14 @@
     });
     head.appendChild(extractBtn);
 
-    // Highlight button — only meaningful when a PDF.js viewer is
-    // mounted (set in render() when it succeeds). Captures the
-    // current text selection as a stored highlight on the row.
-    var highlightBtn = document.createElement('button');
-    highlightBtn.type = 'button';
-    highlightBtn.className = 'btn btn-ghost preview-highlight-btn';
-    highlightBtn.title = 'Highlight the current selection';
-    highlightBtn.textContent = 'Highlight';
+    // Native PDF viewer carries its own highlight tools (Firefox's
+    // built-in PDF viewer has the highlighter; Chrome's lets you
+    // copy the selection). No app-level highlight button needed —
+    // the user uses the browser viewer's controls and re-attaches
+    // the annotated PDF via the X-Frame fallback's file picker
+    // when they want the highlights to persist across reloads.
+    var highlightBtn = document.createElement('span');
     highlightBtn.style.display = 'none';
-    highlightBtn.addEventListener('click', function () {
-      if (!activePdfView) return;
-      activePdfView.addHighlight('#ffeb3b');
-    });
-    head.appendChild(highlightBtn);
-
     var activePdfView = null;
 
     // Notes toggle — opens the side pane bound to the row's notes
@@ -867,48 +860,18 @@
         mountRemoteIframe(url, savedPage, resumeAt, isYt);
       }
 
-      // Hoisted-friendly helper: takes a Blob and mounts it the same
-      // way the existing-fileId path does (PDF.js when highlight hooks
-      // are wired, otherwise a native blob iframe with #page=N resume).
+      // Mount the PDF in the browser's native viewer via a blob URL.
+      // Firefox/Chrome both ship a built-in PDF viewer (Firefox's is
+      // PDF.js itself) with native highlighting, search, zoom, and
+      // print — far more polished than a custom canvas overlay, and
+      // critically smaller in vertical space so the modal toolbar +
+      // controls fit on a laptop screen. Highlights made in the
+      // native viewer are written into the PDF file itself; the user
+      // saves the annotated PDF and re-attaches via the X-Frame
+      // fallback's "Attach a PDF I have locally" button to persist.
       async function mountPdfBlob(blob, sourceUrl) {
         if (renderEpoch !== currentRenderEpoch) return;
         var savedPageNum = readPdfPage(sourceUrl) || 1;
-        var canHighlight = highlightsProvider && highlightsSaver
-          && window.Minerva && Minerva.pdfviewer && Minerva.pdfviewer.mount;
-        if (canHighlight) {
-          try {
-            var ctx = activeRowCtx;
-            var initialHl = [];
-            try {
-              var raw = await highlightsProvider(sourceUrl, ctx);
-              if (raw) initialHl = JSON.parse(raw);
-            } catch (e) { initialHl = []; console.warn('[Minerva hl-load]', e); }
-            if (renderEpoch !== currentRenderEpoch) return;
-            while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
-            var pdfHost = document.createElement('div');
-            pdfHost.className = 'preview-pdfjs';
-            frameHost.appendChild(pdfHost);
-            var view = await Minerva.pdfviewer.mount(pdfHost, blob, {
-              startPage: savedPageNum,
-              initialHighlights: initialHl,
-              onHighlightsChange: function (next) {
-                Promise.resolve(highlightsSaver(sourceUrl, JSON.stringify(next), ctx))
-                  .catch(function (e) { console.warn('[Minerva hl-save]', e); });
-              },
-              onPageChange: function (n) {
-                try { writePdfPage(sourceUrl, n); } catch (e) {}
-                if (pageInput) pageInput.value = String(n);
-              }
-            });
-            activePdfView = view;
-            if (highlightBtn) highlightBtn.style.display = '';
-            return;
-          } catch (err) {
-            console.warn('[Minerva pdfviewer]', err);
-            // Drop through to native iframe fallback.
-          }
-        }
-        if (renderEpoch !== currentRenderEpoch) return;
         var objUrl = URL.createObjectURL(blob);
         var iframe = document.createElement('iframe');
         iframe.className = 'preview-frame';

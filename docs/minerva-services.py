@@ -410,6 +410,14 @@ def pdf_extract():
     pdf_url = (body.get("url") or "").strip()
     if not pdf_url:
         return (jsonify({"ok": False, "error": "Missing 'url' in body."}), 400, _cors_dict())
+    # Translate URL shapes that fetch HTML rather than the PDF bytes
+    # the loader expects. arxiv abs pages, for instance, are the
+    # paper's HTML record — opendataloader-pdf crashes when fed HTML.
+    # Server-side rewrite means clients can pass either form.
+    import re as _re
+    abs_match = _re.match(r"^(https?://arxiv\.org/)abs/(.+?)(?:v\d+)?(?:\.pdf)?$", pdf_url, _re.I)
+    if abs_match:
+        pdf_url = abs_match.group(1) + "pdf/" + abs_match.group(2) + ".pdf"
     if not shutil.which("opendataloader-pdf"):
         return (
             jsonify({
