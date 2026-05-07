@@ -8119,6 +8119,48 @@
         lastLine
       ];
       pgPanel.replaceChildren.apply(pgPanel, pgKids.filter(Boolean));
+      // Async stats fetch — populates the panel below the static
+      // children with per-tab row counts so the user can see PG is
+      // actually receiving traffic.
+      if (live && Minerva.pg && typeof Minerva.pg.stats === 'function') {
+        Minerva.pg.stats().then(function (res) {
+          if (!res || !res.ok || !res.tabs) return;
+          var rows = res.tabs;
+          var statsHost = el('div', { class: 'pg-stats' },
+            el('h4', null, 'PG state'),
+            el('p', { class: 'small muted' },
+              'Total rows in PG: ', el('code', null, String(res.total_live)),
+              ' (excluding soft-deletes)'
+            )
+          );
+          if (rows.length) {
+            var tbl = el('table', { class: 'pg-stats-table' });
+            var tbody = el('tbody');
+            tbl.appendChild(tbody);
+            rows.forEach(function (r) {
+              var when = r.last_write_ms
+                ? new Date(r.last_write_ms).toLocaleString()
+                : '—';
+              tbody.appendChild(el('tr', null,
+                el('td', null, r.tab),
+                el('td', { class: 'num' }, String(r.live)),
+                r.deleted
+                  ? el('td', { class: 'small muted' }, '+' + r.deleted + ' deleted')
+                  : el('td', null, ''),
+                el('td', { class: 'small muted' }, 'last write: ' + when)
+              ));
+            });
+            statsHost.appendChild(tbl);
+          } else {
+            statsHost.appendChild(el('p', { class: 'small muted' },
+              'No rows yet — make any edit and the mirror will populate.'));
+          }
+          pgPanel.appendChild(statsHost);
+        }).catch(function (err) {
+          pgPanel.appendChild(el('p', { class: 'small muted' },
+            'Could not fetch PG stats: ' + (err && err.message || err)));
+        });
+      }
     }
 
     var PG_BACKUP_KEY = 'minerva.pgBackup.v1';

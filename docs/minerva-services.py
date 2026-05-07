@@ -633,6 +633,37 @@ def db_health():
     return jsonify({"ok": ready, "configured": True})
 
 
+@app.route("/db/stats", methods=["GET", "OPTIONS"])
+def db_stats():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    if not _db_ready():
+        return _db_unavailable()
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tab, "
+                    "  count(*) FILTER (WHERE NOT deleted) AS live, "
+                    "  count(*) FILTER (WHERE deleted) AS soft_deleted, "
+                    "  EXTRACT(EPOCH FROM max(updated_at)) * 1000 AS last_write_ms "
+                    "FROM minerva_rows GROUP BY tab ORDER BY live DESC NULLS LAST"
+                )
+                rows = []
+                total = 0
+                for tab, live, soft, last_ms in cur.fetchall():
+                    rows.append({
+                        "tab": tab,
+                        "live": int(live or 0),
+                        "deleted": int(soft or 0),
+                        "last_write_ms": int(last_ms or 0),
+                    })
+                    total += int(live or 0)
+        return jsonify({"ok": True, "total_live": total, "tabs": rows})
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": str(exc)}), 500, _cors_dict())
+
+
 @app.route("/db/rows/<tab>", methods=["GET", "OPTIONS"])
 def db_rows(tab):
     if request.method == "OPTIONS":
@@ -814,8 +845,8 @@ def health():
         "service": "minerva-services",
         "endpoints": [
             "/download", "/proxy", "/pdf/extract",
-            "/db/health", "/db/rows/<tab>", "/db/upsert/<tab>",
-            "/db/delete/<tab>", "/db/dump",
+            "/db/health", "/db/stats", "/db/rows/<tab>",
+            "/db/upsert/<tab>", "/db/delete/<tab>", "/db/dump",
             "/health", "/shutdown", "/",
         ],
         "postgres": {

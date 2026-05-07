@@ -5218,6 +5218,10 @@ table.rows.rows-grouped tr.row-group-head td {
   gap: 0.5rem;
   margin: 0.5rem 0 0.75rem;
 }
+.pg-stats { margin-top: 0.75rem; }
+.pg-stats-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.pg-stats-table td { padding: 0.25rem 0.4rem; border-top: 1px solid var(--border); }
+.pg-stats-table td.num { font-variant-numeric: tabular-nums; text-align: right; }
 
 /* --- Bookmark editor ------------------------------------------- */
 .bm-editor-overlay { z-index: 120; }

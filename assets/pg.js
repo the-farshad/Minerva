@@ -123,6 +123,17 @@
     return resp.json();
   }
 
+  async function stats() {
+    if (!isLive()) return null;
+    var base = readBaseUrl();
+    var resp = await fetch(base + '/db/stats', { cache: 'no-store' });
+    if (!resp.ok) {
+      var body = await resp.text();
+      throw new Error('PG stats ' + resp.status + ': ' + body);
+    }
+    return resp.json();
+  }
+
   async function dump() {
     if (!isLive()) throw new Error('Postgres mirror is not reachable.');
     var base = readBaseUrl();
@@ -143,6 +154,7 @@
     upsertRows: upsertRows,
     deleteRows: deleteRows,
     getRows: getRows,
+    stats: stats,
     dump: dump
   };
 })();
