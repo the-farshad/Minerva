@@ -11587,31 +11587,34 @@
     // PDF highlights pane — same dispatch as notes, against
     // row.highlights. Stored as JSON-encoded text; the viewer parses
     // on read and serializes on write so Sheets sees one cell.
+    // Resolve a row from either the passed-in ctx (preferred — set
+    // by preview at open time so saves work even after user
+    // navigates) or fall back to the runtime offlineLookup.
+    function resolveRowCtx(url, ctx) {
+      if (ctx && ctx.tab && ctx.rowId) return { tab: ctx.tab, rowId: ctx.rowId };
+      var lookup = currentOfflineLookup;
+      if (!lookup) return null;
+      var hit = lookup(url);
+      if (hit && hit.tab && hit.rowId) return { tab: hit.tab, rowId: hit.rowId };
+      return null;
+    }
     if (M.preview && typeof M.preview.setHighlightsProvider === 'function') {
-      M.preview.setHighlightsProvider(async function (url) {
-        var lookup = currentOfflineLookup;
-        if (!lookup) return '';
-        var hit = lookup(url);
-        if (!hit || !hit.tab || !hit.rowId) return '';
-        var row = await M.db.getRow(hit.tab, hit.rowId);
+      M.preview.setHighlightsProvider(async function (url, ctx) {
+        var ref = resolveRowCtx(url, ctx);
+        if (!ref) return '';
+        var row = await M.db.getRow(ref.tab, ref.rowId);
         return (row && row.highlights) || '';
       });
-      M.preview.setHighlightsSaver(async function (url, jsonString) {
-        var lookup = currentOfflineLookup;
-        if (!lookup) throw new Error('No row context for highlights.');
-        var hit = lookup(url);
-        if (!hit || !hit.tab || !hit.rowId) throw new Error('Row not found.');
-        var meta = await M.db.getMeta(hit.tab);
-        if (!meta || (meta.headers || []).indexOf('highlights') < 0) {
-          throw new Error('This section has no highlights column.');
-        }
-        var row = await M.db.getRow(hit.tab, hit.rowId);
+      M.preview.setHighlightsSaver(async function (url, jsonString, ctx) {
+        var ref = resolveRowCtx(url, ctx);
+        if (!ref) throw new Error('No row context for highlights.');
+        var row = await M.db.getRow(ref.tab, ref.rowId);
         if (!row) throw new Error('Row gone.');
         if ((row.highlights || '') === (jsonString || '')) return;
         row.highlights = jsonString || '';
         row._dirty = 1;
         row._updated = new Date().toISOString();
-        await M.db.upsertRow(hit.tab, row);
+        await M.db.upsertRow(ref.tab, row);
         schedulePush();
       });
     }
@@ -11619,30 +11622,22 @@
     // Lookups go through the same byUrl map registerOfflineLookup
     // builds, so both YouTube and Papers sections plug in for free.
     if (M.preview && typeof M.preview.setNotesProvider === 'function') {
-      M.preview.setNotesProvider(async function (url) {
-        var lookup = currentOfflineLookup;
-        if (!lookup) return '';
-        var hit = lookup(url);
-        if (!hit || !hit.tab || !hit.rowId) return '';
-        var row = await M.db.getRow(hit.tab, hit.rowId);
+      M.preview.setNotesProvider(async function (url, ctx) {
+        var ref = resolveRowCtx(url, ctx);
+        if (!ref) return '';
+        var row = await M.db.getRow(ref.tab, ref.rowId);
         return (row && row.notes) || '';
       });
-      M.preview.setNotesSaver(async function (url, markdown) {
-        var lookup = currentOfflineLookup;
-        if (!lookup) throw new Error('No row context for these notes.');
-        var hit = lookup(url);
-        if (!hit || !hit.tab || !hit.rowId) throw new Error('Row not found for this URL.');
-        var meta = await M.db.getMeta(hit.tab);
-        if (!meta || (meta.headers || []).indexOf('notes') < 0) {
-          throw new Error('This section has no notes column.');
-        }
-        var row = await M.db.getRow(hit.tab, hit.rowId);
+      M.preview.setNotesSaver(async function (url, markdown, ctx) {
+        var ref = resolveRowCtx(url, ctx);
+        if (!ref) throw new Error('No row context for these notes.');
+        var row = await M.db.getRow(ref.tab, ref.rowId);
         if (!row) throw new Error('Row gone.');
         if ((row.notes || '') === (markdown || '')) return;
         row.notes = markdown || '';
         row._dirty = 1;
         row._updated = new Date().toISOString();
-        await M.db.upsertRow(hit.tab, row);
+        await M.db.upsertRow(ref.tab, row);
         schedulePush();
       });
     }

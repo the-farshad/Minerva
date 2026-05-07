@@ -578,6 +578,11 @@
       notesStatus.classList.toggle('is-saved', cls === 'saved');
       notesStatus.classList.toggle('is-error', cls === 'error');
     }
+    // Captured row context for the active item — set in render() once
+    // we have the offlineLookup hit. Saves go through this struct so
+    // they don't depend on the user still being on the originating
+    // section by the time they hit Blur.
+    var activeRowCtx = null;
     async function loadNotes(url) {
       notesUrlAtLoad = url;
       notesArea.value = '';
@@ -585,26 +590,28 @@
       setNotesStatus('');
       if (!notesProvider) return;
       try {
-        var md = await notesProvider(url);
+        var md = await notesProvider(url, activeRowCtx);
         if (notesUrlAtLoad !== url) return;
         notesArea.value = md || '';
         setNotesStatus('Saved', 'saved');
       } catch (e) {
-        setNotesStatus('Couldn\'t load notes', 'error');
+        setNotesStatus('Couldn\'t load notes: ' + (e && e.message || e), 'error');
       }
     }
     async function flushNotes() {
       if (!notesDirty || !notesSaver || !notesUrlAtLoad) return;
       var url = notesUrlAtLoad;
       var value = notesArea.value;
+      var ctx = activeRowCtx;
       notesDirty = false;
       setNotesStatus('Saving…');
       try {
-        await notesSaver(url, value);
+        await notesSaver(url, value, ctx);
         if (notesUrlAtLoad === url) setNotesStatus('Saved', 'saved');
       } catch (e) {
         notesDirty = true;
-        setNotesStatus('Save failed', 'error');
+        setNotesStatus('Save failed: ' + (e && e.message || e), 'error');
+        console.warn('[Minerva notes-save]', e);
       }
     }
     notesArea.addEventListener('input', function () {
@@ -746,6 +753,13 @@
       if (offlineLookup) {
         try { earlyHit = offlineLookup(url); } catch (e) { earlyHit = null; }
       }
+      // Capture the row context once at render. All saves run against
+      // this struct so they keep working even after the user navigates
+      // to a different section (currentOfflineLookup would change
+      // underneath us otherwise).
+      activeRowCtx = earlyHit && earlyHit.tab && earlyHit.rowId
+        ? { tab: earlyHit.tab, rowId: earlyHit.rowId, url: url }
+        : null;
       var isPdfNow = isPdf(url) || !!(earlyHit && earlyHit.driveFileId);
       var savedPage = isPdfNow ? readPdfPage(url) : 1;
       pageWrap.style.display = isPdfNow ? '' : 'none';
@@ -863,11 +877,12 @@
           && window.Minerva && Minerva.pdfviewer && Minerva.pdfviewer.mount;
         if (canHighlight) {
           try {
+            var ctx = activeRowCtx;
             var initialHl = [];
             try {
-              var raw = await highlightsProvider(sourceUrl);
+              var raw = await highlightsProvider(sourceUrl, ctx);
               if (raw) initialHl = JSON.parse(raw);
-            } catch (e) { initialHl = []; }
+            } catch (e) { initialHl = []; console.warn('[Minerva hl-load]', e); }
             if (renderEpoch !== currentRenderEpoch) return;
             while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
             var pdfHost = document.createElement('div');
@@ -877,7 +892,8 @@
               startPage: savedPageNum,
               initialHighlights: initialHl,
               onHighlightsChange: function (next) {
-                try { highlightsSaver(sourceUrl, JSON.stringify(next)); } catch (e) {}
+                Promise.resolve(highlightsSaver(sourceUrl, JSON.stringify(next), ctx))
+                  .catch(function (e) { console.warn('[Minerva hl-save]', e); });
               },
               onPageChange: function (n) {
                 try { writePdfPage(sourceUrl, n); } catch (e) {}
