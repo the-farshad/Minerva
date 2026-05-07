@@ -279,7 +279,24 @@ def download():
             ])
         )
         if cookies_path and os.path.isfile(cookies_path):
-            ydl_opts["cookiefile"] = cookies_path
+            # Skip a malformed cookies file rather than letting yt-dlp's
+            # strict loader explode the whole download. A non-Netscape
+            # first line is the failure mode we've actually observed
+            # (partial save from a previous failed --refresh-cookies),
+            # and the request is better off proceeding without auth
+            # than failing with a confusing CookieLoadError.
+            try:
+                if os.path.getsize(cookies_path) < 64:
+                    cookies_path = None
+                else:
+                    with open(cookies_path, "r", encoding="utf-8", errors="replace") as fh:
+                        first = fh.readline().strip()
+                    if not first.startswith("# Netscape HTTP Cookie File"):
+                        cookies_path = None
+            except Exception:
+                cookies_path = None
+            if cookies_path:
+                ydl_opts["cookiefile"] = cookies_path
     if fmt == "mp3":
         ydl_opts["format"] = "bestaudio/best"
         ydl_opts["postprocessors"] = [
@@ -971,6 +988,16 @@ def _refresh_cookies(browser):
         "          or fall back to a manual cookies.txt export.",
         file=sys.stderr,
     )
+    # Don't leave a corrupted / partial cookies file behind — yt-dlp
+    # rejects any non-Netscape file at load time and an empty file is
+    # worse than a missing one (the container's snapshot path picks
+    # it up and crashes the whole /download call).
+    try:
+        if target.exists() and target.stat().st_size < 64:
+            target.unlink()
+            print(f"[minerva] removed empty/short cookies file at {target}.", file=sys.stderr)
+    except Exception:
+        pass
     return 1
 
 
@@ -1103,27 +1130,37 @@ def _ensure_compose_file(here):
 
 def _detect_browser_profile():
     """Find a host browser profile directory yt-dlp can read live.
-    Tries the common Linux paths, returns (path, browser_kind) or None.
-    Snap-installed Firefox is not a Flatpak — its profile lives in a
-    real directory we can bind-mount even though it's sandboxed for
-    direct cookie-DB reads on the host."""
+    Tries the common Linux + macOS paths plus the Flatpak namespaces,
+    returns (path, browser_kind) or None. Logs every path it checked
+    so a missing-detection failure is self-diagnosing — the next `up`
+    output reveals whether the user's browser is somewhere unexpected.
+    """
     home = pathlib.Path.home()
     candidates = [
         (home / ".mozilla" / "firefox", "firefox"),
         (home / "snap" / "firefox" / "common" / ".mozilla" / "firefox", "firefox"),
+        (home / ".var" / "app" / "org.mozilla.firefox" / ".mozilla" / "firefox", "firefox"),
         (home / ".config" / "google-chrome", "chrome"),
+        (home / ".var" / "app" / "com.google.Chrome" / "config" / "google-chrome", "chrome"),
         (home / ".config" / "chromium", "chromium"),
+        (home / ".var" / "app" / "org.chromium.Chromium" / "config" / "chromium", "chromium"),
         (home / ".config" / "BraveSoftware" / "Brave-Browser", "brave"),
+        (home / ".var" / "app" / "com.brave.Browser" / "config" / "BraveSoftware" / "Brave-Browser", "brave"),
         (home / ".config" / "vivaldi", "vivaldi"),
         (home / "Library" / "Application Support" / "Firefox" / "Profiles", "firefox"),
         (home / "Library" / "Application Support" / "Google" / "Chrome", "chrome"),
     ]
+    print("[minerva] scanning host browser profile paths…", file=sys.stderr)
     for path, kind in candidates:
         try:
-            if path.is_dir():
-                return (path, kind)
-        except Exception:
+            ok = path.is_dir()
+        except Exception as exc:  # noqa: BLE001
+            print(f"           {path} → error: {exc}", file=sys.stderr)
             continue
+        marker = "✓" if ok else "·"
+        print(f"           {marker} {path}", file=sys.stderr)
+        if ok:
+            return (path, kind)
     return None
 
 
