@@ -632,7 +632,18 @@
       openA.appendChild(openLabel);
 
       // PDF page jumper — show only for PDFs; pre-fill from saved page.
-      var isPdfNow = isPdf(url);
+      // A URL counts as PDF when its filename ends in .pdf, when it's
+      // an arxiv abs/pdf URL, or when the row carries a Drive-mirrored
+      // PDF copy (drive:<fileId> on row.offline). The last clause
+      // matters for arxiv abs URLs that point at the HTML abstract
+      // page on the live site — those iframes are X-Frame-blocked,
+      // so without this clause the offline blob path never fires
+      // and the user sees Firefox's "can't be embedded" page.
+      var earlyHit = null;
+      if (offlineLookup) {
+        try { earlyHit = offlineLookup(url); } catch (e) { earlyHit = null; }
+      }
+      var isPdfNow = isPdf(url) || !!(earlyHit && earlyHit.driveFileId);
       var savedPage = isPdfNow ? readPdfPage(url) : 1;
       pageWrap.style.display = isPdfNow ? '' : 'none';
       extractBtn.style.display = (isPdfNow && pdfExtractor) ? '' : 'none';
