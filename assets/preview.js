@@ -879,23 +879,21 @@
       var savedPage = isPdfNow ? readPdfPage(url) : 1;
       pageWrap.style.display = isPdfNow ? '' : 'none';
       extractBtn.style.display = (isPdfNow && pdfExtractor) ? '' : 'none';
-      // Save-to-disk button shows when:
-      //  • a save-to-host callback is wired (helper available)
-      //  • AND the active item is either a PDF (we'll fetch the
-      //    Drive blob to save) or a YouTube row with an offline
-      //    blob (we'll pull from IDB).
       var savable = saveToHost && (
         (isPdfNow && earlyHit && earlyHit.driveFileId)
         || (isYt && earlyHit && earlyHit.tab && earlyHit.rowId
             && window.Minerva && Minerva.db && Minerva.db.getVideo)
       );
       saveBtn.style.display = savable ? '' : 'none';
-      // Replace button: visible whenever a PDF is mounted AND we
-      // have row context — so the user can swap in an annotated
-      // copy from Firefox's PDF viewer's Save flow.
       replaceBtn.style.display = (isPdfNow && earlyHit && earlyHit.tab && earlyHit.rowId
         && pdfAttachLocal && pdfBlobLoader) ? '' : 'none';
-      var notesAvailable = isPdfNow && (notesProvider || notesSaver);
+      // Notes pane is available for any row (video or PDF) that has
+      // a row context registered with the saver — was previously
+      // gated on isPdfNow, which hid notes on YouTube rows even
+      // though the section's row.notes column accepts the same
+      // markdown.
+      var notesAvailable = (notesProvider || notesSaver)
+        && earlyHit && earlyHit.tab && earlyHit.rowId;
       notesBtn.style.display = notesAvailable ? '' : 'none';
       if (!notesAvailable) panel.classList.remove('preview-notes-open');
       if (notesAvailable) loadNotes(url);

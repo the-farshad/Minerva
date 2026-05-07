@@ -3779,6 +3779,15 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   width: 100%;
   background: var(--surface);
 }
+.preview-frame-host {
+  /* Round the bottom corners + clip the iframe so it doesn't
+     spill past the rounded modal panel. Without overflow:hidden
+     the YouTube iframe (sharp-cornered by default) painted past
+     the panel's bottom-radius. */
+  overflow: hidden;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
 .preview-nav {
   display: inline-flex;
   align-items: center;
