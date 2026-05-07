@@ -18,9 +18,12 @@ FROM python:3.12-slim
 # ffmpeg lets yt-dlp merge separate video / audio streams and produce
 # mp3. postgresql-client provides pg_dump for the /db/dump endpoint.
 # unzip + curl are needed to fetch the Deno tarball below.
+# default-jre-headless is required by opendataloader-pdf (Java
+# wrapper); without it the binary errors out with "java command not
+# found" before producing any output.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       ffmpeg ca-certificates postgresql-client curl unzip \
+       ffmpeg ca-certificates postgresql-client curl unzip default-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
 # Deno is the JS runtime yt-dlp's EJS solver uses to crack YouTube's
