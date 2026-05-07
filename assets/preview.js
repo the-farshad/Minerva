@@ -580,10 +580,16 @@
     notesStamp.className = 'btn btn-ghost btn-inline preview-notes-stamp';
     notesStamp.title = 'Insert "## p.<current>" at the cursor';
     notesStamp.textContent = '+ p.';
+    var notesLink = document.createElement('button');
+    notesLink.type = 'button';
+    notesLink.className = 'btn btn-ghost btn-inline preview-notes-link';
+    notesLink.title = 'Link to an existing row (video, paper, book, …)';
+    notesLink.textContent = '+ Link';
     var notesStatus = document.createElement('span');
     notesStatus.className = 'preview-notes-status small muted';
     notesHead.appendChild(notesTitle);
     notesHead.appendChild(notesStamp);
+    notesHead.appendChild(notesLink);
     notesHead.appendChild(notesStatus);
     var notesArea = document.createElement('textarea');
     notesArea.className = 'preview-notes-area';
@@ -656,21 +662,38 @@
       if (notesSaveTimer) { clearTimeout(notesSaveTimer); notesSaveTimer = null; }
       flushNotes();
     });
-    notesStamp.addEventListener('click', function () {
-      var p = parseInt(pageInput && pageInput.value, 10) || 1;
-      var insert = (notesArea.value && !notesArea.value.endsWith('\n') ? '\n' : '')
-                 + '## p.' + p + '\n';
+    function insertAtCursor(snippet) {
       var pos = notesArea.selectionStart || notesArea.value.length;
       var before = notesArea.value.slice(0, pos);
       var after  = notesArea.value.slice(pos);
-      notesArea.value = before + insert + after;
+      var prefix = (before && !before.endsWith('\n')) ? '\n' : '';
+      notesArea.value = before + prefix + snippet + after;
       notesArea.focus();
-      var caret = (before + insert).length;
+      var caret = (before + prefix + snippet).length;
       notesArea.setSelectionRange(caret, caret);
       notesDirty = true;
       setNotesStatus('Editing…');
       if (notesSaveTimer) clearTimeout(notesSaveTimer);
       notesSaveTimer = setTimeout(function () { flushNotes(); }, 800);
+    }
+    notesStamp.addEventListener('click', function () {
+      var p = parseInt(pageInput && pageInput.value, 10) || 1;
+      insertAtCursor('## p.' + p + '\n');
+    });
+    notesLink.addEventListener('click', async function () {
+      if (!rowPicker) {
+        setNotesStatus('Row picker not available — paste the URL into the note instead.', 'error');
+        return;
+      }
+      try {
+        var picked = await rowPicker();
+        if (!picked) return;
+        var label = picked.title || picked.id || picked.url;
+        var url = picked.url || ('#/r/' + encodeURIComponent(picked.tab) + '/' + encodeURIComponent(picked.id));
+        insertAtCursor('[' + label + '](' + url + ')\n');
+      } catch (e) {
+        setNotesStatus('Link failed: ' + (e && e.message || e), 'error');
+      }
     });
 
     var ytPlayer = null;
@@ -1316,6 +1339,15 @@
     saveToHost = (typeof fn === 'function') ? fn : null;
   }
 
+  // Row picker callback. Returns a Promise that resolves to a chosen
+  // row from any section ({tab, id, title, url}) or null on cancel.
+  // Used by the notes pane's "+ Link" button to embed cross-section
+  // markdown links.
+  var rowPicker = null;
+  function setRowPicker(fn) {
+    rowPicker = (typeof fn === 'function') ? fn : null;
+  }
+
   // Hosts that explicitly refuse third-party iframe embedding via
   // X-Frame-Options / CSP. Falling through to a remote iframe for one
   // of these surfaces the browser's "this page can't be embedded"
@@ -1479,6 +1511,7 @@
     setPdfExtractor: setPdfExtractor,
     setPdfExtractDriveSaver: setPdfExtractDriveSaver,
     setSaveToHost: setSaveToHost,
+    setRowPicker: setRowPicker,
     setNotesProvider: setNotesProvider,
     setNotesSaver: setNotesSaver,
     setHighlightsProvider: setHighlightsProvider,

@@ -7499,15 +7499,45 @@
       var blob = new Blob(chunks, { type: contentType });
 
       job.setStatus('Saving locally…');
-      await M.db.putVideo(tab, row.id, {
-        blob: blob,
-        name: filename,
-        mime: contentType,
-        size: blob.size
-      });
+      var hostPath = '';
+      var idbStored = false;
+      try {
+        await M.db.putVideo(tab, row.id, {
+          blob: blob,
+          name: filename,
+          mime: contentType,
+          size: blob.size
+        });
+        idbStored = true;
+      } catch (idbErr) {
+        // IndexedDB has hard quotas (varies by browser; Firefox is
+        // ~50% of free disk). Big videos hit them. Fall back to the
+        // helper's /file/save so the download succeeds anyway —
+        // user will play the file via their OS player from
+        // ~/Minerva/videos.
+        var quotaLike = idbErr && (idbErr.name === 'QuotaExceededError'
+          || /quota/i.test(idbErr.message || ''));
+        if (!quotaLike) throw idbErr;
+        job.setStatus('Browser storage full — saving to ~/Minerva/videos…');
+        try {
+          var saveResp = await fetch(
+            endpoint + '/file/save?kind=videos&name=' + encodeURIComponent(filename),
+            { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
+              body: await blob.arrayBuffer() }
+          );
+          var saveJson = await saveResp.json();
+          if (!saveJson.ok) throw new Error(saveJson.error || ('host save ' + saveResp.status));
+          hostPath = saveJson.path;
+        } catch (hostErr) {
+          throw new Error('Browser storage full and host save failed: '
+            + (hostErr && hostErr.message || hostErr));
+        }
+      }
       var meta = await M.db.getMeta(tab);
       var driveFileId = '';
-      if (cfg.uploadOfflineToDrive) {
+      if (cfg.uploadOfflineToDrive && idbStored) {
+        // Skip the Drive upload when the IDB store failed — we don't
+        // want to double-store a multi-GB video.
         job.setStatus('Uploading to Drive…');
         driveFileId = await uploadOfflineToDrive(blob, filename);
       }
@@ -7518,29 +7548,37 @@
         var fresh = await M.db.getRow(tab, row.id);
         if (fresh && !fresh._deleted) {
           pushUndo({ kind: 'edit', tab: tab, rowId: fresh.id, field: 'offline', prevValue: fresh.offline });
-          fresh.offline = 'yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB'
-            + (driveFileId ? ' · drive:' + driveFileId : '');
+          var marker = idbStored
+            ? ('yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB')
+            : ('host:' + hostPath);
+          if (driveFileId) marker += ' · drive:' + driveFileId;
+          fresh.offline = marker;
           fresh._updated = new Date().toISOString();
           fresh._dirty = 1;
           await M.db.upsertRow(tab, fresh);
           schedulePush();
         }
       }
-      job.done('Saved ' + (blob.size / (1024*1024)).toFixed(1) + ' MB', {
-        label: 'Watch offline',
-        icon: 'play-circle',
-        run: function () {
-          M.db.getVideo(tab, row.id).then(function (rec) {
-            if (rec && rec.blob && M.preview && M.preview.showVideoBlob) {
-              M.preview.showVideoBlob({
-                url: URL.createObjectURL(rec.blob),
-                title: row.title || filename,
-                sourceUrl: row.url || ''
-              });
-            }
-          }).catch(function () {});
-        }
-      });
+      job.done(
+        idbStored
+          ? 'Saved ' + (blob.size / (1024*1024)).toFixed(1) + ' MB'
+          : 'Saved to ' + hostPath,
+        idbStored ? {
+          label: 'Watch offline',
+          icon: 'play-circle',
+          run: function () {
+            M.db.getVideo(tab, row.id).then(function (rec) {
+              if (rec && rec.blob && M.preview && M.preview.showVideoBlob) {
+                M.preview.showVideoBlob({
+                  url: URL.createObjectURL(rec.blob),
+                  title: row.title || filename,
+                  sourceUrl: row.url || ''
+                });
+              }
+            }).catch(function () {});
+          }
+        } : null
+      );
       if (refresh) await refresh();
     } catch (err) {
       var msg = (err && err.message) || String(err);
@@ -11781,6 +11819,81 @@
           }
         }
         return fid;
+      });
+    }
+    // Cross-row link picker for the notes pane. Renders a small
+    // overlay with a search input that filters rows from every tab
+    // (using the global URL index plus a one-shot DB scan for rows
+    // without a URL). Returns a row dict on click, null on cancel.
+    if (M.preview && typeof M.preview.setRowPicker === 'function') {
+      M.preview.setRowPicker(function () {
+        return new Promise(function (resolve) {
+          (async function () {
+            // Aggregate every row from every section once.
+            var pool = [];
+            try {
+              var allMeta = await M.db.getAllMeta();
+              for (var i = 0; i < allMeta.length; i++) {
+                var t = allMeta[i].tab;
+                if (t && t.charAt(0) === '_') continue;
+                var rows = await M.db.getAllRows(t);
+                rows.forEach(function (r) {
+                  if (r._deleted) return;
+                  pool.push({
+                    tab: t,
+                    id: r.id,
+                    title: r.title || r.name || r.id,
+                    url: r.url || ''
+                  });
+                });
+              }
+            } catch (e) { /* tolerate */ }
+            var overlay = el('div', { class: 'modal-overlay row-picker-overlay',
+              onclick: function (e) { if (e.target === overlay) { overlay.remove(); resolve(null); } }
+            });
+            var panel = el('div', { class: 'modal-panel row-picker-panel',
+              onclick: function (e) { e.stopPropagation(); }
+            });
+            var input = el('input', { type: 'text', class: 'row-picker-input',
+              placeholder: 'Search every section… (type a few characters)' });
+            var list = el('div', { class: 'row-picker-list' });
+            function paint(filter) {
+              while (list.firstChild) list.removeChild(list.firstChild);
+              var q = String(filter || '').toLowerCase().trim();
+              var hits = pool;
+              if (q) {
+                hits = pool.filter(function (p) {
+                  return (p.title || '').toLowerCase().indexOf(q) >= 0
+                      || (p.url || '').toLowerCase().indexOf(q) >= 0
+                      || (p.tab || '').toLowerCase().indexOf(q) >= 0;
+                });
+              }
+              hits.slice(0, 100).forEach(function (p) {
+                var row = el('button', { type: 'button', class: 'row-picker-item',
+                  onclick: function () { overlay.remove(); resolve(p); }
+                });
+                row.appendChild(el('span', { class: 'row-picker-tab' }, p.tab));
+                row.appendChild(el('span', { class: 'row-picker-title' }, p.title));
+                if (p.url) row.appendChild(el('span', { class: 'row-picker-url small muted' }, p.url));
+                list.appendChild(row);
+              });
+              if (!hits.length) {
+                list.appendChild(el('p', { class: 'small muted', style: 'padding:0.6rem' },
+                  q ? 'No matches.' : 'Loading…'));
+              }
+            }
+            input.addEventListener('input', function () { paint(input.value); });
+            input.addEventListener('keydown', function (e) {
+              if (e.key === 'Escape') { overlay.remove(); resolve(null); }
+            });
+            panel.appendChild(input);
+            panel.appendChild(list);
+            overlay.appendChild(panel);
+            document.body.appendChild(overlay);
+            paint('');
+            input.focus();
+          })();
+        });
       });
     }
     // Save-to-host. Visible in preview when the helper is reachable
