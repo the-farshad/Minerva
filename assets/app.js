@@ -7606,11 +7606,88 @@
     }
   }
 
+  // Persistent download queue. Each tile-click / bulk download
+  // appends an intent here; if the page reloads mid-download, boot()
+  // re-runs unfinished entries against the same row. The queue is
+  // strictly localStorage state — IDB / Sheets are the source of
+  // truth for what's actually saved. No partial-byte resume (yt-dlp
+  // doesn't expose Range support today); instead we re-fetch from
+  // scratch, which is fast enough for the typical 10–100 MB videos.
+  var DOWNLOAD_QUEUE_KEY = 'minerva.downloadQueue.v1';
+  function readDownloadQueue() {
+    try { return JSON.parse(localStorage.getItem(DOWNLOAD_QUEUE_KEY) || '[]') || []; }
+    catch (e) { return []; }
+  }
+  function writeDownloadQueue(q) {
+    try { localStorage.setItem(DOWNLOAD_QUEUE_KEY, JSON.stringify(q)); } catch (e) {}
+  }
+  function enqueueDownloadIntent(tab, rowId, url) {
+    var q = readDownloadQueue();
+    // Drop any prior intent for the same tab+rowId so re-queue stays
+    // idempotent if the user clicks Download twice.
+    q = q.filter(function (e) { return !(e.tab === tab && e.rowId === rowId); });
+    q.push({ tab: tab, rowId: rowId, url: url, status: 'inflight', at: Date.now() });
+    writeDownloadQueue(q);
+  }
+  function markDownloadIntent(tab, rowId, status) {
+    var q = readDownloadQueue();
+    var changed = false;
+    q = q.map(function (e) {
+      if (e.tab === tab && e.rowId === rowId) {
+        changed = true;
+        return Object.assign({}, e, { status: status, updatedAt: Date.now() });
+      }
+      return e;
+    });
+    if (status === 'done') {
+      q = q.filter(function (e) { return !(e.tab === tab && e.rowId === rowId); });
+    } else {
+      // Garbage-collect ancient entries (>24h, regardless of status).
+      var cutoff = Date.now() - 24 * 3600 * 1000;
+      q = q.filter(function (e) { return (e.updatedAt || e.at || 0) > cutoff; });
+    }
+    if (changed) writeDownloadQueue(q);
+  }
+  async function resumePendingDownloads() {
+    var q = readDownloadQueue();
+    if (!q.length) return;
+    // Filter to genuinely pending entries (anything that didn't
+    // reach 'done' before the page closed).
+    var pending = q.filter(function (e) {
+      return e.status === 'inflight' || e.status === 'queued' || e.status === 'error';
+    });
+    if (!pending.length) return;
+    flash(document.body, 'Resuming ' + pending.length + ' interrupted download'
+      + (pending.length === 1 ? '' : 's') + '…');
+    for (var i = 0; i < pending.length; i++) {
+      var intent = pending[i];
+      try {
+        var row = await M.db.getRow(intent.tab, intent.rowId);
+        if (!row || row._deleted) {
+          markDownloadIntent(intent.tab, intent.rowId, 'done');
+          continue;
+        }
+        // If the row already has an offline marker, treat as done —
+        // the previous run finished even though the queue didn't.
+        if (String(row.offline || '').trim()) {
+          markDownloadIntent(intent.tab, intent.rowId, 'done');
+          continue;
+        }
+        await downloadOfflineViaYtDlp(intent.tab, row, null);
+      } catch (e) {
+        console.warn('[Minerva resume]', e);
+      }
+    }
+  }
+
   async function downloadOfflineViaYtDlp(tab, row, refresh) {
     if (!row.url) {
       flash(document.body, 'No URL on this row to download.', 'error');
       return;
     }
+    // Persist the intent before starting so a refresh mid-download
+    // can pick up where this left off via resumePendingDownloads().
+    enqueueDownloadIntent(tab, row.id, row.url);
     // Hand-off to the paper PDF mirror when the row's URL looks like
     // a paper (.pdf, arxiv abs/pdf, doi.org). yt-dlp can't ingest
     // arxiv abs URLs and returns "Unsupported URL: ..." with HTTP 500
@@ -7765,8 +7842,10 @@
           }
         } : null
       );
+      markDownloadIntent(tab, row.id, 'done');
       if (refresh) await refresh();
     } catch (err) {
+      markDownloadIntent(tab, row.id, 'error');
       var msg = (err && err.message) || String(err);
       // Map known yt-dlp failure modes to actionable messages instead
       // of dumping the raw stderr to the user. The server appends a
@@ -11902,6 +11981,14 @@
     // walk runs once at boot; section views top up as the user
     // navigates.
     rebuildGlobalUrlIndex().catch(function () { /* best-effort */ });
+    // Resume any download intents that didn't finish before the
+    // last reload — best effort, deferred so the rest of boot
+    // doesn't wait on potentially slow re-fetches.
+    setTimeout(function () {
+      resumePendingDownloads().catch(function (e) {
+        console.warn('[Minerva resume]', e);
+      });
+    }, 1500);
     // Warm the Postgres-mirror probe so the first push has a cached
     // verdict instead of waiting for a network round-trip mid-flush.
     if (Minerva.pg && Minerva.pg.probe) {
