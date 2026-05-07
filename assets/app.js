@@ -2469,15 +2469,20 @@
             var bCobaltOk = !!(bcfg.cobaltEndpoint || '').trim();
             if (bytDlpOk || bCobaltOk) {
               var via = bytDlpOk ? 'yt-dlp' : 'Cobalt';
-              flash(view, 'Downloading ' + rows.length + ' video' + (rows.length === 1 ? '' : 's') + ' via ' + via + ' — see progress bar.');
+              flash(view, 'Downloading ' + rows.length + ' video' + (rows.length === 1 ? '' : 's') + ' via ' + via + '.');
+              var batch = addBulkDownloadJob(rows.length, 'Bulk · ' + via);
               for (var j = 0; j < rows.length; j++) {
                 try {
                   if (bytDlpOk) await downloadOfflineViaYtDlp(sec.tab, rows[j], null);
                   else await downloadOfflineViaCobalt(sec.tab, rows[j], null);
-                } catch (e) { console.warn('[Minerva bulk-dl]', e); }
+                  batch.tick(true);
+                } catch (e) {
+                  console.warn('[Minerva bulk-dl]', e);
+                  batch.tick(false);
+                }
               }
+              batch.done();
               await refresh();
-              flash(view, 'Bulk download finished.');
               return;
             }
             // No Cobalt → single yt-dlp command with N URLs. The user
@@ -6038,12 +6043,12 @@
           var rmBtn = el('button', {
             type: 'button',
             class: 'tile-action tile-remove',
-            title: 'Remove the local copy',
-            'aria-label': 'Remove offline copy',
+            title: 'Free space: drop the offline copy but keep the row',
+            'aria-label': 'Remove offline copy (keep row)',
             onclick: async function (e) {
               e.preventDefault();
               e.stopPropagation();
-              if (!confirm('Remove the local copy of this video?')) return;
+              if (!confirm('Drop the local offline copy? The row stays — you can re-download later.')) return;
               try { await M.db.deleteVideo(tab, r.id); } catch (err) {}
               if (hasOffline && r.offline) {
                 pushUndo({ kind: 'edit', tab: tab, rowId: r.id, field: 'offline', prevValue: r.offline });
@@ -6056,7 +6061,11 @@
               if (refresh) await refresh();
             }
           });
-          rmBtn.appendChild(M.render.icon('trash-2'));
+          // Distinct icon from tile-delete so the two buttons read as
+          // separate operations: ⊘ "drop the cached blob" vs 🗑 "delete
+          // the entire row." Without this users hit two trash icons in
+          // a row and assume one is broken.
+          rmBtn.appendChild(M.render.icon('cloud-off'));
           actionsHost.appendChild(rmBtn);
         } else {
           // Route by URL kind: papers (PDF / arxiv abs+pdf / doi.org)
@@ -6648,12 +6657,18 @@
               if (gytDlpOk || gCobaltOk) {
                 var gvia = gytDlpOk ? 'yt-dlp' : 'Cobalt';
                 flash(document.body, 'Downloading ' + withUrl.length + ' via ' + gvia + '…');
+                var gbatch = addBulkDownloadJob(withUrl.length, key + ' · ' + gvia);
                 for (var i = 0; i < withUrl.length; i++) {
                   try {
                     if (gytDlpOk) await downloadOfflineViaYtDlp(tab, withUrl[i], null);
                     else await downloadOfflineViaCobalt(tab, withUrl[i], null);
-                  } catch (er) { console.warn('[Minerva group-dl]', er); }
+                    gbatch.tick(true);
+                  } catch (er) {
+                    console.warn('[Minerva group-dl]', er);
+                    gbatch.tick(false);
+                  }
                 }
+                gbatch.done();
                 if (refresh) await refresh();
                 return;
               }
@@ -7266,6 +7281,63 @@
     if (n === 0) tray.classList.add('is-empty');
     else tray.classList.remove('is-empty');
   }
+  // Aggregate progress card for bulk / playlist downloads. Sits at
+  // the top of the downloads tray and tracks N total + X completed
+  // (+ E errored) so the user can see "12 / 50 done" without
+  // counting individual job cards.
+  function addBulkDownloadJob(total, title) {
+    var tray = getDownloadsTray();
+    var trayBody = tray.querySelector('.downloads-tray-body') || tray;
+    var card = el('div', { class: 'dl-job dl-job-bulk is-running' },
+      el('div', { class: 'dl-job-head' },
+        el('span', { class: 'dl-job-title' }, title || 'Bulk download'),
+        el('button', { class: 'icon-btn dl-job-close', type: 'button',
+          title: 'Dismiss',
+          onclick: function () { try { card.remove(); refreshDownloadsCount(tray); } catch (e) {} }
+        }, '×')
+      ),
+      el('div', { class: 'dl-job-status small muted' }, '0 / ' + total + ' done'),
+      el('div', { class: 'dl-job-bar' }, el('span', { class: 'dl-job-fill' }))
+    );
+    // Pin to the top of the tray (most-recent-first body uses
+    // column-reverse, so prepending = visually on top).
+    if (trayBody.firstChild) trayBody.insertBefore(card, trayBody.firstChild);
+    else trayBody.appendChild(card);
+    refreshDownloadsCount(tray);
+    if (M.render && M.render.refreshIcons) M.render.refreshIcons();
+    var statusEl = card.querySelector('.dl-job-status');
+    var fillEl = card.querySelector('.dl-job-fill');
+    var ok = 0, fail = 0;
+    function paint() {
+      var done = ok + fail;
+      var pct = total > 0 ? Math.round(100 * done / total) : 0;
+      fillEl.style.width = pct + '%';
+      statusEl.textContent = done + ' / ' + total + ' done'
+        + (fail ? ' (' + fail + ' failed)' : '');
+    }
+    paint();
+    return {
+      tick: function (succeeded) {
+        if (succeeded) ok++; else fail++;
+        paint();
+      },
+      done: function () {
+        card.classList.remove('is-running');
+        card.classList.add(fail ? 'is-error' : 'is-done');
+        statusEl.textContent = (ok + fail) + ' / ' + total + ' done'
+          + (fail ? ' (' + fail + ' failed)' : '');
+        // Auto-dismiss success-only batches; keep error batches up
+        // so the user can read the count.
+        if (!fail) {
+          setTimeout(function () {
+            try { card.remove(); } catch (e) {}
+            refreshDownloadsCount(tray);
+          }, 6000);
+        }
+      }
+    };
+  }
+
   function addDownloadJob(opts) {
     var tray = getDownloadsTray();
     var trayBody = tray.querySelector('.downloads-tray-body') || tray;

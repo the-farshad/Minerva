@@ -5487,6 +5487,8 @@ table.rows.rows-grouped tr.row-group-head td {
   gap: 0.35rem;
   animation: dl-job-in .15s ease-out;
 }
+.dl-job.dl-job-bulk { border-left: 3px solid var(--accent); }
+.dl-job.dl-job-bulk .dl-job-title { color: var(--accent); }
 @keyframes dl-job-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .dl-job-head {
   display: flex;
