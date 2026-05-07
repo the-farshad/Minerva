@@ -2179,7 +2179,9 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
   flex-direction: column;
   min-width: 13rem;
   padding: 0.25rem;
-  z-index: 1000;
+  /* Above grid content (z-index 5–30) but well below the modal
+     overlay (z-index 1000) so opening a preview always covers it. */
+  z-index: 500;
 }
 .tile-actions { z-index: 5; }
 .tile { overflow: visible; }
