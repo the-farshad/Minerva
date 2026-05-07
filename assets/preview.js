@@ -315,6 +315,46 @@
     saveBtn.title = 'Save the current PDF / video to ~/Minerva on your host';
     saveBtn.textContent = 'Save';
     saveBtn.style.display = 'none';
+    var replaceBtn = document.createElement('button');
+    replaceBtn.type = 'button';
+    replaceBtn.className = 'btn btn-ghost preview-replace-btn';
+    replaceBtn.title = 'Replace this PDF with a local file (e.g. your annotated copy from Firefox)';
+    replaceBtn.textContent = 'Replace';
+    replaceBtn.style.display = 'none';
+    var replaceInput = document.createElement('input');
+    replaceInput.type = 'file';
+    replaceInput.accept = 'application/pdf,.pdf';
+    replaceInput.style.display = 'none';
+    replaceBtn.appendChild(replaceInput);
+    replaceBtn.addEventListener('click', function (e) {
+      // Don't trigger the picker twice when the click bubbles from
+      // the input itself.
+      if (e.target === replaceInput) return;
+      replaceInput.click();
+    });
+    replaceInput.addEventListener('change', async function () {
+      var file = replaceInput.files && replaceInput.files[0];
+      if (!file || !pdfAttachLocal || !activeRowCtx || !pdfBlobLoader) return;
+      var orig = replaceBtn.textContent;
+      replaceBtn.disabled = true;
+      replaceBtn.textContent = 'Replacing…';
+      try {
+        var fid = await pdfAttachLocal(activeRowCtx.tab, activeRowCtx.rowId, file);
+        if (!fid) throw new Error('upload returned no fileId');
+        var blob = await pdfBlobLoader(fid);
+        var item = items[idx];
+        if (item) mountPdfBlob(blob, item.url);
+        replaceBtn.textContent = '✓ Replaced';
+      } catch (err) {
+        replaceBtn.textContent = '✗ ' + (err && err.message || err);
+      } finally {
+        setTimeout(function () {
+          replaceBtn.disabled = false;
+          replaceBtn.textContent = orig;
+        }, 4000);
+      }
+      replaceInput.value = '';
+    });
     saveBtn.addEventListener('click', async function () {
       if (!saveToHost) return;
       var item = items[idx]; if (!item) return;
@@ -347,13 +387,13 @@
       }
     });
     head.appendChild(saveBtn);
+    head.appendChild(replaceBtn);
 
     // Native PDF viewer carries its own highlight tools (Firefox's
     // built-in PDF viewer has the highlighter; Chrome's lets you
     // copy the selection). No app-level highlight button needed —
-    // the user uses the browser viewer's controls and re-attaches
-    // the annotated PDF via the X-Frame fallback's file picker
-    // when they want the highlights to persist across reloads.
+    // the user uses the browser viewer's controls; the Replace
+    // button above lets them swap an annotated copy back in.
     var highlightBtn = document.createElement('span');
     highlightBtn.style.display = 'none';
     var activePdfView = null;
@@ -844,6 +884,11 @@
             && window.Minerva && Minerva.db && Minerva.db.getVideo)
       );
       saveBtn.style.display = savable ? '' : 'none';
+      // Replace button: visible whenever a PDF is mounted AND we
+      // have row context — so the user can swap in an annotated
+      // copy from Firefox's PDF viewer's Save flow.
+      replaceBtn.style.display = (isPdfNow && earlyHit && earlyHit.tab && earlyHit.rowId
+        && pdfAttachLocal && pdfBlobLoader) ? '' : 'none';
       var notesAvailable = isPdfNow && (notesProvider || notesSaver);
       notesBtn.style.display = notesAvailable ? '' : 'none';
       if (!notesAvailable) panel.classList.remove('preview-notes-open');
