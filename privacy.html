@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Privacy Policy — Minerva</title>
-<meta name="description" content="Minerva privacy policy. Detailed disclosure of how Minerva accesses, uses, stores, and shares Google user data — with no servers, no telemetry, no analytics. Your data lives in your Google account.">
+<meta name="description" content="Minerva privacy policy. Detailed disclosure of how Minerva accesses, uses, stores, and shares Google user data, what the optional helper service does, and where every byte lives.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
@@ -35,39 +35,74 @@
       <h1>Privacy Policy</h1>
     </div>
   </div>
-  <p class="subtitle">Minerva — last updated 2026-04-29.</p>
+  <p class="subtitle">Minerva — last updated 2026-05-08.</p>
 </header>
 
 <main>
   <section class="view">
-    <p class="lead">Minerva does not collect, store, or transmit any of your data. There are no servers because there is no backend. Your data lives in <em>your</em> Google account, owned and accessed by you.</p>
+    <p class="lead">Minerva keeps your data in your own Google account and (optionally) on your own machine. The hosted SPA does not store, log, or transmit your data. An optional self-hosted helper service handles file downloads and a local mirror — its scope is documented below.</p>
 
     <h2>What Minerva is</h2>
-    <p>Minerva is a static web app — HTML, CSS, and JavaScript files served from GitHub Pages. When you load it, the files run in your browser and call Google's APIs directly using your own OAuth grant. There is no Minerva server in between.</p>
+    <p>Minerva is a static web app — HTML, CSS, and JavaScript files. The hosted instance at <code>minerva.thefarshad.com</code> is served from a small DigitalOcean droplet behind Caddy and Cloudflare. When you load it, the files run in your browser and call Google's APIs directly using your own OAuth grant. The droplet has no application database; it serves bytes and reverse-proxies a localhost-only helper service. You can also fork the repo and run the entire app yourself with no third-party hosting at all.</p>
+
+    <h2>Operating modes</h2>
+    <p>Settings → Connection lets you pick how data flows. Each mode has different storage:</p>
+    <ul>
+      <li><strong>Sheets-only</strong> (default): rows live in your Google Sheets spreadsheet and are mirrored to your browser's IndexedDB for offline reads. No other backend involved.</li>
+      <li><strong>Hybrid</strong>: same as Sheets-only plus an optional mirror to a local Postgres provided by the helper. The mirror is a convenience cache; Sheets remains the source of truth.</li>
+      <li><strong>Helper-assisted features</strong> (any mode): video downloads (yt-dlp), CORS-proxied bibliographic lookups (arxiv / CrossRef), local file save (<code>~/Minerva</code> on whatever machine runs the helper), and PDF text extraction. Each is opt-in by configuring a helper URL in Settings.</li>
+    </ul>
 
     <h2>What is stored, and where</h2>
     <ul>
-      <li><strong>In your browser's <code>localStorage</code>:</strong> your OAuth Client ID, your spreadsheet ID, your access token (until it expires), your email address (after first connect), and your theme/font preferences. Cleared when you click <em>Clear local config</em> in Settings or clear this site's data in your browser.</li>
-      <li><strong>In your browser's <code>IndexedDB</code>:</strong> a mirror of your Minerva spreadsheet, kept for offline reads and fast rendering. Cleared when you click <em>Clear local mirror</em> in Settings or clear this site's data.</li>
-      <li><strong>In your Google Drive:</strong> one spreadsheet named <em>Minerva</em>, created by Minerva when you first connect. Owned by you. Never read or written by anyone but you.</li>
+      <li><strong>Your browser's <code>localStorage</code></strong>: OAuth Client ID, Spreadsheet ID, access token (until it expires), email address (after first connect), helper URL, AI provider settings (only if you opt in), per-section preferences (sort, filter, group notes, group order). Cleared via Settings → Clear local config.</li>
+      <li><strong>Your browser's <code>IndexedDB</code></strong>: a mirror of your Minerva spreadsheet rows for offline reads, plus any video blobs you stored before switching to the host-disk path. Cleared via Settings → Clear local mirror, or Settings → Diagnostics → Reset offline copies.</li>
+      <li><strong>Your Google Drive</strong>: a single spreadsheet named <em>Minerva</em>; an optional <em>Minerva offline</em> folder for downloaded videos when "Mirror downloads to Drive" is on; an optional <em>minerva-config.json</em> file (one JSON document) so a fresh device can sync your Settings on first sign-in.</li>
+      <li><strong>The helper service's host disk</strong> (only if you've configured a helper URL): downloaded videos at <code>~/Minerva/videos/&lt;playlist&gt;/&lt;title&gt;.mp4</code>; mirrored paper PDFs at <code>~/Minerva/papers/&lt;title&gt;.pdf</code>; the helper's own logs (stdout from the container).</li>
+      <li><strong>The helper's local Postgres</strong> (only with Hybrid mode + helper running): one row per spreadsheet row, keyed by (tab, id). Wipeable via Settings → Diagnostics → Reset offline copies (filesystem only — Postgres is wiped via the helper's own teardown).</li>
     </ul>
     <p>That is the complete list. Nothing else is stored anywhere.</p>
 
     <h2>What requests your browser makes</h2>
     <p>When you use Minerva, your browser talks to:</p>
     <ul>
-      <li><strong>Google</strong> (<code>accounts.google.com</code>, <code>sheets.googleapis.com</code>, <code>www.googleapis.com</code>, <code>oauth2.googleapis.com</code>) — for OAuth and to read/write <em>your</em> spreadsheet. Subject to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a>.</li>
-      <li><strong>Google Fonts</strong> (<code>fonts.googleapis.com</code>, <code>fonts.gstatic.com</code>) — to load the optional web fonts (Inter, Roboto, Ubuntu, Vazirmatn, Atkinson Hyperlegible, VT323). Subject to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a>.</li>
+      <li><strong>Google</strong> (<code>accounts.google.com</code>, <code>sheets.googleapis.com</code>, <code>www.googleapis.com</code>, <code>oauth2.googleapis.com</code>) — for OAuth and to read/write <em>your</em> spreadsheet and (optional) Drive files. Subject to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a>.</li>
+      <li><strong>Google Fonts</strong> (<code>fonts.googleapis.com</code>, <code>fonts.gstatic.com</code>) — to load optional web fonts. Subject to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a>.</li>
       <li><strong>jsDelivr</strong> (<code>cdn.jsdelivr.net</code>) — to load the QR-code library. Subject to the <a href="https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net" target="_blank" rel="noopener">jsDelivr privacy policy</a>.</li>
+      <li><strong>Your configured helper URL</strong> (only if you set one in Settings) — for video downloads, CORS-proxied bibliographic lookups, file save, and PDF extraction. The helper is your software running on a host you control; this connection never reaches a Minerva-controlled server.</li>
+      <li><strong>YouTube and arXiv</strong> embeds — when you preview a video or paper, your browser fetches their iframe content directly from those origins. Subject to their respective privacy policies.</li>
+      <li><strong>Your configured CORS proxy</strong> (defaults to <code>https://corsproxy.io/?</code>; can be replaced with your helper's <code>/proxy</code>) — for arxiv and CrossRef metadata fetches that those servers do not return CORS headers for.</li>
+      <li><strong>Cloudflare</strong> — the hosted instance is fronted by Cloudflare. Cloudflare sees request metadata (IP, URL, headers) for the static files it serves; this is the same as for any Cloudflare-fronted site. Subject to <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Cloudflare's privacy policy</a>.</li>
     </ul>
-    <p>Minerva uses no other third parties. There are no analytics, no error reporters, no advertising trackers, no fingerprinting, no cookies set by Minerva itself. Minerva receives no data because Minerva runs no server.</p>
+    <p>Minerva uses no analytics, no error reporters, no advertising trackers, no fingerprinting, and sets no cookies of its own. The hosted SPA runs no application logic on the server — the droplet's job is to serve static files and reverse-proxy the helper.</p>
+
+    <h2>The optional helper service</h2>
+    <p>The helper is a single Python script (<code>docs/minerva-services.py</code>) packaged as a Docker image. You decide whether to run it, where to run it, and what to point it at. Its responsibilities and the data it touches:</p>
+    <ul>
+      <li><strong>yt-dlp downloads</strong> (<code>POST /download</code>): you give it a URL, it spawns yt-dlp, streams the resulting media file back to your browser. The helper container can be configured to read your <em>own</em> browser cookies (<code>--cookies-from-browser</code>) for sites that require sign-in. Cookies are read at request time from a bind-mounted host directory; they are not copied or transmitted anywhere except to the target site (yt-dlp -&gt; YouTube/etc.) for the request you triggered.</li>
+      <li><strong>File save / serve / delete / reveal</strong> (<code>/file/save</code>, <code>/file/serve</code>, <code>/file/delete</code>, <code>/file/reveal</code>, <code>/file/clean</code>): writes/reads/removes files inside a single bind-mounted host directory (typically <code>~/Minerva</code>). The helper refuses any path outside that directory.</li>
+      <li><strong>CORS proxy</strong> (<code>/proxy</code>): forwards your browser's GET to a fixed allow-list of bibliographic hosts (<code>export.arxiv.org</code>, <code>arxiv.org</code>, <code>api.crossref.org</code>, <code>www.youtube.com</code>, <code>youtube.com</code>, <code>youtu.be</code>, <code>api.semanticscholar.org</code>). Other hosts are refused. The proxy does not log request bodies or store responses; it forwards bytes in both directions.</li>
+      <li><strong>PDF extraction</strong> (<code>/pdf/extract</code>): runs <code>opendataloader-pdf</code> against a PDF URL or an uploaded PDF and returns the extracted markdown / structured JSON. Output goes to your browser; the helper deletes the temp file after the response.</li>
+      <li><strong>Postgres mirror</strong> (<code>/db/upsert</code>, <code>/db/delete</code>, <code>/db/rows</code>, <code>/db/dump</code>): when "Mirror writes to Postgres" is on, the helper accepts JSON rows from your browser and stores them in a local Postgres container. The data is the same row data already in your spreadsheet — Minerva never sends anything else through this endpoint.</li>
+      <li><strong>Health and shutdown</strong> (<code>/health</code>, <code>/shutdown</code>): probe and graceful stop. Both are loopback-only on a typical install.</li>
+    </ul>
+    <p>The hosted instance's helper at <code>minerva.thefarshad.com</code> runs on the operator's DigitalOcean droplet and is reachable only via Caddy's reverse proxy. Anything stored on that helper's disk is on a machine the operator controls — see "Hosted instance, custody, and access" below.</p>
+
+    <h2>Hosted instance, custody, and access</h2>
+    <p>If you use the hosted instance at <code>minerva.thefarshad.com</code> instead of your own copy:</p>
+    <ul>
+      <li>The droplet is operated by the maintainer (Farshad). The maintainer technically can read the droplet's filesystem, container logs, and helper-side caches when troubleshooting, the same way any sysadmin can read their own server. The maintainer does not, by policy, inspect this data, and there is no automated logging, mirroring, or backup of user data on the droplet.</li>
+      <li>If you upload videos / papers to the droplet's helper, those bytes briefly live on the droplet's disk under <code>~/Minerva/videos</code> or <code>~/Minerva/papers</code>. They are not encrypted at rest beyond what the droplet's filesystem provides. Treat the hosted helper the same way you would any other operator-controlled web service.</li>
+      <li>Cloudflare sits in front of the droplet and may cache static files. Cloudflare does not see the contents of authenticated Sheets/Drive API responses (those go from your browser straight to Google).</li>
+      <li>If you don't want to trust the hosted instance for file storage, leave the "yt-dlp server" / file-save fields blank in Settings and only use Sheets/Drive — or fork and self-host. The codebase is designed so the helper is strictly opt-in.</li>
+    </ul>
 
     <h2>The public-share feature</h2>
-    <p>When you build a card via <em>Quick share</em>, the title, body, and choices are encoded into the URL itself — they live in the URL hash, not on a server. Anyone with the URL sees the same card. The URL is generated locally; nothing is uploaded. Treat anything you put into a public share as public.</p>
+    <p>When you build a card via <em>Quick share</em>, the title, body, and choices are encoded into the URL hash itself — they live in the URL, not on a server. Anyone with the URL sees the same card. Treat anything you put into a public share as public.</p>
 
     <h2>How Minerva interacts with Google user data</h2>
 
-    <p>This section is the explicit, scope-by-scope disclosure required under the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a> and the <a href="https://developers.google.com/terms" target="_blank" rel="noopener">Google APIs Terms of Service</a>. It documents every type of Google user data Minerva accesses, exactly how that data is used, where it is stored, and whether it is shared.</p>
+    <p>This section is the explicit, scope-by-scope disclosure required under the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a> and the <a href="https://developers.google.com/terms" target="_blank" rel="noopener">Google APIs Terms of Service</a>.</p>
 
     <h3>Scopes Minerva requests</h3>
     <ul>
@@ -78,41 +113,35 @@
     <p>Minerva does not request any sensitive or restricted scopes. It does not request <code>https://www.googleapis.com/auth/spreadsheets</code>, full-Drive read, Gmail, Calendar, Contacts, or any other broader scope.</p>
 
     <h3>Data accessed via <code>drive.file</code></h3>
-    <p><strong>What is accessed:</strong> A single Google Sheets spreadsheet titled "Minerva" inside your Google Drive. The <code>drive.file</code> scope is restricted by Google's design so that an application can only see files it has itself created or that the user has explicitly opened with that application. As a result, Minerva is technically and contractually unable to access, list, search, read, or modify any other file in your Google Drive — including documents, photos, sheets, slides, or any other content you did not create through Minerva.</p>
-    <p>Within the Minerva spreadsheet, Minerva accesses the following content types:</p>
-    <ul>
-      <li>Sheet (tab) names and their contents (cell values you create — text, numbers, dates, links, etc.).</li>
-      <li>Sheet structural metadata (which tabs exist, their numeric sheet IDs) so Minerva can add or remove rows/tabs you create through the app.</li>
-      <li>The file's "modifiedTime" and "webViewLink" properties, used to display a link to your spreadsheet from the Minerva interface.</li>
-    </ul>
-    <p><strong>How it is used:</strong> The accessed data is the user's own task / goal / project / note / habit data, displayed and edited within the Minerva user interface. The app reads the spreadsheet to render section list views, dashboards, and the calendar; writes back to the spreadsheet when the user edits a cell, adds a row, deletes a row, or installs a section preset; and, on a user-initiated action, generates a public iCal file (<code>Minerva tasks.ics</code>) and an optional RSS file (<code>Minerva tasks.rss.xml</code>) inside the same Drive — these files are owned by the user, are explicitly created by the user clicking the in-app "Publish" button, and are made world-readable so the user can subscribe to them from a calendar or RSS reader.</p>
-    <p><strong>How it is processed:</strong> All requests originate from the user's web browser and go directly to Google's API servers (<code>sheets.googleapis.com</code>, <code>www.googleapis.com</code>) using the user's own access token. The Minerva web app is a static site (HTML, CSS, JavaScript files served from GitHub Pages); it has no server-side component, no proxy, no backend database, and no logging or analytics infrastructure. The Minerva domain (<code>minerva.thefarshad.com</code>) does not receive any of the data Minerva reads from or writes to your Google Drive.</p>
-    <p><strong>How it is stored:</strong> A copy of the spreadsheet's data is mirrored into the user's own browser using <code>IndexedDB</code> (under origin <code>https://minerva.thefarshad.com</code>), so the app can render data offline and respond instantly to edits. This local mirror is created and stored entirely on the user's device. It is never transmitted anywhere except, on user action, back to the user's own Google Drive via the Sheets API. The user can delete this local mirror at any time via the in-app *Settings → Local store → Clear local mirror* button or by clearing the site's data through their browser's settings.</p>
-    <p><strong>How it is shared:</strong> Minerva does not share, sell, transfer, or disclose Google user data to any third party. Minerva itself does not receive the data (it has no server). The hosted instance at <code>minerva.thefarshad.com</code> serves only static files; the operator of <code>thefarshad.com</code> has no programmatic access to user data.</p>
+    <p><strong>What is accessed:</strong> a Google Sheets spreadsheet titled "Minerva", an optional folder titled "Minerva offline" containing video / paper files you explicitly chose to mirror, and an optional file titled "minerva-config.json". The <code>drive.file</code> scope is restricted by Google's design so an application can only see files it has itself created or that the user has explicitly opened with that application. Minerva is technically and contractually unable to access, list, search, read, or modify any other file in your Google Drive.</p>
+    <p>Within the Minerva spreadsheet, Minerva accesses sheet (tab) names and their contents (cell values you create — text, numbers, dates, links, etc.), sheet structural metadata (which tabs exist, their numeric sheet IDs), and the file's <code>modifiedTime</code> / <code>webViewLink</code> properties.</p>
+    <p><strong>How it is used:</strong> render section list views, dashboards, and the calendar from your spreadsheet rows; write back to the spreadsheet when you edit a cell, add or delete a row, or install a section preset; on user-initiated actions, generate a public iCal file (<code>Minerva tasks.ics</code>) and an optional RSS file (<code>Minerva tasks.rss.xml</code>) inside the same Drive (these files are owned by the user, are explicitly created by clicking the in-app "Publish" button, and are made world-readable so the user can subscribe to them); on user-initiated actions, upload an annotated PDF or a downloaded video to the Minerva Drive folder; and (optionally) sync Settings via <code>minerva-config.json</code>.</p>
+    <p><strong>How it is processed:</strong> all requests originate from your browser and go directly to Google's API servers using your own access token. The Minerva droplet does not see, intercept, or proxy these requests; it serves only static files plus the optional helper endpoints described above.</p>
+    <p><strong>How it is stored:</strong> a copy of the spreadsheet's data is mirrored to your browser's IndexedDB for offline use. When the Postgres mirror is enabled and a helper is configured, that copy is also written to the helper's local Postgres. Both stores are wipeable from the in-app Settings.</p>
+    <p><strong>How it is shared:</strong> Minerva does not share, sell, transfer, or disclose Google user data to any third party. The hosted droplet does not receive the data — Sheets/Drive traffic flows browser-to-Google.</p>
 
     <h3>Data accessed via <code>userinfo.email</code> and <code>openid</code></h3>
-    <p><strong>What is accessed:</strong> The user's primary Google Account email address (a single string, e.g. <code>name@example.com</code>) and the standard OpenID Connect identity claim that confirms the user is authenticated.</p>
-    <p><strong>How it is used:</strong> The email address is displayed in the user interface only — for example "Connected as <code>name@example.com</code>" on the Settings page and "Welcome back, <code>name@example.com</code>" on the home page. This is so the user knows which Google account is currently signed in. The OpenID claim is used purely to confirm authentication; no inference, profiling, or analytics is performed on it.</p>
-    <p><strong>How it is processed:</strong> The email is fetched once after sign-in from <code>https://www.googleapis.com/oauth2/v3/userinfo</code> using the user's access token. The request originates from the user's browser; no Minerva server is involved.</p>
-    <p><strong>How it is stored:</strong> The email is cached in the user's browser <code>localStorage</code> alongside the access token, so the UI can display "Connected as &lt;email&gt;" without repeating the userinfo request on every page load. It is removed when the user clicks <em>Disconnect</em> or <em>Clear local config</em>, or when the user clears the site's data through their browser.</p>
-    <p><strong>How it is shared:</strong> The email is not shared, transmitted to any third party, or stored anywhere outside the user's own browser.</p>
+    <p><strong>What is accessed:</strong> your primary Google Account email address and the standard OpenID Connect identity claim that confirms you are authenticated.</p>
+    <p><strong>How it is used:</strong> the email is displayed in the UI ("Connected as <code>name@example.com</code>"). The OpenID claim is used purely to confirm authentication; no inference, profiling, or analytics is performed on it.</p>
+    <p><strong>How it is processed and stored:</strong> the email is fetched once after sign-in from <code>https://www.googleapis.com/oauth2/v3/userinfo</code> using your access token, then cached in <code>localStorage</code>. It is removed via Disconnect / Clear local config / clearing the site's data.</p>
+    <p><strong>How it is shared:</strong> not shared, not transmitted to any third party, not stored anywhere outside your own browser.</p>
 
     <h3>Use of Google user data for AI / machine learning</h3>
     <p>Minerva does <strong>not</strong> use Google user data to develop, improve, or train any machine learning or generalized AI model. Google user data is also not transferred to any third party for those purposes.</p>
-    <p>Minerva does include an optional, opt-in AI assistant feature (Settings → AI assistant) that lets the user supply their own API key for an AI provider of their choice (Anthropic, OpenAI, a local Ollama instance, or a custom OpenAI-compatible endpoint). When the user explicitly asks the assistant a question, the user's prompt — which may include excerpts of their Minerva spreadsheet data — is sent directly from the user's browser to the configured AI provider. This transmission only happens at the user's explicit action (clicking *Send* or pressing ⌘/Ctrl+Enter in the assistant overlay) and only goes to the endpoint the user themselves configured. The user's API key is stored only in the user's browser and is never transmitted to <code>minerva.thefarshad.com</code> or any other Minerva-controlled location. If the AI feature is not configured, no data ever leaves the user's browser for AI purposes.</p>
+    <p>Minerva includes an optional, opt-in AI assistant (Settings → AI assistant) that lets you supply your own API key for the AI provider of your choice. When you explicitly send a prompt, the prompt — which may include excerpts of your spreadsheet data — is sent directly from your browser to the endpoint you configured. Your API key is stored only in your browser. If the AI feature is not configured, no data ever leaves your browser for AI purposes.</p>
 
     <h3>Data retention and deletion</h3>
-    <p>Because Minerva has no server-side storage, all retention and deletion is under the user's direct control:</p>
+    <p>Minerva has no Minerva-controlled server-side storage; all retention and deletion is under your direct control:</p>
     <ul>
-      <li><em>Local mirror in IndexedDB:</em> cleared via Settings → Local store → Clear local mirror, or by clearing the site's data in the browser.</li>
-      <li><em>Access token, email, OAuth client ID:</em> cleared via Settings → Disconnect or Clear local config, or by clearing the site's data.</li>
-      <li><em>The Minerva spreadsheet in Google Drive:</em> the user owns it and can delete it from Drive directly at any time. Minerva does not need to be involved.</li>
-      <li><em>Authorization grant:</em> the user can revoke Minerva's access at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Apps with access</a> at any time.</li>
+      <li><em>Local mirror in IndexedDB:</em> Settings → Local store → Clear local mirror, or clear the site's data in the browser.</li>
+      <li><em>Access token, email, OAuth client ID, helper URL:</em> Settings → Disconnect or Clear local config, or clear the site's data.</li>
+      <li><em>Files on the helper's disk:</em> Settings → Diagnostics → Reset offline copies (also accessible per-row via the kebab menu).</li>
+      <li><em>The Minerva spreadsheet / Minerva offline folder / minerva-config.json on Drive:</em> you own them; delete them from Drive at any time. Minerva does not need to be involved.</li>
+      <li><em>Authorization grant:</em> revoke at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Apps with access</a> at any time.</li>
     </ul>
 
     <h3>Verification of these statements</h3>
-    <p>Minerva's source code is published under the GNU GPL v3 at <a href="https://github.com/the-farshad/Minerva" target="_blank" rel="noopener">github.com/the-farshad/Minerva</a>. The OAuth scope set is defined in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/auth.js" target="_blank" rel="noopener"><code>assets/auth.js</code></a>, the Sheets/Drive API surface is in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/sheets.js" target="_blank" rel="noopener"><code>assets/sheets.js</code></a>, and the local IndexedDB store is in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/db.js" target="_blank" rel="noopener"><code>assets/db.js</code></a>. Anyone can audit these files to confirm that the disclosures in this section match the application's actual behavior.</p>
-    <p>You can revoke these at any time at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Apps with access</a>.</p>
+    <p>Minerva's source code is published under the GNU GPL v3 at <a href="https://github.com/the-farshad/Minerva" target="_blank" rel="noopener">github.com/the-farshad/Minerva</a>. The OAuth scope set is in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/auth.js" target="_blank" rel="noopener"><code>assets/auth.js</code></a>; the Sheets/Drive API surface is in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/sheets.js" target="_blank" rel="noopener"><code>assets/sheets.js</code></a>; the IndexedDB store is in <a href="https://github.com/the-farshad/Minerva/blob/main/assets/db.js" target="_blank" rel="noopener"><code>assets/db.js</code></a>; the helper service is a single file at <a href="https://github.com/the-farshad/Minerva/blob/main/docs/minerva-services.py" target="_blank" rel="noopener"><code>docs/minerva-services.py</code></a>. Anyone can audit these files to confirm that the disclosures above match the application's actual behavior.</p>
 
     <h2>Children</h2>
     <p>Minerva is not directed at children under 13.</p>

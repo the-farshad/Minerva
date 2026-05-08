@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Terms of Service — Minerva</title>
-<meta name="description" content="Minerva terms of service. GPL-3-licensed open-source app, provided as-is.">
+<meta name="description" content="Minerva terms of service. GPL-3-licensed open-source app, provided as-is, with an optional self-hosted helper service.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
@@ -35,35 +35,43 @@
       <h1>Terms of Service</h1>
     </div>
   </div>
-  <p class="subtitle">Minerva — last updated 2026-04-28.</p>
+  <p class="subtitle">Minerva — last updated 2026-05-08.</p>
 </header>
 
 <main>
   <section class="view">
-    <p class="lead">Minerva is a free, open-source, static web app. It is provided as-is, with no warranties. Your data is yours, stored in your own Google account; Minerva is just a user interface to it.</p>
+    <p class="lead">Minerva is a free, open-source, static web app with an optional self-hosted helper service. It is provided as-is, with no warranties. Your data is yours, stored in your own Google account and (optionally) on your own machine; Minerva is just a user interface to it.</p>
 
     <h2>License</h2>
-    <p>The Minerva source code is published under the <a href="https://github.com/the-farshad/Minerva/blob/main/LICENSE" target="_blank" rel="noopener">GNU General Public License v3.0</a>. You may fork it, modify it, host your own copy, or redistribute it under the terms of that license. Note GPL-3 is copyleft: any derivative work you redistribute (including a publicly hosted modified copy) must remain GPL-3-licensed and source-available.</p>
+    <p>The Minerva source code is published under the <a href="https://github.com/the-farshad/Minerva/blob/main/LICENSE" target="_blank" rel="noopener">GNU General Public License v3.0</a>. You may fork it, modify it, host your own copy, or redistribute it under the terms of that license. GPL-3 is copyleft: any derivative work you redistribute (including a publicly hosted modified copy) must remain GPL-3-licensed and source-available.</p>
 
     <h2>The hosted instance</h2>
-    <p>The hosted instance at <a href="https://minerva.thefarshad.com">minerva.thefarshad.com</a> is provided as a courtesy. It may change, go down, or be discontinued at any time. There is no service level agreement and no support obligation. If continuity matters to you, <a href="https://github.com/the-farshad/Minerva#run-your-own-copy">fork the repository and host your own copy</a> — the hosted instance and a self-hosted copy are functionally identical.</p>
+    <p>The hosted instance at <a href="https://minerva.thefarshad.com">minerva.thefarshad.com</a> is provided as a courtesy. It runs on a small DigitalOcean droplet behind Caddy and Cloudflare. It may change, slow down, go down, or be discontinued at any time. There is no service-level agreement and no support obligation. If continuity matters to you, <a href="https://github.com/the-farshad/Minerva#run-your-own-copy">fork the repository and host your own copy</a> — the hosted instance and a self-hosted copy are functionally identical.</p>
+    <p>Some helper-backed features (video downloads, paper PDF mirror to host disk, CORS-proxied bibliographic lookups, PDF text extraction, Postgres mirror) require a helper service to be reachable. The hosted instance ships its own helper bound to the droplet's loopback interface; you may instead point Minerva at a helper running on your own machine. Either way, the helper is opt-in and is documented in the <a href="privacy.html">privacy policy</a>.</p>
 
     <h2>Your data</h2>
-    <p>Minerva does not store your data on any server. Your data lives in:</p>
+    <p>Minerva's hosted SPA does not store your data. Your data lives in:</p>
     <ul>
-      <li>Your Google Drive (the <em>Minerva</em> spreadsheet).</li>
-      <li>Your browser's <code>localStorage</code> and <code>IndexedDB</code> (caches and preferences).</li>
+      <li>Your Google Drive (the <em>Minerva</em> spreadsheet plus, optionally, an <em>Minerva offline</em> folder for downloaded videos / mirrored paper PDFs and a <em>minerva-config.json</em> Settings snapshot).</li>
+      <li>Your browser's <code>localStorage</code> and <code>IndexedDB</code> (caches, preferences, the offline-rows mirror).</li>
+      <li>The host disk and (optionally) Postgres of whichever machine you run the helper on. For the hosted droplet, that machine is operated by the maintainer; see the privacy policy section "Hosted instance, custody, and access" for the specifics.</li>
     </ul>
     <p>You are responsible for backing up your Google account using <a href="https://takeout.google.com" target="_blank" rel="noopener">Google Takeout</a> or any other tool of your choice. Minerva does not back up your data and cannot recover it.</p>
 
     <h2>Acceptable use</h2>
-    <p>Don't use Minerva to do anything illegal in your jurisdiction or to violate <a href="https://policies.google.com/terms" target="_blank" rel="noopener">Google's Terms of Service</a>. The public-share feature embeds the data you provide into a URL anyone with the URL can read — don't share things you wouldn't share publicly.</p>
+    <p>Don't use Minerva to do anything illegal in your jurisdiction or to violate <a href="https://policies.google.com/terms" target="_blank" rel="noopener">Google's Terms of Service</a>. Specifically, regarding the helper-backed features:</p>
+    <ul>
+      <li><strong>Video downloads</strong> use yt-dlp. You are responsible for having the right to download whatever you point it at — copyright in the destination video is yours to respect, not the maintainer's to enforce. Don't use the hosted instance to mass-mirror copyrighted material; abusive behaviour against YouTube or any other source is not what the hosted helper is for.</li>
+      <li><strong>The CORS proxy</strong> forwards requests only to a fixed allow-list of bibliographic and YouTube hostnames. Do not attempt to bypass this allow-list.</li>
+      <li><strong>The hosted helper's disk space</strong> is shared with whoever else uses the hosted instance. Avoid storing large files there if you'd be unhappy losing them; the maintainer reserves the right to wipe the helper's <code>~/Minerva</code> directory at any time as part of routine ops.</li>
+      <li><strong>The public-share feature</strong> embeds the data you provide into a URL anyone with the URL can read. Don't share things you wouldn't share publicly.</li>
+    </ul>
 
     <h2>No warranty</h2>
     <p>Minerva is provided <strong>"AS IS"</strong>, without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the authors or copyright holders be liable for any claim, damages, or other liability — whether in an action of contract, tort, or otherwise — arising from your use of the software, including any data loss, loss of business, or other consequential damage.</p>
 
     <h2>Privacy</h2>
-    <p>See the <a href="privacy.html">privacy policy</a>.</p>
+    <p>See the <a href="privacy.html">privacy policy</a> for the full disclosure of what Minerva accesses, where it stores it, and what the hosted instance can technically see.</p>
 
     <h2>Contact</h2>
     <p><a href="mailto:me@thefarshad.com">me@thefarshad.com</a></p>
