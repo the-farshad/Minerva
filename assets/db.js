@@ -18,7 +18,7 @@
   'use strict';
 
   var DB_NAME = 'minerva';
-  var DB_VERSION = 4;
+  var DB_VERSION = 5;
   var _db = null;
   var _opening = null;
 
@@ -59,6 +59,13 @@
         // by [tab, rowId] so a section's saved videos travel with the row.
         if (!db.objectStoreNames.contains('videos')) {
           db.createObjectStore('videos', { keyPath: ['tab', 'rowId'] });
+        }
+        // v5: app-wide kv store for things like the user's
+        // FileSystemDirectoryHandle for the local-disk mirror.
+        // Handles are structured-clonable; storing them in IDB
+        // means the picker only has to fire once per device.
+        if (!db.objectStoreNames.contains('kv')) {
+          db.createObjectStore('kv', { keyPath: 'k' });
         }
 
         // Existing v1/v2 user: migrate the rows store. Read all rows,
@@ -311,6 +318,26 @@
     });
   }
 
+  // --- kv (app-wide key-value store) ----------------------------
+
+  async function kvGet(key) {
+    var db = await open();
+    if (!db.objectStoreNames.contains('kv')) return null;
+    var rec = await reqP(tx(db, 'kv').get(key));
+    return rec ? rec.v : null;
+  }
+  function kvSet(key, value) {
+    return retryOnClose(async function () {
+      var db = await open();
+      return reqP(tx(db, 'kv', 'readwrite').put({ k: key, v: value, t: Date.now() }));
+    });
+  }
+  async function kvDelete(key) {
+    var db = await open();
+    if (!db.objectStoreNames.contains('kv')) return;
+    return reqP(tx(db, 'kv', 'readwrite').delete(key));
+  }
+
   // --- bulk ops -------------------------------------------------
 
   async function clearAll() {
@@ -389,6 +416,9 @@
     getVideo: getVideo,
     putVideo: putVideo,
     deleteVideo: deleteVideo,
-    listVideosForTab: listVideosForTab
+    listVideosForTab: listVideosForTab,
+    kvGet: kvGet,
+    kvSet: kvSet,
+    kvDelete: kvDelete
   };
 })();

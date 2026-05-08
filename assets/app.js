@@ -77,6 +77,150 @@
   // Apply once at module init for the cached config.
   try { applyConfigSideEffects(readConfig()); } catch (e) { /* tolerate */ }
 
+  // ---- Local-disk file mirror (FS Access API, Chromium) ---------
+  // Stores a FileSystemDirectoryHandle in IDB so the user picks
+  // their downloads folder once. Saves write into <kind>/<name>;
+  // reads return File blobs that play through the standard offline
+  // pipeline. Firefox doesn't ship the API; the picker is hidden
+  // there and the rest of the code falls through gracefully.
+  var LOCAL_MIRROR_KEY = 'local-mirror.dir';
+  function localMirrorSupported() { return 'showDirectoryPicker' in window; }
+  async function localMirrorHandle() {
+    if (!localMirrorSupported() || !M.db || !M.db.kvGet) return null;
+    try { return await M.db.kvGet(LOCAL_MIRROR_KEY); } catch (e) { return null; }
+  }
+  async function localMirrorEnsurePermission(handle, mode) {
+    if (!handle || !handle.queryPermission) return false;
+    try {
+      var q = await handle.queryPermission({ mode: mode || 'readwrite' });
+      if (q === 'granted') return true;
+      var r = await handle.requestPermission({ mode: mode || 'readwrite' });
+      return r === 'granted';
+    } catch (e) { return false; }
+  }
+  async function localMirrorPick() {
+    if (!localMirrorSupported()) {
+      flash(document.body, 'Local mirror needs Chrome / Edge — Firefox lacks the API.', 'error');
+      return null;
+    }
+    try {
+      var handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      await M.db.kvSet(LOCAL_MIRROR_KEY, handle);
+      flash(document.body, 'Local mirror folder set: ' + (handle.name || ''), 'ok');
+      return handle;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return null;
+      flash(document.body, 'Folder pick failed: ' + (e && e.message || e), 'error');
+      return null;
+    }
+  }
+  async function localMirrorClear() {
+    try { await M.db.kvDelete(LOCAL_MIRROR_KEY); } catch (e) {}
+    flash(document.body, 'Local mirror folder unset.', 'ok');
+  }
+  // Write `bytes` to <kind>/<name> inside the configured local
+  // mirror directory. `kind` is a subfolder ("videos", "papers");
+  // `name` may itself contain a forward-slash for further nesting
+  // (e.g. "<playlist>/<title>.mp4"). Returns "local:<kind>/<name>"
+  // on success, '' on failure.
+  async function localMirrorSave(kind, name, bytes) {
+    var handle = await localMirrorHandle();
+    if (!handle) return '';
+    if (!(await localMirrorEnsurePermission(handle, 'readwrite'))) return '';
+    try {
+      var dir = await handle.getDirectoryHandle(kind, { create: true });
+      var parts = String(name || '').split('/').filter(Boolean);
+      var leaf = parts.pop();
+      for (var i = 0; i < parts.length; i++) {
+        dir = await dir.getDirectoryHandle(parts[i], { create: true });
+      }
+      var fh = await dir.getFileHandle(leaf, { create: true });
+      var w = await fh.createWritable();
+      await w.write(bytes);
+      await w.close();
+      return 'local:' + kind + '/' + (parts.length ? parts.join('/') + '/' : '') + leaf;
+    } catch (e) {
+      console.warn('[Minerva local-mirror save]', e);
+      return '';
+    }
+  }
+  // Read a file previously saved via localMirrorSave; resolves to
+  // a Blob the player can mount via URL.createObjectURL. Returns
+  // null when the marker is unparseable, the directory wasn't
+  // picked, or the file no longer exists.
+  async function localMirrorRead(marker) {
+    var rel = String(marker || '').replace(/^local:/, '').trim();
+    if (!rel) return null;
+    var handle = await localMirrorHandle();
+    if (!handle) return null;
+    if (!(await localMirrorEnsurePermission(handle, 'read'))) return null;
+    try {
+      var parts = rel.split('/').filter(Boolean);
+      if (!parts.length) return null;
+      var leaf = parts.pop();
+      var dir = handle;
+      for (var i = 0; i < parts.length; i++) {
+        dir = await dir.getDirectoryHandle(parts[i], { create: false });
+      }
+      var fh = await dir.getFileHandle(leaf, { create: false });
+      return await fh.getFile();
+    } catch (e) {
+      console.warn('[Minerva local-mirror read]', e);
+      return null;
+    }
+  }
+  function renderLocalMirrorCard() {
+    if (!localMirrorSupported()) {
+      return el('div', { class: 'local-mirror-card', style: 'margin: 0.4rem 0; padding: 0.6rem 0.9rem; border: 1px solid var(--border); border-radius: 10px;' },
+        el('strong', null, 'Local-disk mirror'),
+        el('p', { class: 'small muted' },
+          'Chrome / Edge only — Firefox doesn\'t ship the File System Access API. Files keep saving to whatever helper / IDB / Drive you have configured.')
+      );
+    }
+    var card = el('div', { class: 'local-mirror-card', style: 'margin: 0.6rem 0; padding: 0.7rem 0.9rem; border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 0.4rem;' });
+    var status = el('p', { class: 'small muted', style: 'margin: 0;' }, 'Loading…');
+    var pickBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+      onclick: async function () {
+        var h = await localMirrorPick();
+        if (h) refresh();
+      }
+    }, M.render.icon('folder-plus'), ' Pick folder');
+    var clearBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+      onclick: async function () {
+        await localMirrorClear();
+        refresh();
+      }
+    }, M.render.icon('x'), ' Unset');
+    var actions = el('div', { class: 'form-actions' }, pickBtn, clearBtn);
+    card.appendChild(el('strong', null, 'Local-disk mirror'));
+    card.appendChild(el('p', { class: 'small muted', style: 'margin: 0;' },
+      'Pick a folder on this computer; new downloads write into ', el('code', null, '<folder>/videos'), ' and ',
+      el('code', null, '<folder>/papers'), '. Falls back gracefully when missing or after browser data clears.'));
+    card.appendChild(status);
+    card.appendChild(actions);
+    function refresh() {
+      M.db.kvGet(LOCAL_MIRROR_KEY).then(function (h) {
+        if (h) {
+          status.textContent = 'Mirroring to: ' + (h.name || '(folder)') + ' · click "Pick folder" to change.';
+          clearBtn.style.display = '';
+        } else {
+          status.textContent = 'No folder picked yet.';
+          clearBtn.style.display = 'none';
+        }
+      }).catch(function () {});
+    }
+    refresh();
+    return card;
+  }
+  // Expose so other helpers (download flow) can read.
+  window.Minerva = window.Minerva || {};
+  Minerva.localMirror = {
+    save: localMirrorSave,
+    read: localMirrorRead,
+    handle: localMirrorHandle,
+    supported: localMirrorSupported
+  };
+
   // Recovery escape hatch: unregister every service worker, drop
   // every Cache Storage entry, and hard-reload via location.replace
   // with a cache-busting query. Reachable via the Diagnostics
@@ -6234,27 +6378,25 @@
       // mirror-to-Drive flow (format: "yt-dlp · 12.3 MB · drive:1abc…").
       var driveIdMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
       var driveFileId = driveIdMatch ? driveIdMatch[1] : '';
-      // Host marker — written by downloadOfflineViaYtDlp's host-volume
-      // path. Marker format: "host:<full path>" optionally followed
-      // by " · drive:<fileId>". Paths can contain spaces (titles
-      // become filenames), so split on the marker's own delimiter
-      // rather than on whitespace.
-      var hostPath = (function () {
-        var off = String(r.offline || '');
-        var parts = off.split(' · ');
-        for (var i = 0; i < parts.length; i++) {
-          var p = parts[i].trim();
-          if (p.indexOf('host:') === 0) return p.slice(5).trim();
-        }
-        return '';
-      })();
+      // Offline markers — split on the marker delimiter (' · ')
+      // and pick the first one we recognise. Order matters when
+      // both are present: prefer local-disk over host-volume so
+      // the laptop plays its own copy without round-tripping
+      // through the helper.
+      var offMarkers = String(r.offline || '').split(' · ').map(function (s) { return s.trim(); }).filter(Boolean);
+      var hostPath = '';
+      var localMarker = '';
+      offMarkers.forEach(function (p) {
+        if (p.indexOf('host:') === 0) hostPath = p.slice(5).trim();
+        else if (p.indexOf('local:') === 0) localMarker = p;
+      });
       function hostServeUrl() {
         if (!hostPath) return '';
         var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
         if (!endpoint) return '';
         return endpoint + '/file/serve?path=' + encodeURIComponent(hostPath);
       }
-      if (rowHasBlob || hostPath || driveFileId) {
+      if (rowHasBlob || hostPath || localMarker || driveFileId) {
         try { tile.classList.add('tile-has-offline'); } catch (e) {}
       }
 
@@ -6648,9 +6790,22 @@
             }
           } catch (err) { /* fall through to URL preview */ }
         }
-        // Host-saved fallback (IDB quota path) — stream from the
-        // helper's /file/serve. Rendered as a normal in-app video
-        // panel so the user gets the same controls as the IDB path.
+        // Local-disk mirror (FS Access API) — read the file the
+        // user wrote earlier and play it as a Blob. Same UX as
+        // any other offline source.
+        if (localMarker && Minerva.localMirror && M.preview && M.preview.showVideoBlob) {
+          try {
+            var lblob = await Minerva.localMirror.read(localMarker);
+            if (lblob) {
+              M.preview.showVideoBlob({
+                url: URL.createObjectURL(lblob),
+                title: r.title || (titleCol && r[titleCol]) || 'Offline video',
+                sourceUrl: url
+              });
+              return;
+            }
+          } catch (e) { /* fall through */ }
+        }
         if (hostPath && M.preview && M.preview.showVideoBlob) {
           var serveUrl = hostServeUrl();
           if (serveUrl) {
@@ -8549,18 +8704,36 @@
       }
       var blob = new Blob(chunks, { type: contentType });
 
-      job.setStatus('Saving to host volume…');
+      job.setStatus('Saving locally…');
       var hostPath = '';
       var idbStored = false;
-      // Default to the helper's host volume so we never compete
-      // with the browser's IndexedDB quota. Container mounts the
-      // host dir at MINERVA_FILES_ROOT; /file/save and /file/serve
-      // hand bytes back and forth. IDB is only used when the
-      // helper is unreachable.
+      var localPath = '';
+      // Storage routing, in priority order:
+      //   1. Local-disk mirror (FS Access API) — if the user picked
+      //      a folder via Settings → Local-disk mirror. Files land
+      //      in <folder>/videos/<playlist>/<title>.mp4 on their
+      //      own machine; nothing on the droplet's tiny disk.
+      //   2. Helper host volume — /file/save on whatever helper
+      //      they've configured.
+      //   3. IndexedDB fallback — only when the helper is
+      //      unreachable.
+      var stem0 = String(row.title || row.id || filename).replace(/[^\w.\- ]+/g, '_').slice(0, 100);
+      var ext0 = (filename.match(/\.[A-Za-z0-9]{2,5}$/) || [''])[0];
+      if (ext0 && !stem0.toLowerCase().endsWith(ext0.toLowerCase())) stem0 += ext0;
+      var pl = String(row.playlist || '').trim()
+        .replace(/[^\w.\- ]+/g, '_').slice(0, 80);
+      var nameForSaveLocal = pl ? pl + '/' + stem0 : stem0;
       try {
-        var stem0 = String(row.title || row.id || filename).replace(/[^\w.\- ]+/g, '_').slice(0, 100);
-        var ext0 = (filename.match(/\.[A-Za-z0-9]{2,5}$/) || [''])[0];
-        if (ext0 && !stem0.toLowerCase().endsWith(ext0.toLowerCase())) stem0 += ext0;
+        if (Minerva.localMirror && Minerva.localMirror.supported && await Minerva.localMirror.handle()) {
+          job.setStatus('Saving to local-disk mirror…');
+          localPath = await Minerva.localMirror.save('videos', nameForSaveLocal, blob);
+        }
+      } catch (e) { /* fall through to host */ }
+      if (localPath) {
+        // Successful local save — skip the host upload entirely;
+        // playback reads from the local mirror via FS Access.
+      } else
+      try {
         // Group downloads under a per-playlist subfolder when the
         // section carries a `playlist` column. Browsing
         // ~/Minerva/videos/<playlist>/<title>.mp4 in a file
@@ -8606,9 +8779,10 @@
         var fresh = await M.db.getRow(tab, row.id);
         if (fresh && !fresh._deleted) {
           pushUndo({ kind: 'edit', tab: tab, rowId: fresh.id, field: 'offline', prevValue: fresh.offline });
-          var marker = idbStored
-            ? ('yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB')
-            : ('host:' + hostPath);
+          var marker;
+          if (localPath) marker = localPath;
+          else if (idbStored) marker = 'yt-dlp · ' + (blob.size / (1024*1024)).toFixed(1) + ' MB';
+          else marker = 'host:' + hostPath;
           if (driveFileId) marker += ' · drive:' + driveFileId;
           fresh.offline = marker;
           fresh._updated = new Date().toISOString();
@@ -8959,6 +9133,7 @@
         cfg.pgMirrorEnabled !== false,
         'Mirror every Sheets push to a local Postgres so a second device can sync from your helper without re-pulling from Google. Off → Sheets-only mode.'
       ),
+      renderLocalMirrorCard(),
       el('div', { class: 'form-actions' },
         el('button', { class: 'btn', type: 'submit' }, 'Save'),
         (cfg.clientId || cfg.spreadsheetId)
