@@ -7964,8 +7964,13 @@
   // first; falls back to the configured CORS proxy on failure (arXiv
   // PDFs typically lack CORS headers). Returns the resulting Drive
   // fileId on success, '' on any failure.
-  async function uploadPaperPdfToDrive(pdfUrl, suggestedName) {
-    if (!pdfUrl) return '';
+  // Fetch a paper PDF (with CORS-proxy fallback), save it to the
+  // helper's host volume *and* upload it to Drive. Returns both
+  // breadcrumbs so the caller can persist whichever it has, in
+  // either order. Host save is best-effort — Drive is the source
+  // of truth for offline viewing inside the app.
+  async function mirrorPaperPdf(pdfUrl, suggestedName) {
+    if (!pdfUrl) return { hostPath: '', driveFileId: '' };
     var resp;
     try {
       resp = await fetch(pdfUrl);
@@ -7973,10 +7978,6 @@
     } catch (e) {
       var cfg = readConfig();
       var prefix = (cfg.corsProxy || '').trim();
-      // Helper service exposes /proxy?<url> as a no-CORS-needed
-      // passthrough. Use it as the implicit fallback when the user
-      // hasn't configured an external CORS proxy — saves a round-trip
-      // through corsproxy.io for users running the local helper.
       if (!prefix) {
         var helper = (cfg.ytDlpServer || '').trim().replace(/\/+$/, '');
         if (helper) prefix = helper + '/proxy?';
@@ -7988,7 +7989,27 @@
     var blob = await resp.blob();
     var name = String(suggestedName || 'paper').replace(/[^\w.\- ]+/g, '_').slice(0, 80);
     if (!/\.pdf$/i.test(name)) name += '.pdf';
-    return await uploadOfflineToDrive(blob, name);
+    var hostPath = '';
+    try {
+      var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
+      if (endpoint) {
+        var saveResp = await fetch(
+          endpoint + '/file/save?kind=papers&name=' + encodeURIComponent(name),
+          { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
+            body: await blob.arrayBuffer() }
+        );
+        var saveJson = await saveResp.json();
+        if (saveJson && saveJson.ok) hostPath = saveJson.path;
+      }
+    } catch (e) { /* best-effort */ }
+    var driveFileId = '';
+    try { driveFileId = await uploadOfflineToDrive(blob, name); }
+    catch (e) { /* tolerate when not signed in / scope missing */ }
+    return { hostPath: hostPath, driveFileId: driveFileId };
+  }
+  async function uploadPaperPdfToDrive(pdfUrl, suggestedName) {
+    var r = await mirrorPaperPdf(pdfUrl, suggestedName);
+    return r.driveFileId;
   }
 
   // Optional secondary upload of an offline blob to Drive. Idempotent
@@ -8282,8 +8303,15 @@
         var stem0 = String(row.title || row.id || filename).replace(/[^\w.\- ]+/g, '_').slice(0, 100);
         var ext0 = (filename.match(/\.[A-Za-z0-9]{2,5}$/) || [''])[0];
         if (ext0 && !stem0.toLowerCase().endsWith(ext0.toLowerCase())) stem0 += ext0;
+        // Group downloads under a per-playlist subfolder when the
+        // section carries a `playlist` column. Browsing
+        // ~/Minerva/videos/<playlist>/<title>.mp4 in a file
+        // manager mirrors how the rows are grouped in the app.
+        var pl = String(row.playlist || '').trim()
+          .replace(/[^\w.\- ]+/g, '_').slice(0, 80);
+        var nameForSave = pl ? pl + '/' + stem0 : stem0;
         var saveResp = await fetch(
-          endpoint + '/file/save?kind=videos&name=' + encodeURIComponent(stem0),
+          endpoint + '/file/save?kind=videos&name=' + encodeURIComponent(nameForSave),
           { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
             body: await blob.arrayBuffer() }
         );
@@ -12891,17 +12919,22 @@
           return u;
         })();
         if (!pdfUrl) throw new Error('No PDF URL on row.');
-        var fid = await uploadPaperPdfToDrive(pdfUrl, row.title || row.id);
-        if (!fid) throw new Error('Drive upload returned no fileId.');
+        var mirror = await mirrorPaperPdf(pdfUrl, row.title || row.id);
+        if (!mirror.driveFileId && !mirror.hostPath) {
+          throw new Error('Mirror failed for both Drive and host disk.');
+        }
         var fresh = await M.db.getRow(tab, rowId);
         if (fresh) {
-          fresh.offline = 'drive:' + fid;
+          var parts = [];
+          if (mirror.hostPath)    parts.push('host:' + mirror.hostPath);
+          if (mirror.driveFileId) parts.push('drive:' + mirror.driveFileId);
+          fresh.offline = parts.join(' · ');
           fresh._dirty = 1;
           fresh._updated = new Date().toISOString();
           await M.db.upsertRow(tab, fresh);
           schedulePush();
         }
-        return fid;
+        return mirror.driveFileId;
       });
     }
     // PDF extractor → Drive sibling. Uploads the extracted JSON to
