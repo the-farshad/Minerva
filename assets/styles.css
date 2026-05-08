@@ -4066,7 +4066,6 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 .local-store,
 .tg-panel {
   margin-top: 1.4rem;
-  max-width: var(--readw);
 }
 .auth-status h3,
 .local-store h3,

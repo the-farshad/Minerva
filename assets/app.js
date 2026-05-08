@@ -8929,10 +8929,11 @@
         var msg = bs.fresh ? 'Spreadsheet created, seeded, and pulled.' : 'Connected and synced.';
         if (loaded) msg += ' Settings restored from Drive.';
         clearAuthError();
-        // Push a fresh copy of the local config back to Drive so any
-        // values typed before connect (typically just the spreadsheet
-        // id) become part of the canonical Drive snapshot.
-        scheduleDriveConfigSync();
+        // Push a fresh copy of the local config back to Drive
+        // immediately (not via the 1.5s debounce) so any values
+        // typed before connect become part of the canonical Drive
+        // snapshot before the user navigates away.
+        try { await runDriveConfigSync(); } catch (e) { /* tolerate */ }
         // Re-render the Settings view if we're still on it — the form
         // inputs were mounted with the pre-load (often empty) values,
         // so without a re-route the user sees blank fields even though
@@ -9848,6 +9849,34 @@
     var connectionPanel = el('div');
     connectionPanel.appendChild(form);
     connectionPanel.appendChild(status);
+    // Drive-sync controls — manual escape hatches when the
+    // automatic round-trip didn't run (offline at connect time, a
+    // value typed before sign-in, etc.). Users on a fresh device
+    // hit "Pull from Drive" to grab settings saved earlier
+    // elsewhere; "Push to Drive" force-writes the current local
+    // values up.
+    var driveSyncStatus = el('p', { class: 'small muted', style: 'margin-top: 0.4rem;' });
+    var pushBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+      onclick: async function () {
+        driveSyncStatus.textContent = 'Pushing…';
+        try { await runDriveConfigSync(); driveSyncStatus.textContent = '✓ Settings pushed to Drive.'; }
+        catch (e) { driveSyncStatus.textContent = '✗ Push failed: ' + (e && e.message || e); }
+      }
+    }, M.render.icon('upload-cloud'), ' Push settings to Drive');
+    var pullBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+      onclick: async function () {
+        driveSyncStatus.textContent = 'Pulling…';
+        try {
+          var ok = await loadDriveConfigIfPresent();
+          driveSyncStatus.textContent = ok
+            ? '✓ Settings pulled from Drive — re-rendering.'
+            : '— No saved settings on Drive yet (or already in sync).';
+          if (ok) try { route(); } catch (e) {}
+        } catch (e) { driveSyncStatus.textContent = '✗ Pull failed: ' + (e && e.message || e); }
+      }
+    }, M.render.icon('download-cloud'), ' Pull settings from Drive');
+    connectionPanel.appendChild(el('div', { class: 'drive-sync-row form-actions' }, pushBtn, pullBtn));
+    connectionPanel.appendChild(driveSyncStatus);
 
     // Each section is its own subroute — only one section's content
     // shows at a time. The sidebar's role is navigation, not summary.
