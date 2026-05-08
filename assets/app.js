@@ -9484,9 +9484,53 @@
           el('button', { class: 'btn btn-ghost', type: 'button',
             title: 'Drop every IDB-stored video blob, ask the helper to wipe ~/Minerva/videos and ~/Minerva/papers, and clear the offline column on every row. Use when offline state is out of sync with what is actually on disk.',
             onclick: function () { void resetAllOffline(); }
-          }, M.render.icon('eraser'), ' Reset offline copies')
+          }, M.render.icon('eraser'), ' Reset offline copies'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            title: 'Walk every section and write every visible row into the helper\'s Postgres mirror in one shot. Use after enabling the PG mirror toggle, or to backfill a fresh helper from your existing Sheets data.',
+            onclick: function () { void pushAllToPostgres(); }
+          }, M.render.icon('database'), ' Push all rows to Postgres')
         )
       );
+    }
+
+    async function pushAllToPostgres() {
+      if (!Minerva.pg || !Minerva.pg.upsertRows) {
+        flash(document.body, 'Postgres adapter not loaded.', 'error');
+        return;
+      }
+      if (!Minerva.pg.isEnabled || !Minerva.pg.isEnabled()) {
+        flash(document.body, 'Enable the "Mirror writes to Postgres" toggle in Connection settings first.', 'error');
+        return;
+      }
+      try { await Minerva.pg.probe(true); } catch (e) {}
+      if (!Minerva.pg.isLive()) {
+        flash(document.body, 'Helper / Postgres unreachable. Check the helper URL and try again.', 'error');
+        return;
+      }
+      var pushed = 0, errors = [];
+      try {
+        var allMeta = await M.db.getAllMeta();
+        for (var i = 0; i < allMeta.length; i++) {
+          var t = allMeta[i].tab;
+          if (!t || t.charAt(0) === '_') continue;
+          var rows = (await M.db.getAllRows(t)).filter(function (r) { return !r._deleted; });
+          if (!rows.length) continue;
+          try {
+            await Minerva.pg.upsertRows(t, rows);
+            pushed += rows.length;
+          } catch (e) {
+            errors.push(t + ': ' + (e && e.message || e));
+          }
+        }
+        flash(document.body,
+          'Pushed ' + pushed + ' row(s) to Postgres'
+            + (errors.length ? ' (' + errors.length + ' tab error(s) — see console)' : '.'),
+          errors.length ? 'error' : 'ok'
+        );
+        if (errors.length) console.warn('[Minerva push-all-to-pg]', errors);
+      } catch (err) {
+        flash(document.body, 'Push failed: ' + (err && err.message || err), 'error');
+      }
     }
 
     async function resetAllOffline() {
@@ -10195,11 +10239,8 @@
     var helper = String(c.ytDlpServer || '').trim();
     if (!helper) return null;
     if (!/^http:\/\//i.test(helper)) return null;
-    // Map http://127.0.0.1:8765/  → http://127.0.0.1:8765/app/
-    // so the user can click straight through to a same-origin
-    // session that will reach the helper without mixed-content
-    // blocking.
     var helperApp = helper.replace(/\/+$/, '') + '/app/';
+    var sameOrigin = location.origin;
     var box = el('div', { class: 'auth-error-banner', role: 'alert' });
     box.appendChild(el('div', { class: 'auth-error-head' },
       M.render.icon('alert-triangle'),
@@ -10212,10 +10253,20 @@
       }, '×')
     ));
     box.appendChild(el('div', { class: 'auth-error-msg' },
-      'You\'re viewing Minerva over HTTPS but your helper is at ',
+      'You\'re viewing Minerva over HTTPS but your helper URL is ',
       el('code', null, helper),
-      ' (HTTP). Browsers refuse cross-protocol fetches, so Save / CORS proxy / Test all return "Failed to fetch". Open Minerva from the helper itself instead: ',
-      el('a', { href: helperApp, class: 'btn', style: 'margin-left:0.4rem;' },
+      ' (HTTP). Browsers refuse cross-protocol fetches. Two ways out: ',
+      el('button', {
+        type: 'button', class: 'btn',
+        style: 'margin: 0 0.4rem;',
+        title: 'Set the helper URL to this same HTTPS origin and reload — works when the droplet exposes the helper through Caddy.',
+        onclick: function () {
+          writeConfig({ ytDlpServer: sameOrigin, corsProxy: sameOrigin + '/proxy?' });
+          flash(document.body, 'Helper URL updated to ' + sameOrigin + '. Reloading…', 'ok');
+          setTimeout(function () { location.reload(); }, 600);
+        }
+      }, 'Use this origin (' + sameOrigin + ')'),
+      el('a', { href: helperApp, class: 'btn btn-ghost' },
         'Switch to ' + helperApp)
     ));
     return box;
