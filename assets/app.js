@@ -3615,11 +3615,22 @@
       existingRow._updated = new Date().toISOString();
       await M.db.upsertRow('_config', existingRow);
     } else {
+      // Build the row in one shot and upsert it once. The earlier
+      // implementation called addRow() (which writes an empty row +
+      // queues a push), then mutated and upserted again. The empty
+      // row could land on Sheets, then a follow-up pullTab would
+      // bring that empty row back into IDB — overwriting the fields
+      // we'd just set, which left the new section's enabled='' and
+      // hid it from the nav. Single upsert, no premature push.
       var maxOrder = (configCache || []).reduce(function (m, r) {
         var n = Number(r.order) || 0;
         return n > m ? n : m;
       }, 0);
-      var row = await addRow('_config', configMeta.headers);
+      var row = { id: M.db.ulid(), _localOnly: 1, _dirty: 1, _deleted: 0, _rowIndex: null };
+      configMeta.headers.forEach(function (h) {
+        if (h === 'id' || h === '_updated') return;
+        row[h] = '';
+      });
       row.slug = p.slug;
       row.title = p.title;
       row.icon = p.icon;
@@ -3628,14 +3639,16 @@
       row.enabled = 'TRUE';
       row.defaultSort = p.defaultSort || '';
       row.defaultFilter = p.defaultFilter || '';
-      row._dirty = 1;
+      row._updated = new Date().toISOString();
       await M.db.upsertRow('_config', row);
     }
     schedulePush();
 
-    // 3. Pull the new tab into the local store so the section is immediately viewable.
+    // 3. Pull the new tab into the local store so the section is
+    // immediately viewable. Do *not* re-pull _config here — that
+    // would race the just-queued push and could echo a stale row
+    // back into IDB.
     try { await M.sync.pullTab(token, c.spreadsheetId, p.slug); } catch (e) { /* non-fatal */ }
-    try { await M.sync.pullTab(token, c.spreadsheetId, '_config'); } catch (e) { /* non-fatal */ }
   }
 
   async function removePreset(slug) {
