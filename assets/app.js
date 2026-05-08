@@ -538,17 +538,33 @@
       { hash: '#/share', label: 'Quick share', icon: 'qr-code' },
       { hash: '#/settings', label: 'Settings', icon: 'settings' }
     ];
+    // Sign-out link only when the auth gate is active (oauth2-proxy
+    // in front). Without the gate, "Disconnect" inside Settings is
+    // the right surface — that just clears the local token.
+    if (window.Minerva && Minerva.auth && Minerva.auth._gate
+        && Minerva.auth._gate.available) {
+      utility.push({
+        href: '/oauth2/sign_out?rd=' + encodeURIComponent(location.origin + '/app/'),
+        label: 'Sign out',
+        icon: 'log-out',
+        external: true
+      });
+    }
     groups.push(utility);
 
     navEl.innerHTML = '';
     groups.forEach(function (items, gi) {
       if (gi > 0) navEl.appendChild(el('span', { class: 'nav-sep', 'aria-hidden': 'true' }));
       items.forEach(function (it) {
-        var a = el('a', {
-          href: it.hash,
-          class: 'nav-link' + (it.hash === active ? ' active' : ''),
+        var attrs = {
+          href: it.href || it.hash,
+          class: 'nav-link' + ((it.hash || it.href) === active ? ' active' : ''),
           'data-badge': it.badge || ''
-        });
+        };
+        // External nav entries (sign-out link → /oauth2/sign_out) do
+        // a real navigation; leave hash routing alone for them.
+        if (it.external) attrs.rel = 'noopener';
+        var a = el('a', attrs);
         if (it.icon) a.appendChild(M.render.icon(it.icon));
         a.appendChild(document.createTextNode(it.label));
         navEl.appendChild(a);
