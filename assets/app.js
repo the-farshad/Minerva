@@ -9199,22 +9199,28 @@
       ),
       field('Backend mode',
         (function () {
-          var sel = document.createElement('select');
-          sel.name = 'backendMode';
+          // Segmented-switch style: three radio inputs visually
+          // rendered as a row of pills, exactly one of which is
+          // active. Same FormData shape as the old <select>.
+          var current = (cfg.backendMode === 'sheets' || cfg.backendMode === 'pg') ? cfg.backendMode : 'hybrid';
+          var group = el('div', { class: 'backend-mode-switch', role: 'radiogroup' });
           [
-            { v: 'sheets', label: 'Sheets only — Google Sheets is the sole store. No helper required.' },
-            { v: 'hybrid', label: 'Hybrid (default) — Sheets + Postgres mirror. Two readers, one source of truth.' },
-            { v: 'pg',     label: 'Postgres only — skip Sheets entirely. Requires the helper + PG to be reachable.' }
+            { v: 'sheets', label: 'Sheets only', hint: 'Google Sheets is the sole store. No helper required.' },
+            { v: 'hybrid', label: 'Hybrid',      hint: 'Postgres primary for reads, Sheets mirrors every write so Drive still has the canonical spreadsheet.' },
+            { v: 'pg',     label: 'Postgres only', hint: 'Skip Sheets entirely. Helper + PG must be reachable.' }
           ].forEach(function (opt) {
-            var o = document.createElement('option');
-            o.value = opt.v; o.textContent = opt.label;
-            var current = (cfg.backendMode === 'sheets' || cfg.backendMode === 'pg') ? cfg.backendMode : 'hybrid';
-            if (opt.v === current) o.selected = true;
-            sel.appendChild(o);
+            var id = 'bm-' + opt.v;
+            var input = el('input', {
+              type: 'radio', name: 'backendMode', id: id, value: opt.v
+            });
+            if (opt.v === current) input.checked = true;
+            var lab = el('label', { for: id, class: 'backend-mode-pill', title: opt.hint }, opt.label);
+            group.appendChild(input);
+            group.appendChild(lab);
           });
-          return sel;
+          return group;
         })(),
-        'Sheets-only and Hybrid both let you sign in with Google and use the spreadsheet as the canonical store. Postgres-only skips Google entirely — useful when you want everything off Drive, but the helper + Postgres must be running and reachable.'
+        'Hybrid (default) reads from Postgres first and falls back to Sheets when PG is unavailable. Every write still mirrors both ways. Sheets-only skips Postgres; Postgres-only skips Google entirely.'
       ),
       renderLocalMirrorCard(),
       el('div', { class: 'form-actions' },

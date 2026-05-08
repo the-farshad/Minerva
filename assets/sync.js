@@ -91,18 +91,22 @@
   }
 
   async function pullTab(token, ssId, tab) {
-    // PG-only mode skips Sheets entirely: PG is the canonical
-    // store, the seeding path is the read path. Force-seed even
-    // when IDB has rows (the local copy may be stale).
-    if (getBackendMode() === 'pg') {
+    var mode = getBackendMode();
+    // PG-only mode skips Sheets entirely.
+    if (mode === 'pg') {
       var n = await pgFullPull(tab);
       return { tab: tab, count: n };
     }
-    // Cheap read-through: if the user just cleared IDB or is on a
-    // fresh device with the helper running, populate from PG before
-    // we even hit Sheets. The Sheets pull below still wins as the
-    // source of truth — this just prevents an empty render in the
-    // meantime.
+    // Hybrid: prefer Postgres as the read primary. Fall through to
+    // a Sheets pull only when PG is unavailable or returned no
+    // rows for this tab — Sheets is the durability backstop.
+    if (mode === 'hybrid' && Minerva.pg && Minerva.pg.isLive && Minerva.pg.isLive()) {
+      try {
+        var pgN = await pgFullPull(tab);
+        if (pgN > 0) return { tab: tab, count: pgN };
+      } catch (e) { /* fall through to Sheets */ }
+    }
+    // Cheap read-through for sheets-only / fallback paths.
     try { await maybeSeedFromPg(tab); } catch (e) { /* non-fatal */ }
     var resp = await Minerva.sheets.getValues(token, ssId, tab + '!A:Z');
     var values = (resp && resp.values) || [];
