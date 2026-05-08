@@ -308,9 +308,17 @@ nav#nav {
 /* --- main ---------------------------------------------------- */
 
 main {
+  /* Pin the box width so a narrow Settings panel (e.g. Local store)
+     doesn't shrink <main> to its content. <main> is centered via
+     auto-margins; if its width is content-driven, the centered box
+     shifts horizontally every time content width changes — that's
+     the visible "jump to the right" between Settings tabs. Force
+     width to fill the viewport up to the max-width cap. */
+  width: 100%;
   max-width: var(--maxw);
   margin: 0 auto;
   padding: 1.5rem 1.5rem 4rem;
+  box-sizing: border-box;
 }
 .view h2 {
   font-size: 1.3rem;
