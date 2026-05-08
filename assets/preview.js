@@ -1097,7 +1097,12 @@
         iframe.className = 'preview-frame';
         iframe.referrerPolicy = 'no-referrer';
         iframe.allow = 'fullscreen';
-        iframe.src = objUrl + '#page=' + savedPageNum;
+        // PDF.js fragment params: page=N positions the viewer,
+        // zoom=page-width tells it to fit the page horizontally to
+        // the iframe — without this it defaults to "auto" which
+        // leaves wide white margins on a tall portrait PDF inside
+        // a wide modal.
+        iframe.src = objUrl + '#page=' + savedPageNum + '&zoom=page-width';
         iframe.title = 'PDF (Drive copy)';
         while (frameHost.firstChild) frameHost.removeChild(frameHost.firstChild);
         frameHost.appendChild(iframe);

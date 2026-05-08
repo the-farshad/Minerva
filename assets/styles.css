@@ -3635,7 +3635,10 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 /* preview modal — default sizing favours the tall PDF layout. The
    preview-panel-yt modifier reshapes the panel for 16:9 video embeds
    so they don't render squashed inside a portrait box. */
-.preview-overlay { padding: 2rem 1rem; align-items: stretch; }
+/* Preview overlay: minimum margin around the modal so the panel's
+   90vw / full-screen sizing actually reaches the viewport edges
+   instead of being shrunk by the parent's padding. */
+.preview-overlay { padding: 0.25rem; align-items: stretch; }
 .preview-panel {
   /* On phones / narrow windows take the full viewport; on
      desktops back off to 90% so the chrome around the modal stays
@@ -3993,6 +3996,19 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
      input) can shove the whole layout sideways when switching sections. */
   max-width: 100%;
   overflow-x: clip;
+}
+/* Every direct settings panel uses the same content width so
+   switching tabs doesn't visibly shrink/expand the panel. The
+   global .form has max-width: var(--readw) for readable forms
+   elsewhere; inside Settings we let it fill the body cell so
+   Connection, Local store, Postgres mirror etc. all share one
+   width. */
+.settings-section .form,
+.settings-section .auth-status,
+.settings-section .local-store,
+.settings-section .tg-panel {
+  max-width: 100%;
+  width: 100%;
 }
 .settings-section pre,
 .settings-section code,

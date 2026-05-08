@@ -8619,9 +8619,9 @@
         'Create one at Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web). Authorized JavaScript origin: this domain (and http://localhost:8000 for local preview).'
       ),
       field('Spreadsheet ID (optional)',
-        el('input', { name: 'spreadsheetId', type: 'text',
+        secretInput(el('input', { name: 'spreadsheetId', type: 'text',
           placeholder: 'leave blank — Minerva creates one for you on first connect',
-          value: cfg.spreadsheetId || '', autocomplete: 'off', spellcheck: 'false' }),
+          value: cfg.spreadsheetId || '', autocomplete: 'off', spellcheck: 'false' })),
         'Found in your Sheet URL: docs.google.com/spreadsheets/d/<this-part>/edit'
       ),
       fieldWithTest('YouTube API key (optional)',
