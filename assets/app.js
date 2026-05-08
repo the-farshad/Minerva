@@ -80,6 +80,101 @@
   // Apply once at module init for the cached config.
   try { applyConfigSideEffects(readConfig()); } catch (e) { /* tolerate */ }
 
+  // ---- User-pref sync via Postgres ------------------------------
+  // Bookmarks, group notes, per-group sort, drag-drop order, video
+  // resume positions — all the per-device knobs that previously
+  // lived in localStorage only — now mirror to the helper's PG via
+  // a single `_userprefs` row keyed by 'all'. On boot we pull
+  // first; thereafter we push on every storage change (debounced)
+  // and at most once every minute as a safety net.
+  var USERPREFS_KEY_PATTERN = /^minerva\.(?:bookmarks|video\.resume|grouporder|groupsort|groupnotes|sectiongrouporder|section\.category|downloadQueue|sectionMode|hiddenCols|collapsedGroups)/;
+  var userprefsPushTimer = null;
+  function collectUserPrefs() {
+    var data = {};
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (!k || !USERPREFS_KEY_PATTERN.test(k)) continue;
+      data[k] = localStorage.getItem(k);
+    }
+    return data;
+  }
+  async function pushUserPrefs() {
+    if (!window.Minerva || !Minerva.pg || !Minerva.pg.isLive
+        || !Minerva.pg.isLive()) return;
+    var data = collectUserPrefs();
+    if (!Object.keys(data).length) return;
+    try {
+      await Minerva.pg.upsertRows('_userprefs', [{
+        id: 'all',
+        updated_at: new Date().toISOString(),
+        data: data
+      }]);
+    } catch (e) { console.warn('[Minerva userprefs push]', e); }
+  }
+  function scheduleUserPrefsPush() {
+    if (userprefsPushTimer) clearTimeout(userprefsPushTimer);
+    userprefsPushTimer = setTimeout(function () {
+      userprefsPushTimer = null;
+      pushUserPrefs().catch(function () {});
+    }, 1500);
+  }
+  async function pullUserPrefs() {
+    if (!window.Minerva || !Minerva.pg || !Minerva.pg.isLive
+        || !Minerva.pg.isLive()) return false;
+    try {
+      var resp = await Minerva.pg.getRows('_userprefs');
+      var rows = (resp && resp.rows) || [];
+      var rec = rows.filter(function (r) { return r.id === 'all'; })[0];
+      if (!rec || !rec.data) return false;
+      Object.keys(rec.data).forEach(function (k) {
+        try { localStorage.setItem(k, rec.data[k]); } catch (e) {}
+      });
+      return true;
+    } catch (e) { return false; }
+  }
+  // Cross-tab + cross-device propagation: any storage change in a
+  // matched key triggers a debounced push.
+  window.addEventListener('storage', function (ev) {
+    if (ev.key && USERPREFS_KEY_PATTERN.test(ev.key)) scheduleUserPrefsPush();
+  });
+  // Wrap setItem so same-tab writes also schedule a push. Native
+  // localStorage doesn't fire a 'storage' event for the writing tab.
+  (function () {
+    var nativeSet = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      var r = nativeSet.apply(this, arguments);
+      try {
+        if (k && USERPREFS_KEY_PATTERN.test(k)) scheduleUserPrefsPush();
+      } catch (e) {}
+      return r;
+    };
+  })();
+  // Periodic safety net — covers any code path that bypasses the
+  // wrapper (rare, but happens with bulk writes).
+  setInterval(function () { pushUserPrefs().catch(function () {}); }, 60 * 1000);
+  // Boot: pull once after PG comes online so a fresh device
+  // inherits the user's per-device knobs.
+  (async function () {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      if (window.Minerva && Minerva.pg && Minerva.pg.isLive
+          && Minerva.pg.isLive()) {
+        var ok = await pullUserPrefs();
+        if (ok && typeof route === 'function') {
+          try { await route(); } catch (e) {}
+        }
+        return;
+      }
+      await new Promise(function (r) { setTimeout(r, 750); });
+    }
+  })();
+  // Expose for debugging.
+  window.Minerva = window.Minerva || {};
+  Minerva.userprefs = {
+    push: pushUserPrefs,
+    pull: pullUserPrefs,
+    schedule: scheduleUserPrefsPush
+  };
+
   // ---- Local-disk file mirror (FS Access API, Chromium) ---------
   // Stores a FileSystemDirectoryHandle in IDB so the user picks
   // their downloads folder once. Saves write into <kind>/<name>;
