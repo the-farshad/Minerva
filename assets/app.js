@@ -3470,7 +3470,6 @@
       { name: 'playlist',  type: 'text', before: 'url' },
       { name: 'category',  type: 'multiselect(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)', before: 'url' },
       { name: 'published', type: 'date', before: 'watched' },
-      { name: 'notes',     type: 'markdown', before: '_updated' },
       { name: 'offline',   type: 'text', before: '_updated' }
     ]);
   }
