@@ -4096,6 +4096,34 @@ table.kv th {
 }
 table.kv tbody tr:hover { background: var(--surface); }
 
+/* --- credential inputs with show/hide eye --------------- */
+.pwd-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
+}
+.pwd-wrap > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 0;
+}
+.pwd-toggle {
+  border: 1px solid var(--border);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  background: var(--surface-2);
+  color: var(--fg);
+  padding: 0 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.pwd-toggle:hover { background: var(--surface); }
+.pwd-toggle svg { width: 1em; height: 1em; }
+
 /* --- modal overlays (help, capture, search) --------------- */
 
 .modal-overlay,

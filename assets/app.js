@@ -426,12 +426,39 @@
 
   function field(label, input, hint) {
     var id = 'f-' + Math.random().toString(36).slice(2, 8);
-    input.id = id;
+    // Wrappers (pwd-wrap, etc.) get the id on the inner <input> so
+    // label-for + click-to-focus still works.
+    var target = (input.querySelector && input.querySelector('input')) || input;
+    target.id = id;
     return el('div', { class: 'field' },
       el('label', { for: id }, label, hint ? renderHintToggle(hint) : null),
       input,
       hint ? renderHintBody(hint) : null
     );
+  }
+
+  // Wrap a credential input with an eye-icon toggle. Called inline
+  // for any field that holds an API key / OAuth client id / token.
+  // Default state is hidden — the button reveals on demand and
+  // toggles back when clicked again.
+  function secretInput(input) {
+    if (input.type === 'text') input.type = 'password';
+    var icon = el('span', { class: 'pwd-eye-icon' });
+    icon.appendChild(M.render.icon('eye'));
+    var eye = el('button', {
+      type: 'button',
+      class: 'icon-btn pwd-toggle',
+      title: 'Show / hide',
+      'aria-label': 'Toggle visibility',
+      onclick: function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var hidden = input.type === 'password';
+        input.type = hidden ? 'text' : 'password';
+        icon.replaceChildren(M.render.icon(hidden ? 'eye-off' : 'eye'));
+      }
+    }, icon);
+    return el('span', { class: 'pwd-wrap' }, input, eye);
   }
 
   // Collapsible hint pattern. The label gets an inline (i) button; the
@@ -495,7 +522,13 @@
   function fieldWithTest(label, input, testFn, hint, opts) {
     opts = opts || {};
     var id = 'f-' + Math.random().toString(36).slice(2, 8);
-    input.id = id;
+    // Keep the wrapper in the DOM (so the eye toggle stays
+    // adjacent to the input), but read .value / set .id on the
+    // inner <input> so existing behaviour is preserved.
+    var inputNode = input;
+    var inputEl = (input.querySelector && input.querySelector('input')) || input;
+    inputEl.id = id;
+    input = inputEl;
     var status = el('p', { class: 'small field-test-status', hidden: true });
     var pill = el('span', { class: 'svc-pill is-unset' }, 'not set');
 
@@ -589,7 +622,7 @@
       }
     }, M.render.icon('square'), ' Stop') : null;
 
-    var row = el('div', { class: 'field-test-row' }, input, pill, openLink, btn, stopBtn);
+    var row = el('div', { class: 'field-test-row' }, inputNode, pill, openLink, btn, stopBtn);
     if (opts.healthPath !== false) {
       setTimeout(function () { attachStatusPill(pill, input.value.trim(), opts.healthPath); }, 0);
     }
@@ -8580,9 +8613,9 @@
       flash(form, 'Saved.');
     }, oninput: scheduleAutoSave, onchange: scheduleAutoSave },
       field('Google OAuth Client ID',
-        el('input', { name: 'clientId', type: 'text',
+        secretInput(el('input', { name: 'clientId', type: 'text',
           placeholder: '123456789-abc.apps.googleusercontent.com',
-          value: cfg.clientId || '', autocomplete: 'off', spellcheck: 'false' }),
+          value: cfg.clientId || '', autocomplete: 'off', spellcheck: 'false' })),
         'Create one at Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web). Authorized JavaScript origin: this domain (and http://localhost:8000 for local preview).'
       ),
       field('Spreadsheet ID (optional)',
@@ -8592,9 +8625,9 @@
         'Found in your Sheet URL: docs.google.com/spreadsheets/d/<this-part>/edit'
       ),
       fieldWithTest('YouTube API key (optional)',
-        el('input', { name: 'youtubeApiKey', type: 'password',
+        secretInput(el('input', { name: 'youtubeApiKey', type: 'password',
           placeholder: 'AIza…',
-          value: cfg.youtubeApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
+          value: cfg.youtubeApiKey || '', autocomplete: 'off', spellcheck: 'false' })),
         testYoutubeApiKey,
         'Only needed for playlist imports + duration auto-fill. Create one at console.cloud.google.com → APIs & Services → Library → YouTube Data API v3 → Enable → Credentials → Create API key. Stored locally; never leaves your browser except in calls to googleapis.com.',
         { healthPath: false, canStop: false, isCredential: true }
@@ -8645,9 +8678,9 @@
         'Alternative one-click download path via a Cobalt instance — github.com/imputnet/cobalt. Used as a fallback when no yt-dlp server is configured.'
       ),
       field('Cobalt API key (optional)',
-        el('input', { name: 'cobaltApiKey', type: 'password',
+        secretInput(el('input', { name: 'cobaltApiKey', type: 'password',
           placeholder: 'leave blank for public/self-hosted Cobalt without auth',
-          value: cfg.cobaltApiKey || '', autocomplete: 'off', spellcheck: 'false' }),
+          value: cfg.cobaltApiKey || '', autocomplete: 'off', spellcheck: 'false' })),
         'Some self-hosted Cobalt instances require an API key (sent as the Authorization: Api-Key header). Stored locally only.'
       ),
       fieldWithTest('CORS proxy (optional)',
@@ -9439,10 +9472,10 @@
           'Anthropic uses the browser-direct beta header. Ollama runs against a local server (set OLLAMA_ORIGINS=* on it). BYO points at any OpenAI-compatible endpoint (LM Studio, vLLM, OpenRouter…).'
         ),
         field('API key',
-          el('input', { name: 'aiApiKey', type: 'password',
+          secretInput(el('input', { name: 'aiApiKey', type: 'password',
             value: c.apiKey || '',
             placeholder: 'leave blank for Ollama on localhost',
-            autocomplete: 'off', spellcheck: 'false' }),
+            autocomplete: 'off', spellcheck: 'false' })),
           'Stored in your browser only. Sent only to your configured endpoint.'
         ),
         field('Endpoint (optional)',

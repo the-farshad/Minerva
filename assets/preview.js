@@ -396,6 +396,72 @@
     head.appendChild(saveBtn);
     head.appendChild(replaceBtn);
 
+    // "Watch" — Chromium-only auto-replace via the File System
+    // Access API. The user picks an annotated PDF on disk; we
+    // poll its lastModified every 2.5s and re-upload+remount on
+    // change. Firefox doesn't ship the API yet (the button is
+    // hidden there). State is per-render: closing the preview or
+    // navigating to a different item stops the polling.
+    var watchBtn = document.createElement('button');
+    watchBtn.type = 'button';
+    watchBtn.className = 'btn btn-ghost preview-watch-btn';
+    watchBtn.title = 'Pick a PDF and auto-replace whenever you save it (Chrome / Edge — Firefox lacks the API)';
+    watchBtn.textContent = 'Watch';
+    watchBtn.style.display = 'none';
+    var watchHandle = null;
+    var watchLastMTime = 0;
+    var watchTimerLocal = null;
+    function clearLocalWatch() {
+      if (watchTimerLocal) { clearInterval(watchTimerLocal); watchTimerLocal = null; }
+      watchHandle = null;
+      watchLastMTime = 0;
+      watchBtn.classList.remove('is-watching');
+      watchBtn.textContent = 'Watch';
+    }
+    watchBtn.addEventListener('click', async function () {
+      if (!('showOpenFilePicker' in window)) {
+        watchBtn.textContent = 'Chrome only';
+        setTimeout(function () { watchBtn.textContent = 'Watch'; }, 2000);
+        return;
+      }
+      if (watchHandle) { clearLocalWatch(); return; }
+      try {
+        var pickResult = await window.showOpenFilePicker({
+          types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }],
+          multiple: false,
+        });
+        var handle = pickResult && pickResult[0];
+        if (!handle) return;
+        watchHandle = handle;
+        var f = await handle.getFile();
+        watchLastMTime = f.lastModified;
+        watchBtn.classList.add('is-watching');
+        watchBtn.textContent = '👁 ' + (handle.name || 'watching');
+        watchTimerLocal = setInterval(async function () {
+          if (!watchHandle || !pdfAttachLocal || !activeRowCtx) return;
+          try {
+            var f2 = await watchHandle.getFile();
+            if (f2.lastModified === watchLastMTime) return;
+            watchLastMTime = f2.lastModified;
+            watchBtn.textContent = '⟳ Syncing…';
+            var fid = await pdfAttachLocal(activeRowCtx.tab, activeRowCtx.rowId, f2);
+            if (fid && pdfBlobLoader) {
+              var blob = await pdfBlobLoader(fid);
+              var item = items[idx];
+              if (item) mountPdfBlob(blob, item.url);
+            }
+            var stamp = new Date();
+            watchBtn.textContent = '✓ ' + stamp.getHours() + ':' + String(stamp.getMinutes()).padStart(2, '0');
+          } catch (e) { /* file briefly locked during save — try next tick */ }
+        }, 2500);
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        watchBtn.textContent = '✗ ' + (e && e.message || e);
+        setTimeout(function () { watchBtn.textContent = 'Watch'; }, 4000);
+      }
+    });
+    head.appendChild(watchBtn);
+
     // Native PDF viewer carries its own highlight tools (Firefox's
     // built-in PDF viewer has the highlighter; Chrome's lets you
     // copy the selection). No app-level highlight button needed —
@@ -894,6 +960,16 @@
       saveBtn.style.display = savable ? '' : 'none';
       replaceBtn.style.display = (isPdfNow && earlyHit && earlyHit.tab && earlyHit.rowId
         && pdfAttachLocal && pdfBlobLoader) ? '' : 'none';
+      // Watch is a strict superset of Replace's preconditions plus
+      // the FS Access API. Hide it on Firefox / Safari rather than
+      // disabling — the title attribute is the docs.
+      var canWatch = ('showOpenFilePicker' in window)
+        && isPdfNow && earlyHit && earlyHit.tab && earlyHit.rowId
+        && pdfAttachLocal && pdfBlobLoader;
+      watchBtn.style.display = canWatch ? '' : 'none';
+      // Stop watching when the preview navigates to a different
+      // item — the previous handle is no longer relevant.
+      if (typeof clearLocalWatch === 'function') clearLocalWatch();
       // Notes pane is available for any row (video or PDF) that has
       // a row context registered with the saver — was previously
       // gated on isPdfNow, which hid notes on YouTube rows even
@@ -1161,6 +1237,7 @@
       cleanupBlobVideo();
       revokeBlobIframes();
       clearWatchTimer();
+      if (typeof clearLocalWatch === 'function') clearLocalWatch();
       try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
       overlay.remove();
       document.removeEventListener('keydown', onKey);
