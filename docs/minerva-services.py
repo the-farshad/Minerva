@@ -851,6 +851,46 @@ MINERVA_FILES_ROOT = pathlib.Path(
     os.environ.get("MINERVA_FILES_ROOT", str(pathlib.Path.home() / "Minerva"))
 ).expanduser()
 
+# When the helper runs inside Docker, MINERVA_FILES_ROOT points at
+# the *container* path (e.g. /srv/files) and MINERVA_FILES_HOST
+# points at the same directory's path on the host (e.g.
+# /home/farshad/Minerva). The browser-side affordances ("saved at",
+# Reveal in file manager, Reset offline) want the host path so the
+# user can navigate to the file with their own tools. Translation
+# is purely string-level — both paths name the same bytes.
+MINERVA_FILES_HOST = (
+    os.environ.get("MINERVA_FILES_HOST", "").strip()
+    or str(MINERVA_FILES_ROOT)
+)
+
+
+def _to_host_path(p):
+    """Translate a container path under MINERVA_FILES_ROOT to its
+    host-side equivalent. Returns the original string when no
+    translation is configured or when the path falls outside the
+    root."""
+    try:
+        s = str(pathlib.Path(p).resolve())
+    except Exception:
+        s = str(p)
+    root = str(MINERVA_FILES_ROOT.resolve())
+    host = MINERVA_FILES_HOST.rstrip("/")
+    if host and root and s.startswith(root):
+        return host + s[len(root):]
+    return s
+
+
+def _to_container_path(p):
+    """Inverse of _to_host_path — used by /file/serve so the browser
+    can pass either the host path (what we showed it) or the
+    container path (legacy rows) and reach the same bytes."""
+    s = str(p)
+    root = str(MINERVA_FILES_ROOT.resolve())
+    host = MINERVA_FILES_HOST.rstrip("/")
+    if host and root and s.startswith(host):
+        return root + s[len(host):]
+    return s
+
 
 def _safe_join(root, *parts):
     """Join + normalise; refuse to break out of root via .. or absolute
@@ -892,7 +932,11 @@ def file_save():
             fh.write(request.get_data())
     except Exception as exc:  # noqa: BLE001
         return (jsonify({"ok": False, "error": f"write failed: {exc}"}), 500, _cors_dict())
-    return jsonify({"ok": True, "path": str(safe)})
+    return jsonify({
+        "ok": True,
+        "path": _to_host_path(safe),
+        "container_path": str(safe),
+    })
 
 
 @app.route("/file/serve", methods=["GET", "OPTIONS"])
@@ -908,6 +952,7 @@ def file_serve():
     raw = (request.args.get("path") or "").strip()
     if not raw:
         return (jsonify({"ok": False, "error": "Missing 'path'."}), 400, _cors_dict())
+    raw = _to_container_path(raw)
     p = pathlib.Path(raw).expanduser()
     try:
         p_resolved = p.resolve()
@@ -969,6 +1014,7 @@ def file_delete():
     raw = (request.args.get("path") or "").strip()
     if not raw:
         return (jsonify({"ok": False, "error": "Missing 'path'."}), 400, _cors_dict())
+    raw = _to_container_path(raw)
     p = pathlib.Path(raw).expanduser()
     try:
         p_resolved = p.resolve()
@@ -978,7 +1024,7 @@ def file_delete():
     try:
         if p_resolved.exists():
             p_resolved.unlink()
-        return jsonify({"ok": True, "path": str(p_resolved)})
+        return jsonify({"ok": True, "path": _to_host_path(p_resolved)})
     except Exception as exc:  # noqa: BLE001
         return (jsonify({"ok": False, "error": f"unlink failed: {exc}"}), 500, _cors_dict())
 
@@ -991,35 +1037,31 @@ def file_reveal():
     path = (body.get("path") or "").strip()
     if not path:
         return (jsonify({"ok": False, "error": "Missing 'path'."}), 400, _cors_dict())
-    p = pathlib.Path(path).expanduser()
+    container_path = _to_container_path(path)
+    p = pathlib.Path(container_path).expanduser()
     try:
         p_resolved = p.resolve()
-        # Only allow paths inside MINERVA_FILES_ROOT — never expose
-        # arbitrary host filesystem to the network even on loopback.
         p_resolved.relative_to(MINERVA_FILES_ROOT.resolve())
     except Exception:
         return (jsonify({"ok": False, "error": "Path outside files root."}), 400, _cors_dict())
     if not p_resolved.exists():
         return (jsonify({"ok": False, "error": "Path not found."}), 404, _cors_dict())
-    # Inside Docker, xdg-open won't reach the host's display server.
-    # Detect: if /.dockerenv exists, return the path so the browser
-    # surface (which IS on the host) can do the work via a download
-    # affordance instead. Otherwise spawn the OS opener.
     in_container = pathlib.Path("/.dockerenv").exists()
+    host_path = _to_host_path(p_resolved)
     if in_container:
-        return jsonify({"ok": True, "path": str(p_resolved), "in_container": True})
+        return jsonify({"ok": True, "path": host_path, "container_path": str(p_resolved),
+                        "in_container": True})
     try:
         if sys.platform == "darwin":
             subprocess.Popen(["open", "-R", str(p_resolved)])
         elif os.name == "nt":
             subprocess.Popen(["explorer", "/select,", str(p_resolved)])
         else:
-            # xdg-open on the parent dir reveals the file in most file
-            # managers (which highlight the most recent entry).
             subprocess.Popen(["xdg-open", str(p_resolved.parent)])
     except Exception as exc:  # noqa: BLE001
         return (jsonify({"ok": False, "error": f"reveal failed: {exc}"}), 500, _cors_dict())
-    return jsonify({"ok": True, "path": str(p_resolved), "in_container": False})
+    return jsonify({"ok": True, "path": host_path, "container_path": str(p_resolved),
+                    "in_container": False})
 
 
 # ---------- meta endpoints ------------------------------------------------

@@ -20,7 +20,14 @@
   'use strict';
 
   function isPdf(s) {
-    return /\.pdf(\?|#|$)/i.test(String(s || '')) || /arxiv\.org\/pdf\//i.test(String(s || ''));
+    var u = String(s || '');
+    // Treat arxiv `/abs/` pages as PDFs too — the auto-mirror flow
+    // and Drive blob loader are the only sane way to render them
+    // (arxiv refuses iframe embedding). Without this branch the
+    // preview falls straight through to mountRemoteIframe and the
+    // user sees the "refuses to embed" fallback every time.
+    return /\.pdf(\?|#|$)/i.test(u)
+      || /arxiv\.org\/(?:pdf|abs)\//i.test(u);
   }
   function ytId(s) {
     var m = String(s || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/);

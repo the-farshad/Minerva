@@ -6674,7 +6674,7 @@
         // *other* than category itself (otherwise the rename button
         // already does this). Lets a user paint a category onto every
         // row in a playlist in one shot.
-        if (hasCategoryCol && groupCol !== 'category') {
+        if (hasCategoryCol) {
           var groupRowsForCat = groupRows;
           var catBtn = el('button', {
             type: 'button',
@@ -7344,25 +7344,60 @@
           var cfgRO = readConfig();
           var ytDlpOk = !!(cfgRO.ytDlpServer || '').trim();
           var cobaltOk = !!(cfgRO.cobaltEndpoint || '').trim();
-          // Click-handler routing precedence:
-          //   1. yt-dlp server endpoint, when configured.
-          //   2. Cobalt endpoint, when configured.
-          //   3. Clipboard write of an equivalent yt-dlp command.
-          // Shift-click opens the full options modal regardless of
-          // which path would otherwise run.
+          // Route by URL kind. Paper URLs (PDF / arxiv / DOI) can't
+          // be handled by yt-dlp — invoking it on a paper returns
+          // an "Unsupported URL" 500. Send those through the Drive
+          // mirror flow instead, same as the tile-view download.
+          var listLooksLikePaper = !!row.url
+            && (/\.pdf(\?|#|$)/i.test(row.url)
+              || /arxiv\.org\/(?:abs|pdf)\//i.test(row.url)
+              || /doi\.org\//i.test(row.url));
           var saveBtn = el('button', {
             class: 'btn btn-ghost offline-save',
             type: 'button',
-            title: ytDlpOk
-              ? 'Download via your yt-dlp server (shift-click for options)'
-              : (cobaltOk
-                ? 'Download via Cobalt (shift-click for options)'
-                : 'Copy yt-dlp command (shift-click for options — set up a yt-dlp server for one-click downloads)'),
-            onclick: function (e) {
+            title: listLooksLikePaper
+              ? 'Mirror this PDF to Drive so it opens offline'
+              : (ytDlpOk
+                  ? 'Download via your yt-dlp server (shift-click for options)'
+                  : (cobaltOk
+                    ? 'Download via Cobalt (shift-click for options)'
+                    : 'Copy yt-dlp command (shift-click for options — set up a yt-dlp server for one-click downloads)')),
+            onclick: async function (e) {
               e.preventDefault();
               e.stopPropagation();
-              if (e.shiftKey) {
+              if (e.shiftKey && !listLooksLikePaper) {
                 showOfflineSetupDialog(tab, row, refresh);
+                return;
+              }
+              if (listLooksLikePaper) {
+                var paperUrl = (function () {
+                  if (row.pdf) return String(row.pdf).trim();
+                  if (/arxiv\.org\/abs\//i.test(row.url)) {
+                    return row.url.replace(/\/abs\//i, '/pdf/').replace(/(\.pdf)?$/i, '.pdf');
+                  }
+                  return row.url;
+                })();
+                var pjob = addDownloadJob({ title: row.title || row.id || 'PDF' });
+                try {
+                  pjob.setStatus('Fetching PDF…');
+                  var fid = await uploadPaperPdfToDrive(paperUrl, row.title || row.id);
+                  if (!fid) throw new Error('Drive upload returned no fileId.');
+                  var meta3 = await M.db.getMeta(tab);
+                  if (meta3 && (meta3.headers || []).indexOf('offline') >= 0) {
+                    var fresh3 = await M.db.getRow(tab, row.id);
+                    if (fresh3) {
+                      fresh3.offline = 'drive:' + fid;
+                      fresh3._dirty = 1;
+                      fresh3._updated = new Date().toISOString();
+                      await M.db.upsertRow(tab, fresh3);
+                      schedulePush();
+                    }
+                  }
+                  pjob.done('Saved to Drive');
+                  if (refresh) await refresh();
+                } catch (err) {
+                  pjob.fail('PDF mirror failed: ' + (err && err.message || err));
+                }
                 return;
               }
               if (ytDlpOk && row.url) {
