@@ -9238,27 +9238,48 @@
       var c = readConfig();
       var state = M.auth ? M.auth.getState() : { hasToken: false, email: null };
       var ok = state.hasToken && c.spreadsheetId;
-      // Build the children list and filter out nullish entries before
-      // handing them to replaceChildren — the native DOM API
-      // stringifies non-Node values, so a `null` would render as the
-      // literal text "null".
+      // Auth-gate detection: if /oauth2/auth is reachable, the
+      // hosting layer (oauth2-proxy) handles sign-in. The SPA's
+      // own Connect Google / Disconnect buttons would just confuse
+      // the user — the gate is the source of truth. Sign-out
+      // routes through /oauth2/sign_out so the gate session ends
+      // alongside the SPA's local cache.
+      var behindGate = !!(window.Minerva && Minerva.auth
+        && Minerva.auth._gate && Minerva.auth._gate.available);
       var actions = el('div', { class: 'form-actions' });
-      var actionKids = [
-        ok
-          ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () {
-              if (confirm('Sign out? Your spreadsheet is not affected.')) {
-                M.auth.signOut();
-                paintStatus();
-                paintLocal();
-              }
-            } }, 'Disconnect')
-          : el('button', { class: 'btn', type: 'button',
-              onclick: function () { void connect(); }
-            }, 'Connect Google'),
-        ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void syncNow(); } }, 'Sync now') : null,
-        ok ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { void connect(); } }, 'Re-run bootstrap') : null
-      ];
-      actionKids.filter(Boolean).forEach(function (k) { actions.appendChild(k); });
+      var actionKids;
+      if (behindGate) {
+        actionKids = [
+          ok ? el('a', { class: 'btn btn-ghost',
+            href: '/oauth2/sign_out?rd=' + encodeURIComponent(location.origin + '/app/'),
+            title: 'Sign out of the auth gate (and the SPA)'
+          }, 'Sign out') : null,
+          ok ? el('button', { class: 'btn btn-ghost', type: 'button',
+            onclick: function () { void syncNow(); } }, 'Sync now') : null,
+          ok ? el('button', { class: 'btn btn-ghost', type: 'button',
+            onclick: function () { void connect(); }, title: 'Re-run the Sheets bootstrap'
+          }, 'Re-run bootstrap') : null
+        ];
+      } else {
+        actionKids = [
+          ok
+            ? el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () {
+                if (confirm('Sign out? Your spreadsheet is not affected.')) {
+                  M.auth.signOut();
+                  paintStatus();
+                  paintLocal();
+                }
+              } }, 'Disconnect')
+            : el('button', { class: 'btn', type: 'button',
+                onclick: function () { void connect(); }
+              }, 'Connect Google'),
+          ok ? el('button', { class: 'btn btn-ghost', type: 'button',
+            onclick: function () { void syncNow(); } }, 'Sync now') : null,
+          ok ? el('button', { class: 'btn btn-ghost', type: 'button',
+            onclick: function () { void connect(); } }, 'Re-run bootstrap') : null
+        ];
+      }
+      actionKids.filter(Boolean).forEach(function (k) { if (k) actions.appendChild(k); });
 
       var statusKids = [
         el('h3', null, 'Connection'),

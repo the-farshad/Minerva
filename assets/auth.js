@@ -348,6 +348,15 @@
     consumeRedirectCode: consumeRedirectCode,
     signOut: signOut,
     getState: getState,
-    onChange: onChange
+    onChange: onChange,
+    // Read-only view of the auth-gate probe so the Settings view
+    // can render gate-aware UI (sign-out → /oauth2/sign_out, hide
+    // the Connect button entirely).
+    _gate: gateProbe
   };
+
+  // Probe the gate once at module init so the Settings view can
+  // render correctly on first paint without waiting for a getToken
+  // call to fire the probe lazily.
+  tryGateToken().catch(function () { /* tolerate */ });
 })();
