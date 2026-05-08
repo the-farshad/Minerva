@@ -1,0 +1,65 @@
+# Auto-deploy to the minerva-prod DigitalOcean droplet.
+#
+# Pushes to `main` (and manual workflow_dispatch runs) SSH to the
+# droplet and rebuild + restart the helper container from the
+# checked-out repo. The SPA assets are baked into the image at
+# build time, so a rebuild is what actually ships new SPA code.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   DROPLET_HOST     — IP or hostname of the droplet (e.g. 164.92.118.125)
+#   DROPLET_USER     — SSH user (root)
+#   DROPLET_SSH_KEY  — the matching private key (PEM, including BEGIN/END lines)
+#   DROPLET_HOST_KEY — the droplet's host key from `ssh-keyscan` for known_hosts
+#                      pinning. Single line, format: "<host> ssh-ed25519 <key>".
+
+name: Deploy to droplet
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'sw.js'
+      - 'opensearch.xml'
+      - 'manifest.webmanifest'
+      - 'privacy.html'
+      - 'terms.html'
+      - 'rss.html'
+      - 'assets/**'
+      - 'docs/Dockerfile'
+      - 'docs/docker-compose.yml'
+      - 'docs/minerva-services.py'
+      - '.github/workflows/deploy-droplet.yml'
+  workflow_dispatch: {}
+
+# Only one deploy at a time; if a new push lands while one is
+# running, queue the new one but cancel any earlier queued runs.
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DROPLET_HOST_KEY }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Pull, rebuild, and restart on the droplet
+        run: |
+          ssh -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}" \
+            "set -e
+             cd /opt/minerva
+             git pull --rebase
+             cd docs
+             docker compose build minerva-services
+             docker compose up -d
+             sleep 6
+             curl -sS http://127.0.0.1:8765/health | head -c 200"
