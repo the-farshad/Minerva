@@ -5319,6 +5319,166 @@
     return null;
   }
 
+  // Generic overlay helpers used by group-head actions. Both replace
+  // window.prompt — native prompts can't show predefined options or
+  // multi-line layouts, and on some browsers (Safari) the rendering
+  // is jarring inside a webapp.
+
+  // Single-line editor overlay. Opts:
+  //   title       — header text
+  //   initial     — string to pre-fill
+  //   placeholder — input placeholder
+  //   commitLabel — primary button label (default "Save")
+  //   onCommit    — called with the submitted value (trimmed)
+  function openTextEditor(opts) {
+    opts = opts || {};
+    var done = false;
+    var overlay = el('div', { class: 'modal-overlay text-editor-overlay',
+      onclick: function () { close(); }
+    });
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'editor';
+    input.value = opts.initial || '';
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    var commit = el('button', { class: 'btn', type: 'button',
+      onclick: function () { submit(); } }, opts.commitLabel || 'Save');
+    var cancel = el('button', { class: 'btn btn-ghost', type: 'button',
+      onclick: function () { close(); } }, 'Cancel');
+    var panel = el('div', { class: 'modal-panel text-editor-panel',
+      onclick: function (e) { e.stopPropagation(); } },
+      el('h3', null, opts.title || 'Edit'),
+      input,
+      el('div', { class: 'form-actions' }, cancel, commit)
+    );
+    function submit() {
+      if (done) return;
+      done = true;
+      var v = String(input.value || '').trim();
+      try { opts.onCommit && opts.onCommit(v); } finally { overlay.remove(); }
+    }
+    function close() {
+      if (done) return;
+      done = true;
+      overlay.remove();
+    }
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    setTimeout(function () { try { input.focus(); input.select(); } catch (e) {} }, 0);
+  }
+
+  // Multiselect chip overlay. Opts:
+  //   title    — header text
+  //   options  — predefined choices (array of strings)
+  //   initial  — array of currently-selected values
+  //   onCommit — called with the final array of selected values
+  function openMultiselectOverlay(opts) {
+    opts = opts || {};
+    var done = false;
+    var picked = Object.create(null);
+    (opts.initial || []).forEach(function (v) {
+      var t = String(v).trim();
+      if (t) picked[t] = true;
+    });
+    var overlay = el('div', { class: 'modal-overlay multi-editor-overlay',
+      onclick: function () { close(); }
+    });
+    var chipHost = el('div', { class: 'multi-editor-chips' });
+    var extras = el('div', { class: 'multi-editor-extras' });
+    function addChip(host, val, predefined) {
+      var b = el('button', {
+        type: 'button',
+        class: 'chip-btn' + (picked[val] ? ' on' : '') + (predefined ? '' : ' chip-custom'),
+        onclick: function (e) {
+          e.preventDefault();
+          if (picked[val]) { delete picked[val]; b.classList.remove('on'); }
+          else { picked[val] = true; b.classList.add('on'); }
+        }
+      }, val);
+      host.appendChild(b);
+    }
+    var seenOpts = Object.create(null);
+    (opts.options || []).forEach(function (o) {
+      var t = String(o).trim();
+      if (!t || seenOpts[t]) return;
+      seenOpts[t] = 1;
+      addChip(chipHost, t, true);
+    });
+    Object.keys(picked).forEach(function (v) {
+      if (!seenOpts[v]) addChip(extras, v, false);
+    });
+    var addInput = document.createElement('input');
+    addInput.type = 'text';
+    addInput.className = 'editor multi-editor-add';
+    addInput.placeholder = 'Add custom…';
+    function commitNew() {
+      var raw = String(addInput.value || '').trim();
+      addInput.value = '';
+      if (!raw) return;
+      raw.split(',').forEach(function (chunk) {
+        var v = chunk.trim();
+        if (!v || picked[v]) return;
+        picked[v] = true;
+        if (seenOpts[v]) {
+          // Already shown as predefined chip — flip it on.
+          var existing = chipHost.querySelector('button.chip-btn');
+          chipHost.querySelectorAll('button.chip-btn').forEach(function (b) {
+            if (b.textContent === v) b.classList.add('on');
+          });
+        } else {
+          addChip(extras, v, false);
+        }
+      });
+    }
+    addInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitNew(); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    var addBtn = el('button', { type: 'button', class: 'btn btn-ghost btn-inline',
+      onclick: function () { commitNew(); addInput.focus(); } }, '+');
+    var commit = el('button', { class: 'btn', type: 'button',
+      onclick: function () { submit(); } }, opts.commitLabel || 'Apply');
+    var cancel = el('button', { class: 'btn btn-ghost', type: 'button',
+      onclick: function () { close(); } }, 'Cancel');
+    var clear = el('button', { class: 'btn btn-ghost', type: 'button',
+      onclick: function () {
+        Object.keys(picked).forEach(function (k) { delete picked[k]; });
+        chipHost.querySelectorAll('button.chip-btn').forEach(function (b) { b.classList.remove('on'); });
+        extras.replaceChildren();
+      }
+    }, 'Clear all');
+    var panel = el('div', { class: 'modal-panel multi-editor-panel',
+      onclick: function (e) { e.stopPropagation(); } },
+      el('h3', null, opts.title || 'Pick values'),
+      chipHost,
+      extras,
+      el('div', { class: 'multi-editor-add-row' }, addInput, addBtn),
+      el('div', { class: 'form-actions' }, clear, cancel, commit)
+    );
+    function submit() {
+      if (done) return;
+      done = true;
+      commitNew();
+      try { opts.onCommit && opts.onCommit(Object.keys(picked)); }
+      finally { overlay.remove(); }
+    }
+    function close() {
+      if (done) return;
+      done = true;
+      overlay.remove();
+    }
+    panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    setTimeout(function () { try { addInput.focus(); } catch (e) {} }, 0);
+  }
+
   // Lightweight read-only metadata popup. Renders every non-internal
   // column for the row in a definition-list shape so the user can
   // inspect what's stored without leaving the current view. ESC and
@@ -5958,6 +6118,39 @@
           menu.appendChild(tileMenuItem('pencil', 'Edit row', false, function () {
             if (typeof showRowDetail === 'function') showRowDetail(tab, r.id);
           }));
+          // Surface the on-disk location for host-saved files. Two
+          // affordances: "Show file path" copies the path to the
+          // clipboard and shows it in a flash; "Reveal" asks the
+          // helper to open the containing folder in the OS file
+          // manager (no-op when the helper runs inside Docker).
+          if (hostPath) {
+            menu.appendChild(tileMenuItem('file-text', 'Show file path', false, function () {
+              try { navigator.clipboard && navigator.clipboard.writeText(hostPath); } catch (e) {}
+              flash(document.body, 'Saved at: ' + hostPath, 'ok');
+            }));
+            menu.appendChild(tileMenuItem('folder-open', 'Reveal in file manager', false, async function () {
+              var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
+              if (!endpoint) {
+                flash(document.body, 'Set the helper URL in Settings.', 'error');
+                return;
+              }
+              try {
+                var resp = await fetch(endpoint + '/file/reveal',
+                  { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: hostPath }) });
+                var json = await resp.json();
+                if (!json.ok) throw new Error(json.error || ('reveal ' + resp.status));
+                if (json.in_container) {
+                  flash(document.body, 'Helper runs inside Docker — file is at ' + json.path
+                    + ' on the host. Open it from your terminal.', 'ok');
+                } else {
+                  flash(document.body, 'Opened folder for ' + json.path, 'ok');
+                }
+              } catch (err) {
+                flash(document.body, 'Reveal failed: ' + (err && err.message || err), 'error');
+              }
+            }));
+          }
           if (rowHasBlob || driveFileId) {
             menu.appendChild(tileMenuItem('hard-drive', 'Save to ~/Minerva', false, function () {
               saveTileToHost();
@@ -6315,26 +6508,31 @@
           onclick: function (e) {
             e.preventDefault(); e.stopPropagation();
             if (!groupCol) return;
-            var fresh = window.prompt('Rename "' + key + '" to:', key);
-            if (fresh === null) return;
-            var trimmed = String(fresh).trim();
-            if (trimmed === key) return;
-            (async function () {
-              for (var gi = 0; gi < groupRows.length; gi++) {
-                var gr = groupRows[gi];
-                var fr = await M.db.getRow(tab, gr.id);
-                if (!fr) continue;
-                fr[groupCol] = trimmed;
-                fr._dirty = 1;
-                fr._updated = new Date().toISOString();
-                await M.db.upsertRow(tab, fr);
+            openTextEditor({
+              title: 'Rename "' + key + '"',
+              initial: key,
+              placeholder: 'New ' + groupCol + ' value',
+              commitLabel: 'Rename',
+              onCommit: function (trimmed) {
+                if (!trimmed || trimmed === key) return;
+                (async function () {
+                  for (var gi = 0; gi < groupRows.length; gi++) {
+                    var gr = groupRows[gi];
+                    var fr = await M.db.getRow(tab, gr.id);
+                    if (!fr) continue;
+                    fr[groupCol] = trimmed;
+                    fr._dirty = 1;
+                    fr._updated = new Date().toISOString();
+                    await M.db.upsertRow(tab, fr);
+                  }
+                  schedulePush();
+                  if (refresh) await refresh();
+                  flash(document.body,
+                    'Renamed ' + groupRows.length + ' row' + (groupRows.length === 1 ? '' : 's') + ' to "' + trimmed + '".', 'ok');
+                })().catch(function (err) {
+                  flash(document.body, 'Rename failed: ' + (err && err.message || err), 'error');
+                });
               }
-              schedulePush();
-              if (refresh) await refresh();
-              flash(document.body,
-                'Renamed ' + groupRows.length + ' row' + (groupRows.length === 1 ? '' : 's') + ' to "' + trimmed + '".', 'ok');
-            })().catch(function (err) {
-              flash(document.body, 'Rename failed: ' + (err && err.message || err), 'error');
             });
           }
         }, key);
@@ -6407,36 +6605,61 @@
             class: 'icon-btn tiles-group-cat',
             title: 'Set category for every row in "' + key + '"',
             'aria-label': 'Set category',
-            onclick: async function (e) {
+            onclick: function (e) {
               e.preventDefault(); e.stopPropagation();
-              var existing = '';
-              for (var ci = 0; ci < groupRowsForCat.length; ci++) {
-                var rr = groupRowsForCat[ci];
-                var cv = rr.category && String(rr.category).trim();
-                if (cv) { existing = cv; break; }
-              }
-              var ans = window.prompt(
-                'Set category for ' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's')
-                + ' in "' + key + '" (comma-separated; leave blank to clear):',
-                existing
-              );
-              if (ans === null) return;
-              var next = String(ans).trim();
-              for (var cj = 0; cj < groupRowsForCat.length; cj++) {
-                var fr = await M.db.getRow(tab, groupRowsForCat[cj].id);
-                if (!fr) continue;
-                fr.category = next;
-                fr._dirty = 1;
-                fr._updated = new Date().toISOString();
-                await M.db.upsertRow(tab, fr);
-              }
-              schedulePush();
-              if (refresh) await refresh();
-              flash(document.body,
-                next
-                  ? 'Set category to "' + next + '" on ' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's') + '.'
-                  : 'Cleared category on ' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's') + '.'
-              );
+              // Collect (a) the schema's predefined options for the
+              // category column, (b) every category currently used
+              // anywhere in this section, (c) the union of values
+              // already on rows in this group (= initial selection).
+              var typeStr = (meta.types || [])[(meta.headers || []).indexOf('category')] || '';
+              var parsed = M.render.parseType(typeStr);
+              var schemaOpts = (parsed.options || []).slice();
+              var allRows = rows || [];
+              var seen = Object.create(null);
+              schemaOpts.forEach(function (o) { seen[o] = 1; });
+              var detected = schemaOpts.slice();
+              allRows.forEach(function (rr) {
+                String(rr.category || '').split(',').forEach(function (v) {
+                  var t = v.trim();
+                  if (t && !seen[t]) { seen[t] = 1; detected.push(t); }
+                });
+              });
+              var initialSeen = Object.create(null);
+              var initial = [];
+              groupRowsForCat.forEach(function (rr) {
+                String(rr.category || '').split(',').forEach(function (v) {
+                  var t = v.trim();
+                  if (t && !initialSeen[t]) { initialSeen[t] = 1; initial.push(t); }
+                });
+              });
+              openMultiselectOverlay({
+                title: 'Set category for "' + key + '" (' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's') + ')',
+                options: detected,
+                initial: initial,
+                commitLabel: 'Apply',
+                onCommit: function (chosen) {
+                  var next = (chosen || []).join(', ');
+                  (async function () {
+                    for (var cj = 0; cj < groupRowsForCat.length; cj++) {
+                      var fr = await M.db.getRow(tab, groupRowsForCat[cj].id);
+                      if (!fr) continue;
+                      fr.category = next;
+                      fr._dirty = 1;
+                      fr._updated = new Date().toISOString();
+                      await M.db.upsertRow(tab, fr);
+                    }
+                    schedulePush();
+                    if (refresh) await refresh();
+                    flash(document.body,
+                      next
+                        ? 'Set category on ' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's') + '.'
+                        : 'Cleared category on ' + groupRowsForCat.length + ' row' + (groupRowsForCat.length === 1 ? '' : 's') + '.'
+                    );
+                  })().catch(function (err) {
+                    flash(document.body, 'Set category failed: ' + (err && err.message || err), 'error');
+                  });
+                }
+              });
             }
           });
           catBtn.appendChild(M.render.icon('tag'));

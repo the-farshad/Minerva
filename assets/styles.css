@@ -5397,6 +5397,44 @@ table.rows.rows-grouped tr.row-group-head td {
 }
 .preview-blocked-attach { cursor: pointer; }
 
+/* --- Group-head text + multiselect overlays ------------------- */
+.text-editor-overlay,
+.multi-editor-overlay { z-index: 140; }
+.text-editor-panel,
+.multi-editor-panel {
+  width: min(560px, 94vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem;
+  overflow-y: auto;
+}
+.text-editor-panel .editor,
+.multi-editor-add {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.95rem;
+  background: var(--bg);
+  color: var(--fg);
+  width: 100%;
+  box-sizing: border-box;
+}
+.multi-editor-chips,
+.multi-editor-extras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.multi-editor-extras:empty { display: none; }
+.multi-editor-add-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.multi-editor-add { flex: 1; }
+
 /* --- Row picker (cross-attach link from notes pane) ----------- */
 .row-picker-overlay { z-index: 130; }
 .row-picker-panel {
