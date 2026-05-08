@@ -60,8 +60,22 @@
     var next = Object.assign({}, cur, patch);
     localStorage.setItem(STORE, JSON.stringify(next));
     scheduleDriveConfigSync();
+    applyConfigSideEffects(next);
     return next;
   }
+  // Push runtime-toggleable config (Postgres mirror, …) into the
+  // module-level adapters so a Settings change takes effect without
+  // a reload.
+  function applyConfigSideEffects(c) {
+    if (window.Minerva && Minerva.pg && typeof Minerva.pg.setEnabled === 'function') {
+      // Default ON when the field is absent (back-compat for users
+      // upgrading from before the switch existed).
+      var enable = c.pgMirrorEnabled !== false;
+      Minerva.pg.setEnabled(enable);
+    }
+  }
+  // Apply once at module init for the cached config.
+  try { applyConfigSideEffects(readConfig()); } catch (e) { /* tolerate */ }
 
   // Recovery escape hatch: unregister every service worker, drop
   // every Cache Storage entry, and hard-reload via location.replace
@@ -6629,6 +6643,36 @@
       return tile;
     }
 
+    // Per-group manual order for drag-drop. Stores an array of row
+    // ids; rows present in the group but missing from the order are
+    // appended at the end. Returning [] means "no manual order".
+    function readGroupOrder(tab, gk) {
+      try {
+        var raw = JSON.parse(localStorage.getItem('minerva.grouporder.' + tab) || '{}');
+        return raw[gk] || [];
+      } catch (e) { return []; }
+    }
+    function writeGroupOrder(tab, gk, ids) {
+      try {
+        var raw = JSON.parse(localStorage.getItem('minerva.grouporder.' + tab) || '{}');
+        if (ids && ids.length) raw[gk] = ids;
+        else delete raw[gk];
+        localStorage.setItem('minerva.grouporder.' + tab, JSON.stringify(raw));
+      } catch (e) {}
+    }
+    function applyManualOrder(rs, idOrder) {
+      if (!idOrder || !idOrder.length) return rs;
+      var byId = Object.create(null);
+      rs.forEach(function (r) { byId[r.id] = r; });
+      var out = [];
+      var used = Object.create(null);
+      idOrder.forEach(function (id) {
+        if (byId[id] && !used[id]) { out.push(byId[id]); used[id] = 1; }
+      });
+      rs.forEach(function (r) { if (!used[r.id]) out.push(r); });
+      return out;
+    }
+
     function readGroupSort(tab, gk) {
       try {
         var raw = JSON.parse(localStorage.getItem('minerva.groupsort.' + tab) || '{}');
@@ -6678,7 +6722,8 @@
       });
       order.forEach(function (key) {
         var currentSort = readGroupSort(tab, key);
-        var groupRows = applyGroupSort(byGroup[key], currentSort);
+        var manualOrder = currentSort === 'default' ? readGroupOrder(tab, key) : [];
+        var groupRows = applyManualOrder(applyGroupSort(byGroup[key], currentSort), manualOrder);
         var isCol = collapsed.has(key);
         var head = el('div', { class: 'tiles-group-head' });
         var caret = el('button', {
@@ -6956,7 +7001,46 @@
         wrap.appendChild(head);
         if (!isCol) {
           var grid = el('div', { class: 'tiles-grid' });
-          groupRows.forEach(function (r) { grid.appendChild(tileFor(r)); });
+          // Drag-drop reorder is enabled only when no automatic
+          // sort is active — once the user picks Title A-Z etc.,
+          // moving a tile by hand wouldn't survive the next
+          // sort. Switch back to "Default" to drag-drop.
+          var canDrag = currentSort === 'default';
+          var draggedId = null;
+          groupRows.forEach(function (r) {
+            var tile = tileFor(r);
+            if (canDrag) {
+              tile.draggable = true;
+              tile.dataset.rowId = r.id;
+              tile.addEventListener('dragstart', function (e) {
+                draggedId = r.id;
+                tile.classList.add('is-dragging');
+                if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+              });
+              tile.addEventListener('dragend', function () {
+                tile.classList.remove('is-dragging');
+                draggedId = null;
+              });
+              tile.addEventListener('dragover', function (e) {
+                if (!draggedId || draggedId === r.id) return;
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+              });
+              tile.addEventListener('drop', function (e) {
+                if (!draggedId || draggedId === r.id) return;
+                e.preventDefault();
+                var ids = groupRows.map(function (gr) { return gr.id; });
+                var fromIdx = ids.indexOf(draggedId);
+                var toIdx = ids.indexOf(r.id);
+                if (fromIdx < 0 || toIdx < 0) return;
+                ids.splice(fromIdx, 1);
+                ids.splice(toIdx, 0, draggedId);
+                writeGroupOrder(tab, key, ids);
+                if (refresh) refresh();
+              });
+            }
+            grid.appendChild(tile);
+          });
           wrap.appendChild(grid);
         }
       });
@@ -8698,7 +8782,8 @@
         corsProxy:       String(f.get('corsProxy') || '').trim(),
         offlineQuality:  String(f.get('offlineQuality') || '720').trim(),
         uploadOfflineToDrive: f.get('uploadOfflineToDrive') === 'on',
-        uploadPapersToDrive:  f.get('uploadPapersToDrive') === 'on'
+        uploadPapersToDrive:  f.get('uploadPapersToDrive') === 'on',
+        pgMirrorEnabled:      f.get('pgMirrorEnabled') === 'on'
       };
     }
     var autoSaveTimer = null;
@@ -8830,6 +8915,11 @@
         'uploadPapersToDrive',
         !!cfg.uploadPapersToDrive,
         'When on, every URL-imported paper that resolves to a PDF (arXiv, CrossRef when available) is fetched via your CORS proxy and uploaded to Drive. Counts against your Drive quota.'
+      ),
+      switchField('Mirror writes to Postgres',
+        'pgMirrorEnabled',
+        cfg.pgMirrorEnabled !== false,
+        'Mirror every Sheets push to a local Postgres so a second device can sync from your helper without re-pulling from Google. Off → Sheets-only mode.'
       ),
       el('div', { class: 'form-actions' },
         el('button', { class: 'btn', type: 'submit' }, 'Save'),

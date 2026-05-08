@@ -2196,6 +2196,9 @@ table.rows .num { font-variant-numeric: tabular-nums; text-align: right; display
      overlay (z-index 1000) so opening a preview always covers it. */
   z-index: 500;
 }
+.tile.is-dragging { opacity: 0.4; cursor: grabbing; }
+.tile[draggable="true"] { cursor: grab; }
+.tile[draggable="true"]:active { cursor: grabbing; }
 .tile-actions { z-index: 5; }
 /* Tile clips its children so the thumbnail's sharp corners follow
    the tile's border-radius. The kebab menu portals to <body>, so

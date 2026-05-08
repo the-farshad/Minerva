@@ -74,8 +74,14 @@
   // when the last probe succeeded. Callers should treat this as a hint,
   // not a guarantee — the actual fetch may still fail and is allowed to.
   function isLive() {
-    return probeOk && configured();
+    return probeOk && configured() && !disabled;
   }
+  // Toggleable kill switch — Settings exposes this so the user can
+  // run sheets-only without un-configuring the helper URL (the
+  // helper does more than PG: yt-dlp, /file/save, /pdf/extract).
+  var disabled = false;
+  function setEnabled(v) { disabled = !v; }
+  function isEnabled() { return !disabled; }
 
   async function upsertRows(tab, rows) {
     if (!rows || !rows.length) return { ok: true, count: 0, skipped: true };
@@ -151,6 +157,8 @@
     probe: probe,
     cachedState: cachedState,
     isLive: isLive,
+    isEnabled: isEnabled,
+    setEnabled: setEnabled,
     upsertRows: upsertRows,
     deleteRows: deleteRows,
     getRows: getRows,
