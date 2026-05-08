@@ -4111,6 +4111,49 @@ table.kv th {
 }
 table.kv tbody tr:hover { background: var(--surface); }
 
+/* --- pill buttons (settings cards, dialog primary actions) --- */
+.btn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s, transform .08s;
+}
+.btn-pill:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn-pill:active:not(:disabled) { transform: translateY(1px); }
+.btn-pill:disabled { opacity: 0.55; cursor: progress; }
+.btn-pill svg { width: 1em; height: 1em; }
+.drive-sync-card {
+  margin-top: 1.2rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.drive-sync-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+.drive-sync-status { display: inline-block; }
+.drive-sync-status.is-ok  { color: var(--ok, #2a8); }
+.drive-sync-status.is-err { color: var(--err, #c33); }
+
 /* --- credential inputs with show/hide eye --------------- */
 .pwd-wrap {
   display: inline-flex;

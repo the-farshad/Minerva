@@ -9849,34 +9849,52 @@
     var connectionPanel = el('div');
     connectionPanel.appendChild(form);
     connectionPanel.appendChild(status);
-    // Drive-sync controls — manual escape hatches when the
-    // automatic round-trip didn't run (offline at connect time, a
-    // value typed before sign-in, etc.). Users on a fresh device
-    // hit "Pull from Drive" to grab settings saved earlier
-    // elsewhere; "Push to Drive" force-writes the current local
-    // values up.
-    var driveSyncStatus = el('p', { class: 'small muted', style: 'margin-top: 0.4rem;' });
-    var pushBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+    // Drive-sync controls — manual escape hatches for when the
+    // background sync didn't run. Rendered as a small card so the
+    // buttons sit side-by-side with consistent padding and a
+    // shared status line below.
+    var driveSyncStatus = el('span', { class: 'drive-sync-status small muted' }, 'Auto-syncs on every edit when signed in.');
+    var pushBtn = el('button', { class: 'btn-pill', type: 'button',
+      title: 'Force-write the current local settings to Drive now',
       onclick: async function () {
+        pushBtn.disabled = true;
+        driveSyncStatus.classList.remove('is-err', 'is-ok');
         driveSyncStatus.textContent = 'Pushing…';
-        try { await runDriveConfigSync(); driveSyncStatus.textContent = '✓ Settings pushed to Drive.'; }
-        catch (e) { driveSyncStatus.textContent = '✗ Push failed: ' + (e && e.message || e); }
+        try { await runDriveConfigSync();
+          driveSyncStatus.classList.add('is-ok');
+          driveSyncStatus.textContent = 'Pushed to Drive · ' + new Date().toLocaleTimeString();
+        } catch (e) {
+          driveSyncStatus.classList.add('is-err');
+          driveSyncStatus.textContent = 'Push failed: ' + (e && e.message || e);
+        } finally { pushBtn.disabled = false; }
       }
-    }, M.render.icon('upload-cloud'), ' Push settings to Drive');
-    var pullBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+    }, M.render.icon('upload-cloud'), el('span', null, 'Push to Drive'));
+    var pullBtn = el('button', { class: 'btn-pill', type: 'button',
+      title: 'Replace local settings with whatever is saved on Drive',
       onclick: async function () {
+        pullBtn.disabled = true;
+        driveSyncStatus.classList.remove('is-err', 'is-ok');
         driveSyncStatus.textContent = 'Pulling…';
         try {
           var ok = await loadDriveConfigIfPresent();
-          driveSyncStatus.textContent = ok
-            ? '✓ Settings pulled from Drive — re-rendering.'
-            : '— No saved settings on Drive yet (or already in sync).';
-          if (ok) try { route(); } catch (e) {}
-        } catch (e) { driveSyncStatus.textContent = '✗ Pull failed: ' + (e && e.message || e); }
+          if (ok) {
+            driveSyncStatus.classList.add('is-ok');
+            driveSyncStatus.textContent = 'Pulled from Drive · re-rendering';
+            try { route(); } catch (e) {}
+          } else {
+            driveSyncStatus.textContent = 'No saved settings on Drive (or already in sync).';
+          }
+        } catch (e) {
+          driveSyncStatus.classList.add('is-err');
+          driveSyncStatus.textContent = 'Pull failed: ' + (e && e.message || e);
+        } finally { pullBtn.disabled = false; }
       }
-    }, M.render.icon('download-cloud'), ' Pull settings from Drive');
-    connectionPanel.appendChild(el('div', { class: 'drive-sync-row form-actions' }, pushBtn, pullBtn));
-    connectionPanel.appendChild(driveSyncStatus);
+    }, M.render.icon('download-cloud'), el('span', null, 'Pull from Drive'));
+    var driveSyncCard = el('div', { class: 'drive-sync-card' },
+      el('div', { class: 'drive-sync-buttons' }, pushBtn, pullBtn),
+      driveSyncStatus
+    );
+    connectionPanel.appendChild(driveSyncCard);
 
     // Each section is its own subroute — only one section's content
     // shows at a time. The sidebar's role is navigation, not summary.
