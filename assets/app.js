@@ -10261,6 +10261,10 @@
     var addBtn = el('button', { class: 'btn', type: 'button', disabled: true }, 'Add to ' + tab);
     var fetched = null;
     var debounce = null;
+    // Tracks the in-flight metadata lookup so the Add handler can
+    // await it instead of capturing the URL-only fallback when the
+    // user clicks before the network round-trip finishes.
+    var pendingLookup = null;
 
     // Category picker — only when the section has a `category` column.
     // Builds a multi-tag widget combining: (1) the schema's predefined
@@ -10387,10 +10391,13 @@
         addBtn.disabled = true;
         setBtnLabel('Add to ' + tab);
       }
-      if (!raw) { preview.replaceChildren(); return; }
+      if (!raw) { preview.replaceChildren(); pendingLookup = null; return; }
       preview.replaceChildren(el('p', { class: 'small muted' }, opts.noCache ? 'Refreshing…' : 'Looking up…'));
+      var lookupPromise = M.import.lookup(raw, { noCache: !!opts.noCache });
+      pendingLookup = lookupPromise;
       try {
-        var data = await M.import.lookup(raw, { noCache: !!opts.noCache });
+        var data = await lookupPromise;
+        if (pendingLookup !== lookupPromise) return;
         if (!data) {
           preview.replaceChildren(el('p', { class: 'small muted' },
             'Not recognized as arXiv, YouTube, or a URL. Either paste a real URL or use ',
@@ -10562,6 +10569,8 @@
         preview.replaceChildren.apply(preview, nodes);
         addBtn.disabled = matches.length === 0 || !!dupRow;
         if (dupRow) setBtnLabel('Already in ' + tab);
+        else if (matches.length > 0) setBtnLabel('Add to ' + tab);
+        pendingLookup = null;
       } catch (err) {
         // Soft-fail: surface the error inline but still let the user
         // save the row with whatever they typed. The fallback record
@@ -10593,6 +10602,7 @@
               )
             : null
         );
+        pendingLookup = null;
       }
     }
 
@@ -10602,10 +10612,18 @@
     });
 
     addBtn.addEventListener('click', async function () {
+      // Click before the metadata round-trip finishes used to capture
+      // the URL-only fallback (kind:'article', url:raw) and create an
+      // empty tile. Wait for any in-flight lookup so fetched is the
+      // real metadata before the row is built.
+      if (pendingLookup) {
+        addBtn.disabled = true;
+        setBtnLabel('Waiting for metadata…');
+        try { await pendingLookup; } catch (e) { /* falls through to error path */ }
+      }
       if (!fetched) return;
       addBtn.disabled = true;
       var prevLabel = addBtn.textContent;
-      // Flush any partially-typed new category before reading selection.
       if (categoryColIdx >= 0) {
         try { document.activeElement && document.activeElement.blur && document.activeElement.blur(); }
         catch (e) { /* ignore */ }
