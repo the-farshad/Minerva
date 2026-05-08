@@ -5553,14 +5553,29 @@ table.rows.rows-grouped tr.row-group-head td {
 
 /* --- PDF extraction modal ------------------------------------- */
 .extract-overlay {
-  z-index: 110;
+  /* Float above the preview (1000) so it's not hidden behind the
+     PDF, but use a transparent backdrop so the paper stays
+     visible — extract output is a *companion* view, not a
+     replacement. Click on the dim region around the panel still
+     dismisses it. */
+  z-index: 1100;
+  background: transparent;
+  pointer-events: none;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 4rem 1rem 1rem;
 }
 .extract-panel {
-  max-width: 800px;
-  width: min(90vw, 800px);
+  /* Smaller side-docked panel so the PDF iframe behind keeps
+     getting most of the screen. The user can read the extracted
+     text and scroll the PDF in the same glance. */
+  width: min(520px, 45vw);
+  max-width: 520px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
+  pointer-events: auto;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
 }
 .extract-head {
   display: flex;
