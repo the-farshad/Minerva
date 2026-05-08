@@ -7874,39 +7874,39 @@
       }
       var blob = new Blob(chunks, { type: contentType });
 
-      job.setStatus('Saving locally…');
+      job.setStatus('Saving to host volume…');
       var hostPath = '';
       var idbStored = false;
+      // Default to the helper's host volume so we never compete
+      // with the browser's IndexedDB quota. Container mounts the
+      // host dir at MINERVA_FILES_ROOT; /file/save and /file/serve
+      // hand bytes back and forth. IDB is only used when the
+      // helper is unreachable.
       try {
-        await M.db.putVideo(tab, row.id, {
-          blob: blob,
-          name: filename,
-          mime: contentType,
-          size: blob.size
-        });
-        idbStored = true;
-      } catch (idbErr) {
-        // IndexedDB has hard quotas (varies by browser; Firefox is
-        // ~50% of free disk). Big videos hit them. Fall back to the
-        // helper's /file/save so the download succeeds anyway —
-        // user will play the file via their OS player from
-        // ~/Minerva/videos.
-        var quotaLike = idbErr && (idbErr.name === 'QuotaExceededError'
-          || /quota/i.test(idbErr.message || ''));
-        if (!quotaLike) throw idbErr;
-        job.setStatus('Browser storage full — saving to ~/Minerva/videos…');
+        var stem0 = String(row.title || row.id || filename).replace(/[^\w.\- ]+/g, '_').slice(0, 100);
+        var ext0 = (filename.match(/\.[A-Za-z0-9]{2,5}$/) || [''])[0];
+        if (ext0 && !stem0.toLowerCase().endsWith(ext0.toLowerCase())) stem0 += ext0;
+        var saveResp = await fetch(
+          endpoint + '/file/save?kind=videos&name=' + encodeURIComponent(stem0),
+          { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
+            body: await blob.arrayBuffer() }
+        );
+        var saveJson = await saveResp.json();
+        if (!saveJson.ok) throw new Error(saveJson.error || ('host save ' + saveResp.status));
+        hostPath = saveJson.path;
+      } catch (hostErr) {
+        job.setStatus('Helper unreachable — saving to browser storage…');
         try {
-          var saveResp = await fetch(
-            endpoint + '/file/save?kind=videos&name=' + encodeURIComponent(filename),
-            { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
-              body: await blob.arrayBuffer() }
-          );
-          var saveJson = await saveResp.json();
-          if (!saveJson.ok) throw new Error(saveJson.error || ('host save ' + saveResp.status));
-          hostPath = saveJson.path;
-        } catch (hostErr) {
-          throw new Error('Browser storage full and host save failed: '
-            + (hostErr && hostErr.message || hostErr));
+          await M.db.putVideo(tab, row.id, {
+            blob: blob,
+            name: filename,
+            mime: contentType,
+            size: blob.size
+          });
+          idbStored = true;
+        } catch (idbErr) {
+          throw new Error('Host save failed (' + (hostErr && hostErr.message || hostErr)
+            + ') and browser storage failed (' + (idbErr && idbErr.message || idbErr) + ').');
         }
       }
       var meta = await M.db.getMeta(tab);
