@@ -25,6 +25,18 @@
     return null;                                         // _log etc. — synthesize
   }
 
+  // Reads the user's selected backend mode out of the same
+  // localStorage key the app writes. Returns 'sheets' / 'hybrid'
+  // (default) / 'pg'. Centralised here so sync.js doesn't depend
+  // on app.js's closure state.
+  function getBackendMode() {
+    try {
+      var c = JSON.parse(localStorage.getItem('minerva.config.v1') || '{}');
+      if (c.backendMode === 'sheets' || c.backendMode === 'pg') return c.backendMode;
+    } catch (e) {}
+    return 'hybrid';
+  }
+
   // Best-effort seed from the Postgres mirror when the local IDB has
   // nothing for a tab yet. Lets a fresh device with the helper running
   // show data instantly while a Sheets pull races in the background;
@@ -53,7 +65,39 @@
     }
   }
 
+  // Force pull from PG for pg-only mode. Replaces the local copy
+  // wholesale — PG is the source of truth.
+  async function pgFullPull(tab) {
+    if (!Minerva.pg || typeof Minerva.pg.isLive !== 'function' || !Minerva.pg.isLive()) {
+      return 0;
+    }
+    var resp;
+    try { resp = await Minerva.pg.getRows(tab); }
+    catch (e) {
+      console.warn('[Minerva pg-pull]', tab, (e && e.message) || e);
+      return 0;
+    }
+    var rows = (resp && resp.rows) || [];
+    var localDirty = await Minerva.db.getDirtyRows(tab);
+    var dirtyById = Object.create(null);
+    localDirty.forEach(function (r) { dirtyById[r.id] = r; });
+    await Minerva.db.clearTab(tab);
+    var out = rows
+      .filter(function (r) { return !dirtyById[r.id]; })
+      .map(function (r) { return Object.assign({ _dirty: 0, _localOnly: 0 }, r); });
+    if (out.length) await Minerva.db.upsertRows(tab, out);
+    if (localDirty.length) await Minerva.db.upsertRows(tab, localDirty);
+    return out.length + localDirty.length;
+  }
+
   async function pullTab(token, ssId, tab) {
+    // PG-only mode skips Sheets entirely: PG is the canonical
+    // store, the seeding path is the read path. Force-seed even
+    // when IDB has rows (the local copy may be stale).
+    if (getBackendMode() === 'pg') {
+      var n = await pgFullPull(tab);
+      return { tab: tab, count: n };
+    }
     // Cheap read-through: if the user just cleared IDB or is on a
     // fresh device with the helper running, populate from PG before
     // we even hit Sheets. The Sheets pull below still wins as the
@@ -205,6 +249,36 @@
   async function pushTab(token, ssId, tab) {
     var dirty = await Minerva.db.getDirtyRows(tab);
     if (!dirty.length) return { tab: tab, pushed: 0 };
+
+    // PG-only mode: skip every Sheets API call. Each dirty row is
+    // upserted (or deleted) directly through the PG adapter, then
+    // its dirty markers are cleared in IDB. There is no _rowIndex
+    // to maintain because Sheets isn't involved.
+    if (getBackendMode() === 'pg') {
+      var pgUp = [], pgDel = [];
+      for (var pi = 0; pi < dirty.length; pi++) {
+        var pr = dirty[pi];
+        if (pr._deleted) pgDel.push(pr.id);
+        else pgUp.push(pr);
+      }
+      try {
+        if (pgUp.length) await Minerva.pg.upsertRows(tab, pgUp);
+        if (pgDel.length) await Minerva.pg.deleteRows(tab, pgDel);
+      } catch (e) {
+        console.warn('[Minerva pg-push]', tab, (e && e.message) || e);
+        return { tab: tab, pushed: 0, error: String((e && e.message) || e) };
+      }
+      for (var pj = 0; pj < dirty.length; pj++) {
+        var prow = dirty[pj];
+        if (prow._deleted) await Minerva.db.deleteRow(tab, prow.id);
+        else {
+          prow._dirty = 0;
+          prow._localOnly = 0;
+          await Minerva.db.upsertRow(tab, prow);
+        }
+      }
+      return { tab: tab, pushed: pgUp.length + pgDel.length };
+    }
 
     var meta = await Minerva.db.getMeta(tab);
     var headers = (meta && meta.headers) || [];

@@ -68,10 +68,13 @@
   // a reload.
   function applyConfigSideEffects(c) {
     if (window.Minerva && Minerva.pg && typeof Minerva.pg.setEnabled === 'function') {
-      // Default ON when the field is absent (back-compat for users
-      // upgrading from before the switch existed).
-      var enable = c.pgMirrorEnabled !== false;
-      Minerva.pg.setEnabled(enable);
+      // Backend mode controls whether PG is part of the write path:
+      //   sheets → PG off (Sheets is the sole store)
+      //   hybrid → PG on (Sheets primary, PG mirror)
+      //   pg     → PG on (PG is the sole store)
+      // Back-compat: an absent field defaults to "hybrid" (PG on).
+      var mode = (c.backendMode === 'sheets' || c.backendMode === 'pg') ? c.backendMode : 'hybrid';
+      Minerva.pg.setEnabled(mode !== 'sheets');
     }
   }
   // Apply once at module init for the cached config.
@@ -6904,6 +6907,21 @@
       return s;
     }
 
+    function readSectionGroupOrder(t) {
+      try {
+        var raw = JSON.parse(localStorage.getItem('minerva.sectiongrouporder') || '{}');
+        return raw[t] || 'default';
+      } catch (e) { return 'default'; }
+    }
+    function writeSectionGroupOrder(t, sort) {
+      try {
+        var raw = JSON.parse(localStorage.getItem('minerva.sectiongrouporder') || '{}');
+        if (sort && sort !== 'default') raw[t] = sort;
+        else delete raw[t];
+        localStorage.setItem('minerva.sectiongrouporder', JSON.stringify(raw));
+      } catch (e) {}
+    }
+
     var wrap = el('div', { class: 'tiles-wrap' });
     if (groupCol) {
       var byGroup = {};
@@ -6913,6 +6931,54 @@
         if (!byGroup[key]) { byGroup[key] = []; order.push(key); }
         byGroup[key].push(r);
       });
+      // Section-level "sort the playlists themselves" — natural-
+      // numeric collation so "Playlist 2" precedes "Playlist 10".
+      var sectionGroupSort = readSectionGroupOrder(tab);
+      if (sectionGroupSort !== 'default') {
+        var col = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+        function newest(rs) {
+          var max = '';
+          rs.forEach(function (r) {
+            var u = String(r._updated || ''); if (u > max) max = u;
+          });
+          return max;
+        }
+        order.sort(function (a, b) {
+          if (sectionGroupSort === 'name-asc')  return col.compare(a, b);
+          if (sectionGroupSort === 'name-desc') return col.compare(b, a);
+          if (sectionGroupSort === 'newest')    return String(newest(byGroup[b])).localeCompare(String(newest(byGroup[a])));
+          if (sectionGroupSort === 'oldest')    return String(newest(byGroup[a])).localeCompare(String(newest(byGroup[b])));
+          return 0;
+        });
+      }
+      // Section header: "Sort playlists" dropdown above the first
+      // group head. Lives outside the per-group loop so it scopes
+      // to the whole section.
+      var sectionSortRow = el('div', { class: 'tiles-section-sort' },
+        el('span', { class: 'small muted' }, 'Sort playlists:'),
+        (function () {
+          var sel = document.createElement('select');
+          sel.className = 'tiles-group-sort';
+          [
+            { v: 'default',   label: 'Default' },
+            { v: 'name-asc',  label: 'Name A–Z' },
+            { v: 'name-desc', label: 'Name Z–A' },
+            { v: 'newest',    label: 'Newest first' },
+            { v: 'oldest',    label: 'Oldest first' }
+          ].forEach(function (opt) {
+            var o = document.createElement('option');
+            o.value = opt.v; o.textContent = opt.label;
+            if (opt.v === sectionGroupSort) o.selected = true;
+            sel.appendChild(o);
+          });
+          sel.addEventListener('change', function () {
+            writeSectionGroupOrder(tab, sel.value);
+            if (refresh) refresh();
+          });
+          return sel;
+        })()
+      );
+      wrap.appendChild(sectionSortRow);
       order.forEach(function (key) {
         var currentSort = readGroupSort(tab, key);
         var manualOrder = currentSort === 'default' ? readGroupOrder(tab, key) : [];
@@ -8995,7 +9061,10 @@
         offlineQuality:  String(f.get('offlineQuality') || '720').trim(),
         uploadOfflineToDrive: f.get('uploadOfflineToDrive') === 'on',
         uploadPapersToDrive:  f.get('uploadPapersToDrive') === 'on',
-        pgMirrorEnabled:      f.get('pgMirrorEnabled') === 'on'
+        backendMode:          (function () {
+          var v = String(f.get('backendMode') || 'hybrid');
+          return (v === 'sheets' || v === 'pg') ? v : 'hybrid';
+        })()
       };
     }
     var autoSaveTimer = null;
@@ -9128,10 +9197,24 @@
         !!cfg.uploadPapersToDrive,
         'When on, every URL-imported paper that resolves to a PDF (arXiv, CrossRef when available) is fetched via your CORS proxy and uploaded to Drive. Counts against your Drive quota.'
       ),
-      switchField('Mirror writes to Postgres',
-        'pgMirrorEnabled',
-        cfg.pgMirrorEnabled !== false,
-        'Mirror every Sheets push to a local Postgres so a second device can sync from your helper without re-pulling from Google. Off → Sheets-only mode.'
+      field('Backend mode',
+        (function () {
+          var sel = document.createElement('select');
+          sel.name = 'backendMode';
+          [
+            { v: 'sheets', label: 'Sheets only — Google Sheets is the sole store. No helper required.' },
+            { v: 'hybrid', label: 'Hybrid (default) — Sheets + Postgres mirror. Two readers, one source of truth.' },
+            { v: 'pg',     label: 'Postgres only — skip Sheets entirely. Requires the helper + PG to be reachable.' }
+          ].forEach(function (opt) {
+            var o = document.createElement('option');
+            o.value = opt.v; o.textContent = opt.label;
+            var current = (cfg.backendMode === 'sheets' || cfg.backendMode === 'pg') ? cfg.backendMode : 'hybrid';
+            if (opt.v === current) o.selected = true;
+            sel.appendChild(o);
+          });
+          return sel;
+        })(),
+        'Sheets-only and Hybrid both let you sign in with Google and use the spreadsheet as the canonical store. Postgres-only skips Google entirely — useful when you want everything off Drive, but the helper + Postgres must be running and reachable.'
       ),
       renderLocalMirrorCard(),
       el('div', { class: 'form-actions' },
