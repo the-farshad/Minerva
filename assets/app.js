@@ -6689,15 +6689,25 @@
     }
     function applyGroupSort(rs, sort) {
       var s = rs.slice();
+      // Natural / numeric collation so "Lecture 2" sorts before
+      // "Lecture 10". Plain localeCompare without { numeric: true }
+      // does string-byte order, which puts 1, 10, 11, … before 2.
+      var collator = new Intl.Collator(undefined, {
+        numeric: true, sensitivity: 'base'
+      });
       if (sort === 'title-asc') {
         s.sort(function (a, b) {
-          return String(a.title || a.name || '').toLowerCase()
-            .localeCompare(String(b.title || b.name || '').toLowerCase());
+          return collator.compare(
+            String(a.title || a.name || ''),
+            String(b.title || b.name || '')
+          );
         });
       } else if (sort === 'title-desc') {
         s.sort(function (a, b) {
-          return String(b.title || b.name || '').toLowerCase()
-            .localeCompare(String(a.title || a.name || '').toLowerCase());
+          return collator.compare(
+            String(b.title || b.name || ''),
+            String(a.title || a.name || '')
+          );
         });
       } else if (sort === 'newest') {
         s.sort(function (a, b) {
