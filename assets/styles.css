@@ -5421,6 +5421,23 @@ table.rows.rows-grouped tr.row-group-head td {
   width: 100%;
   box-sizing: border-box;
 }
+.editor-multiline {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+  min-height: 8rem;
+}
+.tiles-group-notes.has-content { color: var(--accent); }
+.tiles-group-notes.has-content::after {
+  content: '';
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  top: 4px;
+  right: 4px;
+}
+.tiles-group-notes { position: relative; }
 .multi-editor-chips,
 .multi-editor-extras {
   display: flex;

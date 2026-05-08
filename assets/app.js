@@ -3470,7 +3470,13 @@
       { name: 'playlist',  type: 'text', before: 'url' },
       { name: 'category',  type: 'multiselect(tutorial,talk,lecture,documentary,course,interview,music,news,vlog,other)', before: 'url' },
       { name: 'published', type: 'date', before: 'watched' },
-      { name: 'offline',   type: 'text', before: '_updated' }
+      { name: 'offline',   type: 'text', before: '_updated' },
+      // `notes` and `links` land *after* every existing column so
+      // existing row data isn't shifted by the migration. The Sheets
+      // value array for each row gets two new trailing empty cells;
+      // the cells fill in as the user writes notes from the preview.
+      { name: 'notes',     type: 'markdown', append: true },
+      { name: 'links',     type: 'longtext', append: true }
     ]);
   }
 
@@ -3508,17 +3514,28 @@
         }
         return;
       }
-      var insertAt = col.before ? headers.indexOf(col.before) : -1;
-      if (insertAt < 0) {
-        var upIdx = headers.indexOf('_updated');
-        if (upIdx >= 0) insertAt = upIdx;
-      }
-      if (insertAt < 0 || insertAt >= headers.length) {
+      // Two insertion modes. `append:true` always pushes the new
+      // column to the very end — safe with no row-data rewrite,
+      // because old rows simply gain a trailing empty cell. The
+      // default `before:` mode splices in the middle, which is
+      // visually nicer but requires the data rewrite below to
+      // avoid shifting every row's values into the wrong slot.
+      if (col.append) {
         headers.push(col.name);
         types.push(col.type);
       } else {
-        headers.splice(insertAt, 0, col.name);
-        types.splice(insertAt, 0, col.type);
+        var insertAt = col.before ? headers.indexOf(col.before) : -1;
+        if (insertAt < 0) {
+          var upIdx = headers.indexOf('_updated');
+          if (upIdx >= 0) insertAt = upIdx;
+        }
+        if (insertAt < 0 || insertAt >= headers.length) {
+          headers.push(col.name);
+          types.push(col.type);
+        } else {
+          headers.splice(insertAt, 0, col.name);
+          types.splice(insertAt, 0, col.type);
+        }
       }
       added.push(col.name);
     });
@@ -5336,11 +5353,14 @@
     var overlay = el('div', { class: 'modal-overlay text-editor-overlay',
       onclick: function () { close(); }
     });
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'editor';
+    var input = opts.multiline
+      ? document.createElement('textarea')
+      : document.createElement('input');
+    if (!opts.multiline) input.type = 'text';
+    input.className = 'editor' + (opts.multiline ? ' editor-multiline' : '');
     input.value = opts.initial || '';
     if (opts.placeholder) input.placeholder = opts.placeholder;
+    if (opts.multiline) input.rows = 12;
     var commit = el('button', { class: 'btn', type: 'button',
       onclick: function () { submit(); } }, opts.commitLabel || 'Save');
     var cancel = el('button', { class: 'btn btn-ghost', type: 'button',
@@ -5363,7 +5383,11 @@
       overlay.remove();
     }
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      // For multiline inputs Enter inserts a newline; commit lives
+      // on the button. Cmd/Ctrl-Enter is a common keyboard shortcut
+      // for "submit a multi-line form" and is preserved here.
+      if (e.key === 'Enter' && !opts.multiline) { e.preventDefault(); submit(); }
+      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
       else if (e.key === 'Escape') { e.preventDefault(); close(); }
     });
     overlay.appendChild(panel);
@@ -6665,6 +6689,47 @@
           catBtn.appendChild(M.render.icon('tag'));
           head.appendChild(catBtn);
         }
+
+        // Per-group Notes — one markdown blob per (tab, group key)
+        // so the user can attach a description / running notes to a
+        // whole playlist or category. Persisted to localStorage,
+        // keyed by tab + group value, indicator dot lights up when a
+        // note exists.
+        var notesKey = 'minerva.groupnotes.' + tab + '' + key;
+        var existingGroupNotes = (function () {
+          try { return localStorage.getItem(notesKey) || ''; } catch (e) { return ''; }
+        })();
+        var groupNotesBtn = el('button', {
+          type: 'button',
+          class: 'icon-btn tiles-group-notes' + (existingGroupNotes ? ' has-content' : ''),
+          title: existingGroupNotes
+            ? 'Notes for "' + key + '" (saved)'
+            : 'Add notes for "' + key + '"',
+          'aria-label': 'Group notes',
+          onclick: function (e) {
+            e.preventDefault(); e.stopPropagation();
+            openTextEditor({
+              title: 'Notes — ' + key,
+              initial: existingGroupNotes,
+              placeholder: 'Markdown notes for this playlist / category. Cmd/Ctrl-Enter to save.',
+              commitLabel: 'Save',
+              multiline: true,
+              onCommit: function (txt) {
+                try {
+                  if (txt) localStorage.setItem(notesKey, txt);
+                  else localStorage.removeItem(notesKey);
+                } catch (er) {
+                  flash(document.body, 'Saving notes failed: ' + (er && er.message || er), 'error');
+                  return;
+                }
+                if (refresh) refresh();
+                flash(document.body, txt ? 'Saved notes for "' + key + '".' : 'Cleared notes for "' + key + '".', 'ok');
+              }
+            });
+          }
+        });
+        groupNotesBtn.appendChild(M.render.icon('sticky-note'));
+        head.appendChild(groupNotesBtn);
 
         // Per-group "delete all" — always offered when a group column
         // is in play, not just when the section has offline+url. A

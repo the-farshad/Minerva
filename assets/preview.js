@@ -944,9 +944,7 @@
                  && pdfMirrorOnDemand && pdfBlobLoader) {
         // Auto-mirror: row is a paper without a Drive copy yet.
         // Call the registered mirror function, get a fileId, then
-        // mount the resulting blob. Skips the X-Frame-blocked
-        // arxiv iframe entirely — the user just sees "Mirroring to
-        // Drive…" briefly, then the actual PDF.
+        // mount the resulting blob.
         var mirroring = document.createElement('div');
         mirroring.className = 'preview-loading muted small';
         mirroring.textContent = 'Mirroring PDF to Drive…';
@@ -962,9 +960,12 @@
           } catch (err) {
             if (renderEpoch !== currentRenderEpoch) return;
             console.warn('[Minerva pdf-auto-mirror]', err);
+            // Surface the actual mirror failure so the user knows
+            // *why* embedding fell back instead of the generic
+            // "refuses to be embedded" message.
             mountFriendlyExternal(url,
-              'Could not mirror this PDF automatically. Open it externally — ' +
-              'embedding is blocked by ' + (hostOf(url) || 'the source'));
+              (hostOf(url) || 'The source') + ' refuses iframe embedding and the auto-mirror failed: '
+              + (err && err.message || err));
           }
         })();
       } else if (isPdfNow && hit && hit.driveFileId && pdfBlobLoader) {
@@ -1036,6 +1037,29 @@
         open.rel = 'noopener';
         open.textContent = 'Open in new tab ↗';
         actions.appendChild(open);
+        // Retry the auto-mirror — useful when the first attempt
+        // failed because the helper / proxy was momentarily down,
+        // or the user just configured a CORS proxy in Settings.
+        if (activeRowCtx && pdfMirrorOnDemand && pdfBlobLoader) {
+          var retry = document.createElement('button');
+          retry.type = 'button';
+          retry.className = 'btn btn-ghost';
+          retry.textContent = 'Retry mirror';
+          retry.addEventListener('click', async function () {
+            wrap.classList.add('is-attaching');
+            msg.textContent = 'Mirroring PDF to Drive…';
+            try {
+              var fid = await pdfMirrorOnDemand(activeRowCtx.tab, activeRowCtx.rowId);
+              if (!fid) throw new Error('mirror returned no fileId');
+              var blob = await pdfBlobLoader(fid);
+              mountPdfBlob(blob, targetUrl);
+            } catch (e) {
+              wrap.classList.remove('is-attaching');
+              msg.textContent = 'Mirror failed: ' + (e && e.message || e);
+            }
+          });
+          actions.appendChild(retry);
+        }
         // Manual-attach affordance: if we have a row context AND a
         // Drive-blob handler, let the user pick a PDF they already
         // downloaded. We upload it to Drive, persist the breadcrumb
