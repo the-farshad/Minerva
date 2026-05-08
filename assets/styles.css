@@ -495,12 +495,14 @@ footer {
 button.btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.4em;
+  gap: 0.45em;
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--on-accent);
-  padding: 0.5rem 0.95rem;
-  border-radius: 7px;
+  padding: 0.5rem 1rem;
+  /* Pill shape across the app — single visual language for every
+     primary / ghost button. */
+  border-radius: 999px;
   font: inherit;
   font-size: 0.9rem;
   font-weight: 500;
@@ -3995,19 +3997,18 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   max-width: 100%;
   overflow-x: clip;
 }
-/* Every settings panel — and every direct child of the section —
-   takes the same width as the section's body cell. Without this,
-   .form (880px), .local-store (was 880px), and bare <div>
-   panels (~970px) rendered different widths and switching tabs
-   visibly jumped the page. */
+/* Every settings panel + descendants share the body cell width.
+   Uses !important to beat any panel-specific cap left over from
+   other rules — the user reported the jump persisting after
+   class-only overrides. */
 .settings-section,
 .settings-section > *,
 .settings-section .form,
 .settings-section .auth-status,
 .settings-section .local-store,
 .settings-section .tg-panel {
-  width: 100%;
-  max-width: 100%;
+  width: 100% !important;
+  max-width: 100% !important;
   box-sizing: border-box;
 }
 .settings-section pre,
@@ -4160,6 +4161,9 @@ table.kv tbody tr:hover { background: var(--surface); }
   align-items: stretch;
   gap: 0;
   width: 100%;
+  /* Stretch the wrapper so the input + eye button share the
+     same computed height regardless of their internal padding. */
+  min-height: 0;
 }
 .pwd-wrap > input {
   flex: 1 1 auto;
@@ -4167,6 +4171,9 @@ table.kv tbody tr:hover { background: var(--surface); }
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   border-right: 0;
+  /* Box-sizing already from the global form input rule, but
+     declared again so the input's box equals the eye box. */
+  box-sizing: border-box;
 }
 .pwd-toggle {
   border: 1px solid var(--border);
@@ -4174,13 +4181,20 @@ table.kv tbody tr:hover { background: var(--surface); }
   border-bottom-left-radius: 0;
   background: var(--surface-2);
   color: var(--fg);
-  padding: 0 0.55rem;
+  padding: 0 0.7rem;
+  /* Match the input's vertical metrics: align-self stretch fills
+     the wrapper's height, so the eye and the field finish exactly
+     flush at top and bottom. */
+  align-self: stretch;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   cursor: pointer;
+  flex-shrink: 0;
 }
 .pwd-toggle:hover { background: var(--surface); }
-.pwd-toggle svg { width: 1em; height: 1em; }
+.pwd-toggle svg { width: 1.05em; height: 1.05em; }
+.pwd-eye-icon { display: inline-flex; }
 
 /* --- modal overlays (help, capture, search) --------------- */
 

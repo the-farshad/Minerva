@@ -9854,7 +9854,7 @@
     // buttons sit side-by-side with consistent padding and a
     // shared status line below.
     var driveSyncStatus = el('span', { class: 'drive-sync-status small muted' }, 'Auto-syncs on every edit when signed in.');
-    var pushBtn = el('button', { class: 'btn-pill', type: 'button',
+    var pushBtn = el('button', { class: 'btn btn-ghost', type: 'button',
       title: 'Force-write the current local settings to Drive now',
       onclick: async function () {
         pushBtn.disabled = true;
@@ -9869,7 +9869,7 @@
         } finally { pushBtn.disabled = false; }
       }
     }, M.render.icon('upload-cloud'), el('span', null, 'Push to Drive'));
-    var pullBtn = el('button', { class: 'btn-pill', type: 'button',
+    var pullBtn = el('button', { class: 'btn btn-ghost', type: 'button',
       title: 'Replace local settings with whatever is saved on Drive',
       onclick: async function () {
         pullBtn.disabled = true;
