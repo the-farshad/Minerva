@@ -269,9 +269,48 @@
     return requestTokenViaRedirect(clientId, prompt);
   }
 
+  // When deployed behind oauth2-proxy, the gate already holds a
+  // valid Google access token (with the same drive.file scope the
+  // SPA needs). Hitting /oauth2/auth returns 200 + the token in
+  // X-Auth-Request-Access-Token. Caching the result spares us a
+  // round-trip per getToken call.
+  var gateProbe = { tried: false, available: false };
+  async function tryGateToken() {
+    try {
+      var r = await fetch('/oauth2/auth', {
+        method: 'GET', credentials: 'same-origin', cache: 'no-store',
+      });
+      if (!r.ok) { gateProbe.tried = true; gateProbe.available = false; return null; }
+      var token = r.headers.get('X-Auth-Request-Access-Token');
+      var email = r.headers.get('X-Auth-Request-Email');
+      if (!token) { gateProbe.tried = true; gateProbe.available = false; return null; }
+      gateProbe.tried = true;
+      gateProbe.available = true;
+      state.access_token = token;
+      // oauth2-proxy refreshes its session on its own cadence; we
+      // re-probe every getToken() call but cache the result for
+      // 30 seconds so a burst of API calls doesn't slam /oauth2/auth.
+      state.expires_at = Date.now() + 30 * 1000;
+      if (email && state.email !== email) state.email = email;
+      persist();
+      notify();
+      return token;
+    } catch (e) {
+      gateProbe.tried = true;
+      gateProbe.available = false;
+      return null;
+    }
+  }
+
   async function getToken(clientId) {
     if (state.access_token && state.expires_at > Date.now()) {
       return state.access_token;
+    }
+    // Behind the auth gate, skip the user-facing redirect flow:
+    // the gate already authenticated this session against Google.
+    if (!gateProbe.tried || gateProbe.available) {
+      var t = await tryGateToken();
+      if (t) return t;
     }
     return requestToken(clientId, '');
   }
