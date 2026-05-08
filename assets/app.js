@@ -158,12 +158,28 @@
       var token = await M.auth.getToken(c.clientId);
       var existing = await M.sheets.findDriveFile(token, DRIVE_CONFIG_FILENAME, 'application/json');
       var fileId = existing && existing.files && existing.files[0] && existing.files[0].id;
-      var body = JSON.stringify({
+      var snapshot = {
         version: 1,
         savedAt: new Date().toISOString(),
         config: configForSync()
-      });
+      };
+      var body = JSON.stringify(snapshot);
       await M.sheets.uploadDriveFile(token, DRIVE_CONFIG_FILENAME, 'application/json', body, fileId);
+      // Mirror to Postgres when the PG mirror is on. Stored as a
+      // single row in the synthetic `_settings` table, keyed by
+      // 'minerva-config'. Survives Drive going stale and lets a
+      // PG-only deployment recover settings without touching Drive.
+      try {
+        if (window.Minerva && Minerva.pg
+            && Minerva.pg.isEnabled && Minerva.pg.isEnabled()
+            && Minerva.pg.isLive && Minerva.pg.isLive()) {
+          await Minerva.pg.upsertRows('_settings', [{
+            id: 'minerva-config',
+            updated_at: snapshot.savedAt,
+            value: snapshot
+          }]);
+        }
+      } catch (e) { /* PG mirror is best-effort */ }
     } finally {
       driveConfigSyncInflight = false;
     }
@@ -172,21 +188,33 @@
     var c = readConfig();
     if (!c.clientId) return false;
     if (!M.auth || !M.sheets) return false;
-    if (!hasLiveAuthToken()) return false; // never trigger a sign-in from a background load
+    if (!hasLiveAuthToken()) return false;
     var token;
     try { token = await M.auth.getToken(c.clientId); }
     catch (e) { return false; }
-    var existing;
-    try { existing = await M.sheets.findDriveFile(token, DRIVE_CONFIG_FILENAME, 'application/json'); }
-    catch (e) { return false; }
-    var file = existing && existing.files && existing.files[0];
-    if (!file) return false;
-    var raw;
-    try { raw = await M.sheets.getDriveFileContent(token, file.id); }
-    catch (e) { return false; }
-    var parsed;
-    try { parsed = JSON.parse(raw); }
-    catch (e) { return false; }
+    var parsed = null;
+    try {
+      var existing = await M.sheets.findDriveFile(token, DRIVE_CONFIG_FILENAME, 'application/json');
+      var file = existing && existing.files && existing.files[0];
+      if (file) {
+        var raw = await M.sheets.getDriveFileContent(token, file.id);
+        try { parsed = JSON.parse(raw); } catch (e) { /* fall through */ }
+      }
+    } catch (e) { /* fall through to PG */ }
+    // Fall back to Postgres when Drive has no snapshot yet (or
+    // when Drive itself is unavailable). Pulls the same shape
+    // runDriveConfigSync wrote.
+    if ((!parsed || !parsed.config)
+        && window.Minerva && Minerva.pg
+        && Minerva.pg.isEnabled && Minerva.pg.isEnabled()) {
+      try {
+        var rows = await Minerva.pg.getRows('_settings');
+        if (rows && rows.length) {
+          var hit = rows.filter(function (r) { return r.id === 'minerva-config'; })[0];
+          if (hit && hit.value && hit.value.config) parsed = hit.value;
+        }
+      } catch (e) { /* tolerate */ }
+    }
     if (!parsed || !parsed.config) return false;
     var current = readConfig();
     var merged = Object.assign({}, parsed.config, current);
