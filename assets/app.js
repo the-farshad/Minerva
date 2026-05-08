@@ -2964,6 +2964,14 @@
             : ((meta.headers || []).indexOf('category') >= 0 ? 'category' : 'kind')),
           '. Click a card to open the preview; the ⬇ icon downloads.'
         );
+        // Register the section's URL → row index for the preview
+        // modal so a tile click finds its row context (and triggers
+        // auto-mirror for paper PDFs) on the very first open. The
+        // table-view branch did this already; without it the grid's
+        // first click landed on the X-Frame fallback and only the
+        // rowResolver's IDB scan eventually rescued the render.
+        registerYouTubePlaylistContext(meta, filtered);
+        registerOfflineLookup(meta, filtered, sec.tab);
       } else if (mode === 'graph' && canGraph) {
         var graphHost = el('div', {
           class: 'graph-host', role: 'region',
