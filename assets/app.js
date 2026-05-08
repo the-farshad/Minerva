@@ -5411,11 +5411,39 @@
       onclick: function () { submit(); } }, opts.commitLabel || 'Save');
     var cancel = el('button', { class: 'btn btn-ghost', type: 'button',
       onclick: function () { close(); } }, 'Cancel');
+    // Markdown-aware multiline editors get a Preview/Edit toggle so
+    // the user can read formatted notes without leaving the
+    // overlay. Off by default (single-line text inputs don't need
+    // it).
+    var previewHost = null;
+    var previewBtn = null;
+    var inPreview = false;
+    if (opts.multiline && opts.markdown && M.render && M.render.renderMarkdown) {
+      previewHost = el('div', { class: 'editor-md-preview' });
+      previewHost.style.display = 'none';
+      previewBtn = el('button', { class: 'btn btn-ghost', type: 'button',
+        onclick: function () {
+          inPreview = !inPreview;
+          if (inPreview) {
+            var rendered = M.render.renderMarkdown(input.value || '');
+            previewHost.replaceChildren(rendered);
+            input.style.display = 'none';
+            previewHost.style.display = '';
+            previewBtn.textContent = 'Edit';
+          } else {
+            input.style.display = '';
+            previewHost.style.display = 'none';
+            previewBtn.textContent = 'Preview';
+          }
+        }
+      }, 'Preview');
+    }
     var panel = el('div', { class: 'modal-panel text-editor-panel',
       onclick: function (e) { e.stopPropagation(); } },
       el('h3', null, opts.title || 'Edit'),
       input,
-      el('div', { class: 'form-actions' }, cancel, commit)
+      previewHost,
+      el('div', { class: 'form-actions' }, cancel, previewBtn, commit)
     );
     function submit() {
       if (done) return;
@@ -5439,6 +5467,11 @@
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     setTimeout(function () { try { input.focus(); input.select(); } catch (e) {} }, 0);
+    if (opts.startInPreview && previewBtn) {
+      // Defer to the next tick so the layout has mounted before we
+      // toggle the preview swap.
+      setTimeout(function () { previewBtn.click(); }, 0);
+    }
   }
 
   // Multiselect chip overlay. Opts:
@@ -6596,6 +6629,44 @@
       return tile;
     }
 
+    function readGroupSort(tab, gk) {
+      try {
+        var raw = JSON.parse(localStorage.getItem('minerva.groupsort.' + tab) || '{}');
+        return raw[gk] || 'default';
+      } catch (e) { return 'default'; }
+    }
+    function writeGroupSort(tab, gk, sort) {
+      try {
+        var raw = JSON.parse(localStorage.getItem('minerva.groupsort.' + tab) || '{}');
+        if (sort && sort !== 'default') raw[gk] = sort;
+        else delete raw[gk];
+        localStorage.setItem('minerva.groupsort.' + tab, JSON.stringify(raw));
+      } catch (e) {}
+    }
+    function applyGroupSort(rs, sort) {
+      var s = rs.slice();
+      if (sort === 'title-asc') {
+        s.sort(function (a, b) {
+          return String(a.title || a.name || '').toLowerCase()
+            .localeCompare(String(b.title || b.name || '').toLowerCase());
+        });
+      } else if (sort === 'title-desc') {
+        s.sort(function (a, b) {
+          return String(b.title || b.name || '').toLowerCase()
+            .localeCompare(String(a.title || a.name || '').toLowerCase());
+        });
+      } else if (sort === 'newest') {
+        s.sort(function (a, b) {
+          return String(b._updated || '').localeCompare(String(a._updated || ''));
+        });
+      } else if (sort === 'oldest') {
+        s.sort(function (a, b) {
+          return String(a._updated || '').localeCompare(String(b._updated || ''));
+        });
+      }
+      return s;
+    }
+
     var wrap = el('div', { class: 'tiles-wrap' });
     if (groupCol) {
       var byGroup = {};
@@ -6606,7 +6677,8 @@
         byGroup[key].push(r);
       });
       order.forEach(function (key) {
-        var groupRows = byGroup[key];
+        var currentSort = readGroupSort(tab, key);
+        var groupRows = applyGroupSort(byGroup[key], currentSort);
         var isCol = collapsed.has(key);
         var head = el('div', { class: 'tiles-group-head' });
         var caret = el('button', {
@@ -6788,6 +6860,30 @@
           head.appendChild(catBtn);
         }
 
+        // Per-group sort dropdown — Default / Title A–Z / Title Z–A
+        // / Newest / Oldest. Persisted per (tab, group key) in
+        // localStorage so navigating away and back keeps the choice.
+        var sortSel = document.createElement('select');
+        sortSel.className = 'tiles-group-sort';
+        sortSel.title = 'Sort items in "' + key + '"';
+        [
+          { v: 'default',    label: 'Default' },
+          { v: 'title-asc',  label: 'Title A–Z' },
+          { v: 'title-desc', label: 'Title Z–A' },
+          { v: 'newest',     label: 'Newest first' },
+          { v: 'oldest',     label: 'Oldest first' }
+        ].forEach(function (opt) {
+          var o = document.createElement('option');
+          o.value = opt.v; o.textContent = opt.label;
+          if (opt.v === currentSort) o.selected = true;
+          sortSel.appendChild(o);
+        });
+        sortSel.addEventListener('change', function () {
+          writeGroupSort(tab, key, sortSel.value);
+          if (refresh) refresh();
+        });
+        head.appendChild(sortSel);
+
         // Per-group Notes — one markdown blob per (tab, group key)
         // so the user can attach a description / running notes to a
         // whole playlist or category. Persisted to localStorage,
@@ -6812,6 +6908,8 @@
               placeholder: 'Markdown notes for this playlist / category. Cmd/Ctrl-Enter to save.',
               commitLabel: 'Save',
               multiline: true,
+              markdown: true,
+              startInPreview: !!existingGroupNotes,
               onCommit: function (txt) {
                 try {
                   if (txt) localStorage.setItem(notesKey, txt);

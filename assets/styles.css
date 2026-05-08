@@ -5559,6 +5559,33 @@ table.rows.rows-grouped tr.row-group-head td {
   resize: vertical;
   min-height: 8rem;
 }
+.editor-md-preview {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  background: var(--surface);
+  min-height: 8rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.editor-md-preview p:first-child { margin-top: 0; }
+.editor-md-preview p:last-child  { margin-bottom: 0; }
+.editor-md-preview pre {
+  background: var(--surface-2);
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.tiles-group-sort {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.tiles-group-sort:hover { border-color: var(--accent); }
 .tiles-group-notes.has-content { color: var(--accent); }
 .tiles-group-notes.has-content::after {
   content: '';
