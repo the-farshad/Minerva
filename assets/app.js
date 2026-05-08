@@ -7260,44 +7260,45 @@
         wrap.appendChild(head);
         if (!isCol) {
           var grid = el('div', { class: 'tiles-grid' });
-          // Drag-drop reorder is enabled only when no automatic
-          // sort is active — once the user picks Title A-Z etc.,
-          // moving a tile by hand wouldn't survive the next
-          // sort. Switch back to "Default" to drag-drop.
-          var canDrag = currentSort === 'default';
+          // Drag-drop reorder is always available — when the user
+          // drops a tile we switch the group's sort back to Default
+          // so the manual order applies. No "this is hidden until
+          // you change the sort dropdown" hide-and-seek.
           var draggedId = null;
           groupRows.forEach(function (r) {
             var tile = tileFor(r);
-            if (canDrag) {
-              tile.draggable = true;
-              tile.dataset.rowId = r.id;
-              tile.addEventListener('dragstart', function (e) {
-                draggedId = r.id;
-                tile.classList.add('is-dragging');
-                if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-              });
-              tile.addEventListener('dragend', function () {
-                tile.classList.remove('is-dragging');
-                draggedId = null;
-              });
-              tile.addEventListener('dragover', function (e) {
-                if (!draggedId || draggedId === r.id) return;
-                e.preventDefault();
-                if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-              });
-              tile.addEventListener('drop', function (e) {
-                if (!draggedId || draggedId === r.id) return;
-                e.preventDefault();
-                var ids = groupRows.map(function (gr) { return gr.id; });
-                var fromIdx = ids.indexOf(draggedId);
-                var toIdx = ids.indexOf(r.id);
-                if (fromIdx < 0 || toIdx < 0) return;
-                ids.splice(fromIdx, 1);
-                ids.splice(toIdx, 0, draggedId);
-                writeGroupOrder(tab, key, ids);
-                if (refresh) refresh();
-              });
-            }
+            tile.draggable = true;
+            tile.dataset.rowId = r.id;
+            tile.addEventListener('dragstart', function (e) {
+              draggedId = r.id;
+              tile.classList.add('is-dragging');
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+            });
+            tile.addEventListener('dragend', function () {
+              tile.classList.remove('is-dragging');
+              draggedId = null;
+            });
+            tile.addEventListener('dragover', function (e) {
+              if (!draggedId || draggedId === r.id) return;
+              e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+            });
+            tile.addEventListener('drop', function (e) {
+              if (!draggedId || draggedId === r.id) return;
+              e.preventDefault();
+              var ids = groupRows.map(function (gr) { return gr.id; });
+              var fromIdx = ids.indexOf(draggedId);
+              var toIdx = ids.indexOf(r.id);
+              if (fromIdx < 0 || toIdx < 0) return;
+              ids.splice(fromIdx, 1);
+              ids.splice(toIdx, 0, draggedId);
+              // Snap the per-group sort back to default so the
+              // manual order isn't immediately re-shuffled by the
+              // current automatic sort.
+              writeGroupSort(tab, key, 'default');
+              writeGroupOrder(tab, key, ids);
+              if (refresh) refresh();
+            });
             grid.appendChild(tile);
           });
           wrap.appendChild(grid);
@@ -8770,53 +8771,45 @@
       }
       var blob = new Blob(chunks, { type: contentType });
 
-      job.setStatus('Saving locally…');
-      var hostPath = '';
-      var idbStored = false;
-      var localPath = '';
-      // Storage routing, in priority order:
-      //   1. Local-disk mirror (FS Access API) — if the user picked
-      //      a folder via Settings → Local-disk mirror. Files land
-      //      in <folder>/videos/<playlist>/<title>.mp4 on their
-      //      own machine; nothing on the droplet's tiny disk.
-      //   2. Helper host volume — /file/save on whatever helper
-      //      they've configured.
-      //   3. IndexedDB fallback — only when the helper is
-      //      unreachable.
+      // Storage routing, Drive-first:
+      //   1. Drive — primary store. Uploaded for every download
+      //      so the offline copy survives any single device
+      //      losing its cache. The droplet's small disk never
+      //      holds a copy.
+      //   2. Local-disk mirror (FS Access API) — extra copy on
+      //      the user's chosen folder when they've picked one.
+      //      Reads prefer this when present (no Drive round-trip).
+      //   3. IndexedDB — only kicked in when both the Drive and
+      //      local-disk paths fail. Last resort so the user
+      //      isn't left empty-handed.
       var stem0 = String(row.title || row.id || filename).replace(/[^\w.\- ]+/g, '_').slice(0, 100);
       var ext0 = (filename.match(/\.[A-Za-z0-9]{2,5}$/) || [''])[0];
       if (ext0 && !stem0.toLowerCase().endsWith(ext0.toLowerCase())) stem0 += ext0;
       var pl = String(row.playlist || '').trim()
         .replace(/[^\w.\- ]+/g, '_').slice(0, 80);
-      var nameForSaveLocal = pl ? pl + '/' + stem0 : stem0;
+      var nameForSave = pl ? pl + '/' + stem0 : stem0;
+
+      var driveFileId = '';
+      var localPath = '';
+      var idbStored = false;
+
+      job.setStatus('Uploading to Drive…');
+      try { driveFileId = await uploadOfflineToDrive(blob, stem0 || filename); }
+      catch (e) { console.warn('[Minerva yt-dlp drive upload]', e); }
+
+      // Local-disk mirror (best-effort). Doesn't block if Drive
+      // succeeded; surfaces a status update and continues on
+      // failure rather than rolling back the whole download.
       try {
         if (Minerva.localMirror && Minerva.localMirror.supported && await Minerva.localMirror.handle()) {
           job.setStatus('Saving to local-disk mirror…');
-          localPath = await Minerva.localMirror.save('videos', nameForSaveLocal, blob);
+          localPath = await Minerva.localMirror.save('videos', nameForSave, blob);
         }
-      } catch (e) { /* fall through to host */ }
-      if (localPath) {
-        // Successful local save — skip the host upload entirely;
-        // playback reads from the local mirror via FS Access.
-      } else
-      try {
-        // Group downloads under a per-playlist subfolder when the
-        // section carries a `playlist` column. Browsing
-        // ~/Minerva/videos/<playlist>/<title>.mp4 in a file
-        // manager mirrors how the rows are grouped in the app.
-        var pl = String(row.playlist || '').trim()
-          .replace(/[^\w.\- ]+/g, '_').slice(0, 80);
-        var nameForSave = pl ? pl + '/' + stem0 : stem0;
-        var saveResp = await fetch(
-          endpoint + '/file/save?kind=videos&name=' + encodeURIComponent(nameForSave),
-          { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
-            body: await blob.arrayBuffer() }
-        );
-        var saveJson = await saveResp.json();
-        if (!saveJson.ok) throw new Error(saveJson.error || ('host save ' + saveResp.status));
-        hostPath = saveJson.path;
-      } catch (hostErr) {
-        job.setStatus('Helper unreachable — saving to browser storage…');
+      } catch (e) { console.warn('[Minerva yt-dlp local mirror]', e); }
+
+      // IDB fallback — only when neither remote nor local landed.
+      if (!driveFileId && !localPath) {
+        job.setStatus('Drive + local mirror unavailable — saving to browser storage…');
         try {
           await M.db.putVideo(tab, row.id, {
             blob: blob,
@@ -8826,18 +8819,11 @@
           });
           idbStored = true;
         } catch (idbErr) {
-          throw new Error('Host save failed (' + (hostErr && hostErr.message || hostErr)
-            + ') and browser storage failed (' + (idbErr && idbErr.message || idbErr) + ').');
+          throw new Error('Drive upload failed and browser storage failed: '
+            + (idbErr && idbErr.message || idbErr));
         }
       }
       var meta = await M.db.getMeta(tab);
-      var driveFileId = '';
-      if (cfg.uploadOfflineToDrive && idbStored) {
-        // Skip the Drive upload when the IDB store failed — we don't
-        // want to double-store a multi-GB video.
-        job.setStatus('Uploading to Drive…');
-        driveFileId = await uploadOfflineToDrive(blob, filename);
-      }
       if (meta && (meta.headers || []).indexOf('offline') >= 0) {
         // Re-fetch the canonical row before mutating to avoid clobbering
         // any other field that might have changed since the click. Only
