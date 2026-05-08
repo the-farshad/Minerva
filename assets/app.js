@@ -423,6 +423,11 @@
     parent.appendChild(f);
     setTimeout(function () { f.remove(); }, 3500);
   }
+  // Cross-module flash — the preview module surfaces save / watch
+  // errors through this so users see the actual reason instead of
+  // a tooltip on the button.
+  window.Minerva = window.Minerva || {};
+  window.Minerva.flash = function (msg, kind) { flash(document.body, msg, kind); };
 
   function field(label, input, hint) {
     var id = 'f-' + Math.random().toString(36).slice(2, 8);
@@ -13127,7 +13132,16 @@
     // Skip the cold-boot Drive-config probe when we just ran the full
     // bootstrap above; finishOAuthBootstrap already pulled the file.
     if (!redirectToken) {
-      loadDriveConfigIfPresent().catch(function () { /* ignore */ });
+      // Await the pull so a fresh boot on a different device picks
+      // up settings from Drive before any section render reads
+      // them. When the pull actually changed local state, re-route
+      // so the rendered surfaces reflect the new values.
+      try {
+        var cfgLoaded = await loadDriveConfigIfPresent();
+        if (cfgLoaded && typeof route === 'function') {
+          try { await route(); } catch (e) {}
+        }
+      } catch (e) { /* ignore */ }
     }
 
     // Restore last view if the user landed on a bare URL. Settings is

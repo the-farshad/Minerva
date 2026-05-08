@@ -376,15 +376,25 @@
         var info = await saveToHost(kind, suggested, item.url);
         if (info && info.path) {
           saveBtn.textContent = '✓ Saved';
-          saveBtn.title = 'Saved to ' + info.path + (info.in_container
-            ? ' (visible at ~/Minerva on your host)'
-            : ' (file manager opened)');
+          saveBtn.title = 'Saved to ' + info.path;
+          // Surface the path in a flash too so the user sees the
+          // actual host location even if they don't hover.
+          if (window.Minerva && Minerva.flash) {
+            Minerva.flash('Saved to ' + info.path);
+          }
         } else {
           saveBtn.textContent = '✗ Failed';
+          if (window.Minerva && Minerva.flash) {
+            Minerva.flash('Save returned no path.', 'error');
+          }
         }
       } catch (e) {
-        saveBtn.textContent = '✗ Failed';
-        saveBtn.title = String(e && e.message || e);
+        var msg = (e && e.message) || String(e);
+        saveBtn.textContent = '✗ ' + msg.slice(0, 30);
+        saveBtn.title = msg;
+        if (window.Minerva && Minerva.flash) {
+          Minerva.flash('Save failed: ' + msg, 'error');
+        }
       } finally {
         setTimeout(function () {
           saveBtn.disabled = false;
@@ -483,7 +493,18 @@
             }
             var stamp = new Date();
             watchBtn.textContent = '✓ ' + stamp.getHours() + ':' + String(stamp.getMinutes()).padStart(2, '0');
-          } catch (e) { /* file briefly locked during save — try next tick */ }
+          } catch (e) {
+            // Surface the actual error — silent failure is what made
+            // the user think Watch wasn't working at all. The handle
+            // briefly going stale during a save is benign and the
+            // next tick succeeds, so we keep polling either way.
+            var msg = (e && e.message) || String(e);
+            watchBtn.textContent = '✗ ' + msg.slice(0, 24);
+            watchBtn.title = 'Last sync failed: ' + msg + ' (still watching)';
+            if (window.Minerva && Minerva.flash) {
+              Minerva.flash('Watch sync failed: ' + msg, 'error');
+            }
+          }
         }, 2500);
       } catch (e) {
         if (e && e.name === 'AbortError') return;
