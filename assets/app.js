@@ -5525,6 +5525,17 @@
     if (!entries.length) {
       entries.push({ k: '(no fields)', v: 'This row has no populated fields yet.' });
     }
+    // Synthesise a "saved at" entry when the row carries a
+    // host:<path> breadcrumb. Lets the user see and copy the
+    // on-disk location without a separate kebab item.
+    var infoHostPath = (function () {
+      var off = String(row.offline || '').split(' · ');
+      for (var i = 0; i < off.length; i++) {
+        var p = off[i].trim();
+        if (p.indexOf('host:') === 0) return p.slice(5).trim();
+      }
+      return '';
+    })();
     var dl = el('dl', { class: 'row-info-dl' });
     entries.forEach(function (e) {
       dl.appendChild(el('dt', null, e.k));
@@ -5533,6 +5544,20 @@
       var dd = el('dd', null, val);
       dl.appendChild(dd);
     });
+    if (infoHostPath) {
+      dl.appendChild(el('dt', null, 'saved at'));
+      var copyBtn = el('button', {
+        type: 'button', class: 'btn btn-ghost btn-inline',
+        title: 'Copy path to clipboard',
+        onclick: function (e) {
+          e.preventDefault();
+          try { navigator.clipboard && navigator.clipboard.writeText(infoHostPath); } catch (er) {}
+          flash(document.body, 'Path copied: ' + infoHostPath, 'ok');
+        }
+      }, 'Copy');
+      dl.appendChild(el('dd', { class: 'row-info-path' },
+        el('code', null, infoHostPath), ' ', copyBtn));
+    }
     var panel = el('div', { class: 'modal-panel row-info-panel',
       onclick: function (e) { e.stopPropagation(); }
     },
@@ -6152,16 +6177,14 @@
           menu.appendChild(tileMenuItem('pencil', 'Edit row', false, function () {
             if (typeof showRowDetail === 'function') showRowDetail(tab, r.id);
           }));
-          // Surface the on-disk location for host-saved files. Two
-          // affordances: "Show file path" copies the path to the
-          // clipboard and shows it in a flash; "Reveal" asks the
-          // helper to open the containing folder in the OS file
-          // manager (no-op when the helper runs inside Docker).
+          // Reveal-in-file-manager is the single host-file action
+          // on the kebab. Show-path lives on the row's Edit / Info
+          // popup so we don't have two near-identical entries here.
+          // When the helper runs inside Docker its xdg-open can't
+          // reach the host display server; in that case we trigger
+          // a browser download of the file via /file/serve so the
+          // user gets a copy they can open from their Downloads.
           if (hostPath) {
-            menu.appendChild(tileMenuItem('file-text', 'Show file path', false, function () {
-              try { navigator.clipboard && navigator.clipboard.writeText(hostPath); } catch (e) {}
-              flash(document.body, 'Saved at: ' + hostPath, 'ok');
-            }));
             menu.appendChild(tileMenuItem('folder-open', 'Reveal in file manager', false, async function () {
               var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
               if (!endpoint) {
@@ -6175,8 +6198,15 @@
                 var json = await resp.json();
                 if (!json.ok) throw new Error(json.error || ('reveal ' + resp.status));
                 if (json.in_container) {
-                  flash(document.body, 'Helper runs inside Docker — file is at ' + json.path
-                    + ' on the host. Open it from your terminal.', 'ok');
+                  // Helper can't open the host's file manager from
+                  // inside a container. Stream the file through the
+                  // browser as a download so the user lands the
+                  // file in their local Downloads folder.
+                  var a = document.createElement('a');
+                  a.href = endpoint + '/file/serve?path=' + encodeURIComponent(json.path);
+                  a.download = (hostPath.split('/').pop() || 'file');
+                  document.body.appendChild(a); a.click(); a.remove();
+                  flash(document.body, 'Helper runs in Docker — downloading the file instead.', 'ok');
                 } else {
                   flash(document.body, 'Opened folder for ' + json.path, 'ok');
                 }
@@ -9152,9 +9182,53 @@
           el('button', { class: 'btn btn-ghost', type: 'button',
             title: 'Unregister the service worker, clear all caches, and hard-reload. Use when "Connect Google" or other features stop responding because an old build is still running.',
             onclick: function () { void forceUpdate(); }
-          }, M.render.icon('refresh-cw'), ' Force update')
+          }, M.render.icon('refresh-cw'), ' Force update'),
+          el('button', { class: 'btn btn-ghost', type: 'button',
+            title: 'Drop every IDB-stored video blob, ask the helper to wipe ~/Minerva/videos and ~/Minerva/papers, and clear the offline column on every row. Use when offline state is out of sync with what is actually on disk.',
+            onclick: function () { void resetAllOffline(); }
+          }, M.render.icon('eraser'), ' Reset offline copies')
         )
       );
+    }
+
+    async function resetAllOffline() {
+      if (!confirm('Wipe every locally-saved video / paper and clear all offline flags? Rows themselves are kept; you can re-download later.')) return;
+      var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
+      var summary = { idb: 0, host: 0, rows: 0, errors: [] };
+      try {
+        var allMeta = await M.db.getAllMeta();
+        for (var i = 0; i < allMeta.length; i++) {
+          var m = allMeta[i];
+          var rows = await M.db.getAllRows(m.tab);
+          for (var j = 0; j < rows.length; j++) {
+            var r = rows[j];
+            if (r._deleted) continue;
+            try { await M.db.deleteVideo(m.tab, r.id); summary.idb++; } catch (e) {}
+            if (r.offline) {
+              r.offline = '';
+              r._dirty = 1;
+              r._updated = new Date().toISOString();
+              await M.db.upsertRow(m.tab, r);
+              summary.rows++;
+            }
+          }
+        }
+        if (endpoint) {
+          try {
+            var resp = await fetch(endpoint + '/file/clean', { method: 'POST' });
+            var json = await resp.json();
+            if (json.ok) summary.host = json.removed || 0;
+            if (json.errors && json.errors.length) summary.errors = json.errors.slice(0, 5);
+          } catch (e) { summary.errors.push('helper: ' + (e && e.message || e)); }
+        }
+        schedulePush();
+        flash(document.body, 'Reset done — cleared ' + summary.idb + ' IDB blob(s), '
+          + summary.host + ' host file(s), ' + summary.rows + ' row offline flag(s).'
+          + (summary.errors.length ? ' (errors: ' + summary.errors.join('; ') + ')' : ''), 'ok');
+        if (typeof route === 'function') await route();
+      } catch (err) {
+        flash(document.body, 'Reset failed: ' + (err && err.message || err), 'error');
+      }
     }
 
     // Defer to the global helper so the same flow is reachable from

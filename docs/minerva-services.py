@@ -927,6 +927,41 @@ def file_serve():
     return resp
 
 
+@app.route("/file/clean", methods=["POST", "OPTIONS"])
+def file_clean():
+    """Wipe every file under MINERVA_FILES_ROOT/<kind>.
+
+    Used by the Minerva "Reset offline" maintenance action when the
+    user wants to clear all locally-saved videos / papers in one
+    sweep without iterating row by row.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    kind = (request.args.get("kind") or "").strip().lower()
+    targets = []
+    if kind:
+        targets.append(MINERVA_FILES_ROOT / kind)
+    else:
+        for child in MINERVA_FILES_ROOT.iterdir():
+            if child.is_dir():
+                targets.append(child)
+    removed = 0
+    errors = []
+    for d in targets:
+        if not d.exists():
+            continue
+        try:
+            d_resolved = d.resolve()
+            d_resolved.relative_to(MINERVA_FILES_ROOT.resolve())
+        except Exception:
+            continue
+        for path in d_resolved.glob("**/*"):
+            if path.is_file():
+                try: path.unlink(); removed += 1
+                except Exception as exc: errors.append(f"{path}: {exc}")
+    return jsonify({"ok": True, "removed": removed, "errors": errors})
+
+
 @app.route("/file/delete", methods=["POST", "OPTIONS"])
 def file_delete():
     if request.method == "OPTIONS":
