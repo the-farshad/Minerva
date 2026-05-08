@@ -9961,6 +9961,7 @@
         renderVersionBadge()
       ),
       renderAuthErrorBanner(),
+      renderMixedContentBanner(),
       // Lead + checklist now live inside the Connection panel so
       // the layout (TOC + body) starts at a stable Y across tabs.
       el('div', { class: 'settings-layout' },
@@ -10000,6 +10001,38 @@
   // Sticky error banner rendered above the Settings checklist when
   // the most recent sign-in attempt failed. Stays on screen until the
   // user dismisses it or a successful Connect clears the state.
+  function renderMixedContentBanner() {
+    if (location.protocol !== 'https:') return null;
+    var c = readConfig();
+    var helper = String(c.ytDlpServer || '').trim();
+    if (!helper) return null;
+    if (!/^http:\/\//i.test(helper)) return null;
+    // Map http://127.0.0.1:8765/  → http://127.0.0.1:8765/app/
+    // so the user can click straight through to a same-origin
+    // session that will reach the helper without mixed-content
+    // blocking.
+    var helperApp = helper.replace(/\/+$/, '') + '/app/';
+    var box = el('div', { class: 'auth-error-banner', role: 'alert' });
+    box.appendChild(el('div', { class: 'auth-error-head' },
+      M.render.icon('alert-triangle'),
+      el('strong', null, 'Mixed-content block detected'),
+      el('button', {
+        type: 'button',
+        class: 'auth-error-dismiss',
+        title: 'Dismiss for this session',
+        onclick: function () { box.remove(); }
+      }, '×')
+    ));
+    box.appendChild(el('div', { class: 'auth-error-msg' },
+      'You\'re viewing Minerva over HTTPS but your helper is at ',
+      el('code', null, helper),
+      ' (HTTP). Browsers refuse cross-protocol fetches, so Save / CORS proxy / Test all return "Failed to fetch". Open Minerva from the helper itself instead: ',
+      el('a', { href: helperApp, class: 'btn', style: 'margin-left:0.4rem;' },
+        'Switch to ' + helperApp)
+    ));
+    return box;
+  }
+
   function renderAuthErrorBanner() {
     var msg = getAuthError();
     if (!msg) return null;
