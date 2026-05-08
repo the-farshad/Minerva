@@ -927,6 +927,27 @@ def file_serve():
     return resp
 
 
+@app.route("/file/delete", methods=["POST", "OPTIONS"])
+def file_delete():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    raw = (request.args.get("path") or "").strip()
+    if not raw:
+        return (jsonify({"ok": False, "error": "Missing 'path'."}), 400, _cors_dict())
+    p = pathlib.Path(raw).expanduser()
+    try:
+        p_resolved = p.resolve()
+        p_resolved.relative_to(MINERVA_FILES_ROOT.resolve())
+    except Exception:
+        return (jsonify({"ok": False, "error": "Path outside files root."}), 400, _cors_dict())
+    try:
+        if p_resolved.exists():
+            p_resolved.unlink()
+        return jsonify({"ok": True, "path": str(p_resolved)})
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": f"unlink failed: {exc}"}), 500, _cors_dict())
+
+
 @app.route("/file/reveal", methods=["POST", "OPTIONS"])
 def file_reveal():
     if request.method == "OPTIONS":

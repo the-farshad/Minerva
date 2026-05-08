@@ -6088,10 +6088,20 @@
       // mirror-to-Drive flow (format: "yt-dlp · 12.3 MB · drive:1abc…").
       var driveIdMatch = String(r.offline || '').match(/drive:([\w-]{20,})/);
       var driveFileId = driveIdMatch ? driveIdMatch[1] : '';
-      // Host fallback marker — written by the IDB-quota fallback path
-      // in downloadOfflineViaYtDlp. Format: "host:/srv/files/videos/x.mp4".
-      var hostMatch = String(r.offline || '').match(/(?:^|\s)host:(\S+)/);
-      var hostPath = hostMatch ? hostMatch[1] : '';
+      // Host marker — written by downloadOfflineViaYtDlp's host-volume
+      // path. Marker format: "host:<full path>" optionally followed
+      // by " · drive:<fileId>". Paths can contain spaces (titles
+      // become filenames), so split on the marker's own delimiter
+      // rather than on whitespace.
+      var hostPath = (function () {
+        var off = String(r.offline || '');
+        var parts = off.split(' · ');
+        for (var i = 0; i < parts.length; i++) {
+          var p = parts[i].trim();
+          if (p.indexOf('host:') === 0) return p.slice(5).trim();
+        }
+        return '';
+      })();
       function hostServeUrl() {
         if (!hostPath) return '';
         var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
@@ -6180,7 +6190,7 @@
               saveTileToHost();
             }));
           }
-          if (rowHasBlob) {
+          if (rowHasBlob || hostPath) {
             menu.appendChild(tileMenuItem('cloud-off', 'Remove offline copy', false, function () {
               dropOfflineBlob();
             }));
@@ -6215,6 +6225,18 @@
       async function dropOfflineBlob() {
         if (!confirm('Drop the local offline copy? The row stays — you can re-download later.')) return;
         try { await M.db.deleteVideo(tab, r.id); } catch (err) {}
+        // Host-saved video — delete the file from the helper's
+        // volume so the disk is reclaimed too. Best-effort: a
+        // missing file or unreachable helper still clears the row.
+        if (hostPath) {
+          try {
+            var endpoint = String(readConfig().ytDlpServer || '').trim().replace(/\/+$/, '');
+            if (endpoint) {
+              await fetch(endpoint + '/file/delete?path=' + encodeURIComponent(hostPath),
+                { method: 'POST' });
+            }
+          } catch (e) { /* ignore */ }
+        }
         if (hasOffline && r.offline) {
           pushUndo({ kind: 'edit', tab: tab, rowId: r.id, field: 'offline', prevValue: r.offline });
           r.offline = '';
@@ -10900,10 +10922,18 @@
     });
 
     addBtn.addEventListener('click', async function () {
-      // Click before the metadata round-trip finishes used to capture
-      // the URL-only fallback (kind:'article', url:raw) and create an
-      // empty tile. Wait for any in-flight lookup so fetched is the
-      // real metadata before the row is built.
+      // If the user typed a URL and clicked Add immediately (faster
+      // than the 350ms debounce), no lookup has been triggered yet
+      // and fetched is null — clicking would otherwise return
+      // silently. Cancel the debounce and trigger the lookup right
+      // away, then await it.
+      var raw = input.value.trim();
+      if (raw && !pendingLookup && !fetched) {
+        if (debounce) { clearTimeout(debounce); debounce = null; }
+        addBtn.disabled = true;
+        setBtnLabel('Looking up metadata…');
+        await lookup();
+      }
       if (pendingLookup) {
         addBtn.disabled = true;
         setBtnLabel('Waiting for metadata…');
