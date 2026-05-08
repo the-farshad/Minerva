@@ -4206,6 +4206,17 @@ table.kv tbody tr:hover { background: var(--surface); }
   max-width: 520px;
   width: 100%;
 }
+/* Preview panel overrides the generic .modal-panel cap. The
+   compound selector wins over the single-class .modal-panel rule
+   regardless of which appears later in the file. */
+.modal-panel.preview-panel {
+  max-width: 100vw;
+  width: 100vw;
+  height: 85vh;
+  max-height: 85vh;
+  padding: 0;
+  border-radius: 0;
+}
 .help-overlay { align-items: center; padding: 1rem; }
 .help-panel { max-width: 380px; }
 .help-panel h3,
