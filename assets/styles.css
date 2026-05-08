@@ -137,12 +137,15 @@
 
 html { scroll-behavior: smooth; }
 html {
-  /* Reserve space for the vertical scrollbar at all times. Without this
-     the viewport width changes by ~15px depending on whether the
-     current page is tall enough to need a scrollbar — switching
-     between Settings sub-sections (e.g. Connection ↔ Postgres mirror)
-     made the whole layout shift sideways every click. */
+  /* Reserve space for the vertical scrollbar at all times. Without
+     this the viewport width changes by ~15px depending on whether
+     the current page is tall enough to need a scrollbar — every
+     Settings tab switch shoved the centered max-width layout
+     sideways. scrollbar-gutter handles modern browsers; the
+     overflow-y: scroll fallback covers older Chromes/Safaris that
+     don't honour the gutter property. */
   scrollbar-gutter: stable;
+  overflow-y: scroll;
 }
 body {
   margin: 0;
