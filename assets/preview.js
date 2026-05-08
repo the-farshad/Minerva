@@ -396,6 +396,37 @@
     head.appendChild(saveBtn);
     head.appendChild(replaceBtn);
 
+    // "Download offline" — shown for YouTube items so a video that
+    // refuses iframe embedding (Error 153, blocked by uploader)
+    // can still be saved locally and watched. Visible when:
+    //   - the item is a YouTube URL
+    //   - we have a row context for it
+    //   - an external downloader callback is wired
+    var downloadBtn = document.createElement('button');
+    downloadBtn.type = 'button';
+    downloadBtn.className = 'btn btn-ghost preview-download-btn';
+    downloadBtn.title = 'Save this video to ~/Minerva/videos so it plays offline (and around any embed block)';
+    downloadBtn.textContent = 'Download offline';
+    downloadBtn.style.display = 'none';
+    downloadBtn.addEventListener('click', async function () {
+      if (!videoDownloader || !activeRowCtx) return;
+      var orig = downloadBtn.textContent;
+      downloadBtn.disabled = true;
+      downloadBtn.textContent = 'Downloading…';
+      try {
+        await videoDownloader(activeRowCtx.tab, activeRowCtx.rowId);
+        downloadBtn.textContent = '✓ Saved';
+      } catch (e) {
+        downloadBtn.textContent = '✗ ' + (e && e.message || e);
+      } finally {
+        setTimeout(function () {
+          downloadBtn.disabled = false;
+          downloadBtn.textContent = orig;
+        }, 4000);
+      }
+    });
+    head.appendChild(downloadBtn);
+
     // "Watch" — Chromium-only auto-replace via the File System
     // Access API. The user picks an annotated PDF on disk; we
     // poll its lastModified every 2.5s and re-upload+remount on
@@ -960,6 +991,12 @@
       saveBtn.style.display = savable ? '' : 'none';
       replaceBtn.style.display = (isPdfNow && earlyHit && earlyHit.tab && earlyHit.rowId
         && pdfAttachLocal && pdfBlobLoader) ? '' : 'none';
+      // Download offline — visible on YouTube items with row ctx
+      // when no IDB / host blob exists yet, so an embed-blocked
+      // video can be saved locally and re-played offline.
+      var alreadyHaveBlob = !!(earlyHit && earlyHit.driveFileId);
+      downloadBtn.style.display = (isYt && earlyHit && earlyHit.tab && earlyHit.rowId
+        && videoDownloader && !alreadyHaveBlob) ? '' : 'none';
       // Watch is a strict superset of Replace's preconditions plus
       // the FS Access API. Hide it on Firefox / Safari rather than
       // disabling — the title attribute is the docs.
@@ -1510,6 +1547,10 @@
   function setSaveToHost(fn) {
     saveToHost = (typeof fn === 'function') ? fn : null;
   }
+  var videoDownloader = null;
+  function setVideoDownloader(fn) {
+    videoDownloader = (typeof fn === 'function') ? fn : null;
+  }
 
   // Row picker callback. Returns a Promise that resolves to a chosen
   // row from any section ({tab, id, title, url}) or null on cancel.
@@ -1692,6 +1733,7 @@
     setPdfExtractor: setPdfExtractor,
     setPdfExtractDriveSaver: setPdfExtractDriveSaver,
     setSaveToHost: setSaveToHost,
+    setVideoDownloader: setVideoDownloader,
     setRowPicker: setRowPicker,
     setRowResolver: setRowResolver,
     setNotesProvider: setNotesProvider,

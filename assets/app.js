@@ -9846,7 +9846,18 @@
       return det;
     }
 
+    // Connection-panel-only intro + setup checklist. Used to live
+    // outside the settings layout (next to the page heading);
+    // moving them inside the panel keeps the TOC + body anchored at
+    // the same Y on every tab so switching doesn't visibly shift
+    // the layout up / down.
     var connectionPanel = el('div');
+    connectionPanel.appendChild(el('p', { class: 'lead' },
+      'Minerva keeps no secrets in its repo. The OAuth client is yours; remembered in this browser. ',
+      el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md',
+        target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough')
+    ));
+    connectionPanel.appendChild(renderSetupChecklist(cfg));
     connectionPanel.appendChild(form);
     connectionPanel.appendChild(status);
     // Drive-sync controls — manual escape hatches for when the
@@ -9945,16 +9956,8 @@
         renderVersionBadge()
       ),
       renderAuthErrorBanner(),
-      // The lead + setup checklist only render on the first (default)
-      // section; deeper pages skip them so the user sees just what
-      // they navigated to.
-      activeId === sections[0].id
-        ? el('p', { class: 'lead' },
-            'Minerva keeps no secrets in its repo. The OAuth client is yours; remembered in this browser. ',
-            el('a', { href: 'https://github.com/the-farshad/Minerva/blob/main/docs/setup-google-oauth.md', target: '_blank', rel: 'noopener' }, 'Detailed setup walkthrough')
-          )
-        : null,
-      activeId === sections[0].id ? renderSetupChecklist(cfg) : null,
+      // Lead + checklist now live inside the Connection panel so
+      // the layout (TOC + body) starts at a stable Y across tabs.
       el('div', { class: 'settings-layout' },
         toc,
         body
@@ -12971,6 +12974,24 @@
           path: saveJson.path,
           in_container: !!revealJson.in_container
         };
+      });
+    }
+    // Video downloader — preview.js calls this when the user
+    // clicks the "Download offline" button on a YouTube embed
+    // (e.g. one that's been blocked from embedding by the
+    // uploader). Falls back to Cobalt when yt-dlp isn't wired.
+    if (M.preview && typeof M.preview.setVideoDownloader === 'function') {
+      M.preview.setVideoDownloader(async function (tab, rowId) {
+        var row = await M.db.getRow(tab, rowId);
+        if (!row) throw new Error('Row gone.');
+        var cfg = readConfig();
+        if ((cfg.ytDlpServer || '').trim()) {
+          await downloadOfflineViaYtDlp(tab, row, null);
+        } else if ((cfg.cobaltEndpoint || '').trim()) {
+          await downloadOfflineViaCobalt(tab, row, null);
+        } else {
+          throw new Error('Set the yt-dlp server URL in Settings first.');
+        }
       });
     }
     // PDF auto-mirror on demand. Lets preview.js trigger a Drive

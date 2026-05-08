@@ -4157,44 +4157,48 @@ table.kv tbody tr:hover { background: var(--surface); }
 
 /* --- credential inputs with show/hide eye --------------- */
 .pwd-wrap {
-  display: inline-flex;
+  display: flex;
   align-items: stretch;
   gap: 0;
   width: 100%;
-  /* Stretch the wrapper so the input + eye button share the
-     same computed height regardless of their internal padding. */
-  min-height: 0;
+  /* Pin a concrete row height so the input and eye button render
+     identically regardless of font metrics or browser. The input
+     used to size by line-box height while the eye sized by its
+     own padding — they never matched. */
+  height: 2.4rem;
 }
 .pwd-wrap > input {
   flex: 1 1 auto;
   min-width: 0;
+  height: 100% !important;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   border-right: 0;
-  /* Box-sizing already from the global form input rule, but
-     declared again so the input's box equals the eye box. */
   box-sizing: border-box;
+  margin: 0;
+  padding: 0 0.6rem;
+  line-height: 1;
 }
 .pwd-toggle {
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 100%;
+  padding: 0;
   border: 1px solid var(--border);
+  border-left: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   background: var(--surface-2);
   color: var(--fg);
-  padding: 0 0.7rem;
-  /* Match the input's vertical metrics: align-self stretch fills
-     the wrapper's height, so the eye and the field finish exactly
-     flush at top and bottom. */
-  align-self: stretch;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  flex-shrink: 0;
+  box-sizing: border-box;
 }
 .pwd-toggle:hover { background: var(--surface); }
-.pwd-toggle svg { width: 1.05em; height: 1.05em; }
-.pwd-eye-icon { display: inline-flex; }
+.pwd-toggle svg { width: 1.05em; height: 1.05em; display: block; }
+.pwd-eye-icon { display: inline-flex; align-items: center; justify-content: center; }
 
 /* --- modal overlays (help, capture, search) --------------- */
 
