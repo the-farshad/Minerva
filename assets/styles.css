@@ -3635,16 +3635,22 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
 /* preview modal — default sizing favours the tall PDF layout. The
    preview-panel-yt modifier reshapes the panel for 16:9 video embeds
    so they don't render squashed inside a portrait box. */
-/* Preview overlay: zero padding so the panel reaches every edge. */
-.preview-overlay { padding: 0; align-items: stretch; }
+/* Preview overlay: full bleed horizontally, modest top padding so
+   the modal floats below the nav and isn't a full-screen takeover. */
+.preview-overlay {
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+}
 .preview-panel {
-  /* Take the entire viewport. Every previous attempt with a max-
-     width cap left a perceptible margin that the user kept asking
-     to remove. The Close / Esc keystroke is the only chrome that
-     needs to stay reachable, and that's inside the panel. */
-  max-width: 100vw;
+  /* Maximum *width* — fills the viewport edge to edge so a paper
+     reads with the most horizontal space possible — but height
+     stays at a reading proportion, not full-viewport. The user
+     wanted wider, not taller. */
   width: 100vw;
-  height: 100vh;
+  max-width: 100vw;
+  height: 85vh;
+  max-height: 85vh;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -3989,18 +3995,20 @@ table.rows .md-cell { -webkit-line-clamp: 3; line-clamp: 3; }
   max-width: 100%;
   overflow-x: clip;
 }
-/* Every direct settings panel uses the same content width so
-   switching tabs doesn't visibly shrink/expand the panel. The
-   global .form has max-width: var(--readw) for readable forms
-   elsewhere; inside Settings we let it fill the body cell so
-   Connection, Local store, Postgres mirror etc. all share one
-   width. */
+/* Every settings panel — and every direct child of the section —
+   takes the same width as the section's body cell. Without this,
+   .form (880px), .local-store (was 880px), and bare <div>
+   panels (~970px) rendered different widths and switching tabs
+   visibly jumped the page. */
+.settings-section,
+.settings-section > *,
 .settings-section .form,
 .settings-section .auth-status,
 .settings-section .local-store,
 .settings-section .tg-panel {
-  max-width: 100%;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .settings-section pre,
 .settings-section code,
