@@ -1,0 +1,43 @@
+import NextAuth from 'next-auth';
+import Google from 'next-auth/providers/google';
+import { DrizzleAdapter } from '@auth/drizzle-adapter';
+import { db, schema } from '@/db';
+
+const SCOPES = [
+  'openid',
+  'email',
+  'profile',
+  'https://www.googleapis.com/auth/drive.file',
+].join(' ');
+
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  adapter: DrizzleAdapter(db, {
+    usersTable: schema.users,
+    accountsTable: schema.accounts,
+    sessionsTable: schema.sessions,
+    verificationTokensTable: schema.verificationTokens,
+  }),
+  session: { strategy: 'database' },
+  providers: [
+    Google({
+      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET!,
+      authorization: {
+        params: {
+          scope: SCOPES,
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
+    }),
+  ],
+  callbacks: {
+    async session({ session, user }) {
+      // Surface the user id to client components so per-user
+      // queries can skip a re-fetch.
+      if (session.user) (session.user as { id?: string }).id = user.id;
+      return session;
+    },
+  },
+  pages: { signIn: '/sign-in' },
+});
