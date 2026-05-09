@@ -5,6 +5,7 @@ import { naturalCompare, cn } from '@/lib/utils';
 import { Plus, LayoutGrid, List } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { PreviewModal } from '@/components/preview-modal';
 
 type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
 type Section = {
@@ -23,7 +24,22 @@ export function SectionView({
 }) {
   const [rows, setRows] = useState<Row[]>(initialRows);
   const [mode, setMode] = useState<'list' | 'grid'>('list');
+  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string } | null>(null);
   const qc = useQueryClient();
+
+  function openPreview(r: Row) {
+    const url = String(r.data.url || '');
+    if (!url) return;
+    const offline = String(r.data.offline || '');
+    const drive = offline.match(/drive:([\w-]{20,})/);
+    const host = offline.split(' · ').map((s) => s.trim()).find((s) => s.startsWith('host:'));
+    setPreviewItem({
+      url,
+      title: String(r.data.title || r.data.name || ''),
+      driveFileId: drive ? drive[1] : undefined,
+      hostPath: host ? host.slice(5).trim() : undefined,
+    });
+  }
 
   const createRow = useMutation({
     mutationFn: async () => {
@@ -109,15 +125,16 @@ export function SectionView({
           Empty section. Click <strong>Add row</strong> to start.
         </p>
       ) : mode === 'list' ? (
-        <Table section={section} rows={sorted} />
+        <Table section={section} rows={sorted} onOpen={openPreview} />
       ) : (
-        <Grid section={section} rows={sorted} />
+        <Grid section={section} rows={sorted} onOpen={openPreview} />
       )}
+      <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
     </main>
   );
 }
 
-function Table({ section, rows }: { section: Section; rows: Row[] }) {
+function Table({ section, rows, onOpen }: { section: Section; rows: Row[]; onOpen: (r: Row) => void }) {
   const headers = section.schema.headers.filter((h) => !h.startsWith('_') && h !== 'id');
   return (
     <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
@@ -131,7 +148,11 @@ function Table({ section, rows }: { section: Section; rows: Row[] }) {
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.id} className="border-t border-zinc-100 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900">
+            <tr
+              key={r.id}
+              className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900"
+              onClick={() => onOpen(r)}
+            >
               {headers.map((h) => (
                 <td key={h} className="px-3 py-2">
                   {String(r.data[h] ?? '')}
@@ -145,7 +166,7 @@ function Table({ section, rows }: { section: Section; rows: Row[] }) {
   );
 }
 
-function Grid({ section, rows }: { section: Section; rows: Row[] }) {
+function Grid({ section, rows, onOpen }: { section: Section; rows: Row[]; onOpen: (r: Row) => void }) {
   const titleField = section.schema.headers.includes('title')
     ? 'title'
     : section.schema.headers.includes('name')
@@ -154,9 +175,11 @@ function Grid({ section, rows }: { section: Section; rows: Row[] }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
       {rows.map((r) => (
-        <div
+        <button
           key={r.id}
-          className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+          type="button"
+          onClick={() => onOpen(r)}
+          className="rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
         >
           <div className="text-sm font-medium">
             {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
@@ -164,7 +187,7 @@ function Grid({ section, rows }: { section: Section; rows: Row[] }) {
           <div className="mt-2 text-xs text-zinc-500">
             {new Date(r.updatedAt).toLocaleDateString()}
           </div>
-        </div>
+        </button>
       ))}
     </div>
   );
