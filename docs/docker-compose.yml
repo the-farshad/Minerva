@@ -89,6 +89,47 @@ services:
       retries: 3
       start_period: 5s
 
+  # Minerva v2 — Next.js multi-user app. Off by default in this
+  # base file; enable it via the `web` profile or by writing a
+  # docker-compose.override.yml with the secrets it needs:
+  #
+  #     docker compose --profile web up -d
+  #
+  # Required env (set in /etc/minerva/v2.env on the droplet):
+  #   AUTH_SECRET              openssl rand -base64 32
+  #   GOOGLE_OAUTH_CLIENT_ID   from Google Cloud Console (separate
+  #   GOOGLE_OAUTH_CLIENT_SECRET   from the SPA / oauth2-proxy clients)
+  #   NEXTAUTH_URL             https://<domain you'll point at v2>
+  minerva-web:
+    profiles: ["web"]
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    image: thefarshad/minerva-web:latest
+    container_name: minerva-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minerva-services:
+        condition: service_healthy
+    env_file:
+      - /etc/minerva/v2.env
+    environment:
+      DATABASE_URL: "postgres://minerva:minerva@postgres:5432/minerva"
+      HELPER_BASE_URL: "http://minerva-services:8765"
+      NODE_ENV: "production"
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    ports:
+      - "127.0.0.1:${MINERVA_WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/sign-in', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 volumes:
   minerva-pgdata:
     name: minerva-pgdata

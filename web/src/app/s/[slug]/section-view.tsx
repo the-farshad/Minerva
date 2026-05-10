@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import { naturalCompare, cn } from '@/lib/utils';
-import { Plus, LayoutGrid, List } from 'lucide-react';
+import { Plus, LayoutGrid, List, Trash2 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
+import { InlineCell, parseType } from '@/components/inline-cell';
 
 type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
 type Section = {
@@ -39,6 +40,24 @@ export function SectionView({
       driveFileId: drive ? drive[1] : undefined,
       hostPath: host ? host.slice(5).trim() : undefined,
     });
+  }
+
+  async function patchRow(rowId: string, patch: Record<string, unknown>) {
+    const r = await fetch(`/api/sections/${section.slug}/rows/${rowId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: patch }),
+    });
+    if (!r.ok) throw new Error(`save: ${r.status}`);
+    const next = (await r.json()) as Row;
+    setRows((rs) => rs.map((x) => (x.id === rowId ? next : x)));
+  }
+  async function deleteRow(rowId: string) {
+    if (!confirm('Delete this row?')) return;
+    const r = await fetch(`/api/sections/${section.slug}/rows/${rowId}`, { method: 'DELETE' });
+    if (!r.ok) { toast.error(`Delete failed: ${r.status}`); return; }
+    setRows((rs) => rs.filter((x) => x.id !== rowId));
+    qc.invalidateQueries({ queryKey: ['rows', section.slug] });
   }
 
   const createRow = useMutation({
@@ -125,39 +144,77 @@ export function SectionView({
           Empty section. Click <strong>Add row</strong> to start.
         </p>
       ) : mode === 'list' ? (
-        <Table section={section} rows={sorted} onOpen={openPreview} />
+        <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />
       ) : (
-        <Grid section={section} rows={sorted} onOpen={openPreview} />
+        <Grid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} />
       )}
       <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
     </main>
   );
 }
 
-function Table({ section, rows, onOpen }: { section: Section; rows: Row[]; onOpen: (r: Row) => void }) {
+function Table({
+  section, rows, onOpen, onPatch, onDelete,
+}: {
+  section: Section;
+  rows: Row[];
+  onOpen: (r: Row) => void;
+  onPatch: (rowId: string, patch: Record<string, unknown>) => Promise<void>;
+  onDelete: (rowId: string) => Promise<void>;
+}) {
   const headers = section.schema.headers.filter((h) => !h.startsWith('_') && h !== 'id');
+  const types = headers.map((_, i) => parseType(section.schema.types?.[section.schema.headers.indexOf(headers[i])] || 'text'));
   return (
     <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
       <table className="min-w-full text-sm">
         <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wider text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
           <tr>
             {headers.map((h) => (
-              <th key={h} className="px-3 py-2">{h}</th>
+              <th key={h} className="px-3 py-2 font-medium">{h}</th>
             ))}
+            <th className="w-10 px-2 py-2"></th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr
-              key={r.id}
-              className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900"
-              onClick={() => onOpen(r)}
-            >
-              {headers.map((h) => (
-                <td key={h} className="px-3 py-2">
-                  {String(r.data[h] ?? '')}
+            <tr key={r.id} className="border-t border-zinc-100 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900">
+              {headers.map((h, i) => (
+                <td key={h} className="px-2 py-1 align-top">
+                  {h === 'url' ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        title="Open preview"
+                        onClick={(e) => { e.stopPropagation(); onOpen(r); }}
+                        className="rounded p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                      >
+                        ▶
+                      </button>
+                      <InlineCell
+                        value={r.data[h]}
+                        type={types[i]}
+                        onCommit={(next) => onPatch(r.id, { [h]: next })}
+                      />
+                    </div>
+                  ) : (
+                    <InlineCell
+                      value={r.data[h]}
+                      type={types[i]}
+                      onCommit={(next) => onPatch(r.id, { [h]: next })}
+                    />
+                  )}
                 </td>
               ))}
+              <td className="px-2 py-1 align-top text-right">
+                <button
+                  type="button"
+                  title="Delete row"
+                  onClick={() => onDelete(r.id)}
+                  className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -166,7 +223,14 @@ function Table({ section, rows, onOpen }: { section: Section; rows: Row[]; onOpe
   );
 }
 
-function Grid({ section, rows, onOpen }: { section: Section; rows: Row[]; onOpen: (r: Row) => void }) {
+function Grid({
+  section, rows, onOpen, onDelete,
+}: {
+  section: Section;
+  rows: Row[];
+  onOpen: (r: Row) => void;
+  onDelete: (rowId: string) => Promise<void>;
+}) {
   const titleField = section.schema.headers.includes('title')
     ? 'title'
     : section.schema.headers.includes('name')
@@ -175,19 +239,31 @@ function Grid({ section, rows, onOpen }: { section: Section; rows: Row[]; onOpen
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
       {rows.map((r) => (
-        <button
+        <div
           key={r.id}
-          type="button"
-          onClick={() => onOpen(r)}
-          className="rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
+          className="group relative rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
         >
-          <div className="text-sm font-medium">
-            {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
-          </div>
-          <div className="mt-2 text-xs text-zinc-500">
-            {new Date(r.updatedAt).toLocaleDateString()}
-          </div>
-        </button>
+          <button
+            type="button"
+            onClick={() => onOpen(r)}
+            className="block w-full text-left"
+          >
+            <div className="text-sm font-medium">
+              {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
+            </div>
+            <div className="mt-2 text-xs text-zinc-500">
+              {new Date(r.updatedAt).toLocaleDateString()}
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(r.id)}
+            title="Delete row"
+            className="absolute right-2 top-2 rounded-full p-1 text-zinc-400 opacity-0 transition group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
       ))}
     </div>
   );
