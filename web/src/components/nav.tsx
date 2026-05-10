@@ -3,11 +3,10 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { Home, Settings, LogOut, Calendar } from 'lucide-react';
+import { Home, Settings, LogOut } from 'lucide-react';
 
 const PRIMARY = [
   { href: '/', label: 'Home', icon: Home },
-  { href: '/schedule', label: 'Schedule', icon: Calendar },
 ];
 const UTILITY = [
   { href: '/settings', label: 'Settings', icon: Settings },
