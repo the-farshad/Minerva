@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
 import { InlineCell, parseType } from '@/components/inline-cell';
 import { AddByUrl } from '@/components/add-by-url';
+import { GroupedGrid } from '@/components/grouped-grid';
 
 type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
 type Section = {
@@ -26,7 +27,7 @@ export function SectionView({
 }) {
   const [rows, setRows] = useState<Row[]>(initialRows);
   const [mode, setMode] = useState<'list' | 'grid'>('list');
-  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string } | null>(null);
+  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string } | null>(null);
   const qc = useQueryClient();
 
   function openPreview(r: Row) {
@@ -40,6 +41,8 @@ export function SectionView({
       title: String(r.data.title || r.data.name || ''),
       driveFileId: drive ? drive[1] : undefined,
       hostPath: host ? host.slice(5).trim() : undefined,
+      rowId: r.id,
+      sectionSlug: section.slug,
     });
   }
 
@@ -151,7 +154,7 @@ export function SectionView({
       ) : mode === 'list' ? (
         <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />
       ) : (
-        <Grid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} />
+        <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} />
       )}
       <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
     </main>
@@ -228,7 +231,9 @@ function Table({
   );
 }
 
-function Grid({
+// Legacy flat grid — superseded by GroupedGrid. Kept for sections
+// without a grouping column when we want a no-frills layout.
+function _LegacyGrid({
   section, rows, onOpen, onDelete,
 }: {
   section: Section;

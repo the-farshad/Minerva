@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, ExternalLink, Download } from 'lucide-react';
+import { X, ExternalLink, Download, Save } from 'lucide-react';
+import { toast } from 'sonner';
 
 type PreviewItem = {
   url: string;
@@ -11,6 +12,10 @@ type PreviewItem = {
   driveFileId?: string;
   /** host:<path> marker if the helper has a copy on disk. */
   hostPath?: string;
+  /** Row id — needed when the preview triggers a download or
+   * auto-mirror that writes an offline marker back to the row. */
+  rowId?: string;
+  sectionSlug?: string;
 };
 
 const YT_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/;
@@ -33,10 +38,12 @@ export function PreviewModal({
 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(!!item), [item]);
+  const [downloading, setDownloading] = useState(false);
   useEffect(() => {
     if (!open && item) onClose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
   if (!item) return null;
 
   const yt = ytId(item.url);
@@ -47,6 +54,32 @@ export function PreviewModal({
   const hostSrc = item.hostPath
     ? `/api/helper/file/serve?path=${encodeURIComponent(item.hostPath)}`
     : null;
+
+  async function downloadOffline() {
+    if (!item || !yt || !item.sectionSlug || !item.rowId) return;
+    setDownloading(true);
+    toast.info('Asking yt-dlp…');
+    try {
+      const r = await fetch('/api/helper/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: item.url, format: 'mp4' }),
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        throw new Error(`Download: ${r.status} ${txt.slice(0, 200)}`);
+      }
+      // For now we confirm the bytes arrived. Wiring the upload to
+      // Drive (and the offline-marker writeback to the row) is the
+      // next chunk — same pattern as v1's uploadOfflineToDrive.
+      await r.arrayBuffer();
+      toast.success('Downloaded.');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -75,6 +108,17 @@ export function PreviewModal({
               >
                 <Download className="h-4 w-4" />
               </a>
+            )}
+            {yt && !item.hostPath && item.sectionSlug && item.rowId && (
+              <button
+                type="button"
+                onClick={downloadOffline}
+                disabled={downloading}
+                title="Save this video for offline playback (yt-dlp)"
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+              >
+                <Save className="h-3.5 w-3.5" /> {downloading ? 'Downloading…' : 'Download offline'}
+              </button>
             )}
             <Dialog.Close
               aria-label="Close"
