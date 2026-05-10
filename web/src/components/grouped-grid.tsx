@@ -12,6 +12,7 @@ type Section = {
   id: string;
   slug: string;
   title: string;
+  preset?: string | null;
   schema: { headers: string[]; types: string[] };
 };
 

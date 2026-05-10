@@ -39,47 +39,80 @@ export function PreviewModal({
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(!!item), [item]);
   const [downloading, setDownloading] = useState(false);
+  // Local mirror of the item so async writes (auto-mirror, manual
+  // download) can flip the modal to a freshly-uploaded Drive blob
+  // without the parent re-rendering.
+  const [view, setView] = useState<PreviewItem | null>(item);
+  useEffect(() => { setView(item); }, [item]);
   useEffect(() => {
     if (!open && item) onClose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  if (!item) return null;
+  if (!view) return null;
 
-  const yt = ytId(item.url);
-  const pdf = isPdf(item.url);
-  const driveSrc = item.driveFileId
-    ? `https://drive.google.com/file/d/${encodeURIComponent(item.driveFileId)}/preview`
+  const yt = ytId(view.url);
+  const pdf = isPdf(view.url);
+  const driveSrc = view.driveFileId
+    ? `https://drive.google.com/file/d/${encodeURIComponent(view.driveFileId)}/preview`
     : null;
-  const hostSrc = item.hostPath
-    ? `/api/helper/file/serve?path=${encodeURIComponent(item.hostPath)}`
+  const hostSrc = view.hostPath
+    ? `/api/helper/file/serve?path=${encodeURIComponent(view.hostPath)}`
     : null;
 
-  async function downloadOffline() {
-    if (!item || !yt || !item.sectionSlug || !item.rowId) return;
+  async function saveOffline(kind: 'video' | 'paper') {
+    if (!view || !view.sectionSlug || !view.rowId) return;
     setDownloading(true);
-    toast.info('Asking yt-dlp…');
+    toast.info(kind === 'video' ? 'Downloading + uploading to Drive…' : 'Mirroring PDF to Drive…');
     try {
-      const r = await fetch('/api/helper/download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: item.url, format: 'mp4' }),
-      });
-      if (!r.ok) {
-        const txt = await r.text().catch(() => '');
-        throw new Error(`Download: ${r.status} ${txt.slice(0, 200)}`);
-      }
-      // For now we confirm the bytes arrived. Wiring the upload to
-      // Drive (and the offline-marker writeback to the row) is the
-      // next chunk — same pattern as v1's uploadOfflineToDrive.
-      await r.arrayBuffer();
-      toast.success('Downloaded.');
+      const r = await fetch(
+        `/api/sections/${view.sectionSlug}/rows/${view.rowId}/save-offline`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind }),
+        },
+      );
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `save-offline: ${r.status}`);
+      toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
+      setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setDownloading(false);
     }
   }
+
+  // Paper auto-mirror on first preview-open: fire and forget so
+  // the iframe can start loading the (probably-X-Frame-blocked)
+  // arxiv URL while the helper grabs the PDF in the background.
+  useEffect(() => {
+    const v = view;
+    if (!v) return;
+    if (!isPdf(v.url)) return;
+    if (v.driveFileId || v.hostPath) return;
+    if (!v.rowId || !v.sectionSlug) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/sections/${v.sectionSlug}/rows/${v.rowId}/save-offline`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'paper' }),
+          },
+        );
+        if (cancelled) return;
+        if (!r.ok) return;
+        const j = await r.json().catch(() => ({}));
+        if (j.fileId) setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
+      } catch { /* tolerate */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view?.url, view?.rowId]);
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -88,10 +121,10 @@ export function PreviewModal({
         <Dialog.Content className="fixed inset-0 z-50 m-0 flex flex-col bg-zinc-100 dark:bg-zinc-950 sm:inset-2 sm:rounded-xl sm:overflow-hidden">
           <header className="flex items-center gap-2 border-b border-zinc-200 bg-white/70 px-3 py-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/70">
             <Dialog.Title className="flex-1 truncate text-sm font-medium">
-              {item.title || item.url}
+              {view.title || view.url}
             </Dialog.Title>
             <a
-              href={item.url}
+              href={view.url}
               target="_blank"
               rel="noopener"
               title="Open in new tab"
@@ -109,15 +142,15 @@ export function PreviewModal({
                 <Download className="h-4 w-4" />
               </a>
             )}
-            {yt && !item.hostPath && item.sectionSlug && item.rowId && (
+            {yt && !view.driveFileId && !view.hostPath && view.sectionSlug && view.rowId && (
               <button
                 type="button"
-                onClick={downloadOffline}
+                onClick={() => saveOffline('video')}
                 disabled={downloading}
-                title="Save this video for offline playback (yt-dlp)"
+                title="Download via yt-dlp + upload to Drive so this plays offline"
                 className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
               >
-                <Save className="h-3.5 w-3.5" /> {downloading ? 'Downloading…' : 'Download offline'}
+                <Save className="h-3.5 w-3.5" /> {downloading ? 'Saving…' : 'Save offline'}
               </button>
             )}
             <Dialog.Close
@@ -153,9 +186,9 @@ export function PreviewModal({
               <video src={hostSrc} controls autoPlay className="h-full w-full bg-black" />
             ) : (
               <iframe
-                src={item.url}
+                src={view.url}
                 className="h-full w-full"
-                title={item.title || item.url}
+                title={view.title || view.url}
                 referrerPolicy="no-referrer"
                 allow="fullscreen"
               />

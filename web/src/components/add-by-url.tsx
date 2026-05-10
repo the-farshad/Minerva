@@ -6,7 +6,23 @@ import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Link as LinkIcon, X } from 'lucide-react';
 
-type Section = { slug: string; schema: { headers: string[]; types: string[] } };
+type Section = { slug: string; schema: { headers: string[]; types: string[] }; preset?: string | null };
+
+function sectionKind(s: Section): 'youtube' | 'papers' | 'mixed' {
+  if (s.preset === 'youtube' || s.slug === 'youtube') return 'youtube';
+  if (s.preset === 'papers' || s.slug === 'papers') return 'papers';
+  return 'mixed';
+}
+function placeholderFor(kind: 'youtube' | 'papers' | 'mixed') {
+  if (kind === 'youtube') return 'YouTube video URL';
+  if (kind === 'papers')  return 'arXiv 2401.12345 / DOI / PDF URL';
+  return 'arXiv ID · DOI · YouTube URL · any URL';
+}
+function helpFor(kind: 'youtube' | 'papers' | 'mixed') {
+  if (kind === 'youtube') return 'Paste a YouTube video URL — title, channel, and thumbnail auto-fill.';
+  if (kind === 'papers')  return 'arXiv (2401.12345 or any arxiv URL) and DOI (10.xxxx/yyy via CrossRef). Title, authors, year, abstract, and the PDF link populate automatically.';
+  return 'arXiv (2401.12345 or any arxiv URL), DOI (10.xxxx/yyy via CrossRef), or a single YouTube video URL.';
+}
 
 export function AddByUrl({
   section,
@@ -15,6 +31,7 @@ export function AddByUrl({
   section: Section;
   onAdded: (row: { id: string; data: Record<string, unknown>; updatedAt: string }) => void;
 }) {
+  const kind = sectionKind(section);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState('');
   const [preview, setPreview] = useState<Record<string, string> | null>(null);
@@ -89,15 +106,13 @@ export function AddByUrl({
               <X className="h-4 w-4" />
             </Dialog.Close>
           </div>
-          <p className="mb-3 text-xs text-zinc-500">
-            arXiv (2401.12345 or any arxiv URL), DOI (10.xxxx/yyy), or a single YouTube video URL.
-          </p>
+          <p className="mb-3 text-xs text-zinc-500">{helpFor(kind)}</p>
           <input
             type="text"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void lookup(); }}
-            placeholder="https://arxiv.org/abs/2401.12345"
+            placeholder={placeholderFor(kind)}
             autoFocus
             className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
           />

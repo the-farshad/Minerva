@@ -39,6 +39,7 @@ export default async function SectionPage({
           id: section.id,
           slug: section.slug,
           title: section.title,
+          preset: section.preset,
           schema: section.schema as { headers: string[]; types: string[] },
         }}
         initialRows={rows.map((r) => ({
