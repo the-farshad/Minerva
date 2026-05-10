@@ -30,6 +30,11 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
 COPY --from=build /app/src ./src
+COPY --from=build /app/drizzle ./drizzle
+COPY --from=build /app/drizzle.config.ts ./drizzle.config.ts
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["npm", "run", "start"]
+# Apply pending Drizzle migrations on every start, then launch the
+# Next server. The migrations are idempotent — repeated runs are a
+# no-op.
+CMD ["sh", "-c", "npx drizzle-kit migrate || true && npm run start"]
