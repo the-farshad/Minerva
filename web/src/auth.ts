@@ -17,6 +17,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     sessionsTable: schema.sessions,
     verificationTokensTable: schema.verificationTokens,
   }),
+  // Behind Cloudflare → Caddy → Next, the request's Host header is
+  // the public hostname (next.thefarshad.com), not the container's
+  // internal one. Auth.js v5 errors with "UntrustedHost" until we
+  // explicitly opt in.
+  trustHost: true,
   session: { strategy: 'database' },
   providers: [
     Google({
