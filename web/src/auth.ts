@@ -34,6 +34,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           prompt: 'consent',
         },
       },
+      // Google's authorization response sometimes omits the `iss`
+      // query parameter that the strict OAuth 2.1 BCP requires.
+      // The id_token always carries it, so dropping the URL-level
+      // check is safe and matches Auth.js's documented workaround.
+      checks: ['pkce', 'state'],
     }),
   ],
   callbacks: {

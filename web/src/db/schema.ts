@@ -6,7 +6,7 @@
  * default; hard delete only happens via account deletion.
  */
 import {
-  pgTable, text, timestamp, integer, boolean, jsonb, primaryKey,
+  pgTable, text, timestamp, integer, bigint, boolean, jsonb, primaryKey,
   uniqueIndex, index,
 } from 'drizzle-orm/pg-core';
 
@@ -19,8 +19,9 @@ export const users = pgTable('users', {
   emailVerified: timestamp('emailVerified', { mode: 'date' }),
   image: text('image'),
   // Personal-data quotas — null means unlimited (defaults to a sane
-  // cap on free tier).
-  quotaBytes: integer('quotaBytes').default(5_000_000_000),
+  // cap on free tier). Stored as bigint because the default exceeds
+  // 2 GB and individual videos / paper PDFs can be larger than that.
+  quotaBytes: bigint('quotaBytes', { mode: 'number' }).default(5_000_000_000),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
 });
 
@@ -116,7 +117,7 @@ export const files = pgTable('files', {
   rowId: text('rowId').references(() => rows.id, { onDelete: 'set null' }),
   kind: text('kind').notNull(),                 // 'video' | 'paper' | 'extract' | 'misc'
   filename: text('filename').notNull(),
-  size: integer('size').default(0).notNull(),
+  size: bigint('size', { mode: 'number' }).default(0).notNull(),
   driveFileId: text('driveFileId'),
   hostPath: text('hostPath'),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
