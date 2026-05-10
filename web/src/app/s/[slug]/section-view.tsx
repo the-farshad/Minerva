@@ -7,6 +7,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
 import { InlineCell, parseType } from '@/components/inline-cell';
+import { AddByUrl } from '@/components/add-by-url';
 
 type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
 type Section = {
@@ -128,13 +129,17 @@ export function SectionView({
           >
             <LayoutGrid className="h-3.5 w-3.5" /> Grid
           </button>
+          <AddByUrl
+            section={section}
+            onAdded={(row) => setRows((rs) => [...rs, row])}
+          />
           <button
             type="button"
             onClick={() => createRow.mutate()}
             disabled={createRow.isPending}
-            className="ml-2 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+            className="ml-1 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
           >
-            <Plus className="h-3.5 w-3.5" /> Add row
+            <Plus className="h-3.5 w-3.5" /> Add empty
           </button>
         </div>
       </header>
