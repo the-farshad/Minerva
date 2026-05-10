@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Check } from 'lucide-react';
+import { Plus, Check, Download } from 'lucide-react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -21,6 +21,22 @@ export function SettingsView({
   const [taken, setTaken] = useState(new Set(sections.map((s) => s.slug)));
   const qc = useQueryClient();
   const router = useRouter();
+
+  const migrate = useMutation({
+    mutationFn: async (force: boolean) => {
+      const r = await fetch(`/api/migrate/v1${force ? '?force=1' : ''}`, { method: 'POST' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `migrate: ${r.status}`);
+      return (await r.json()) as { sections: { slug: string; status: string; rows: number }[]; total: number };
+    },
+    onSuccess: (out) => {
+      const created = out.sections.filter((s) => s.status === 'created').length;
+      const updated = out.sections.filter((s) => s.status === 'updated').length;
+      const skipped = out.sections.filter((s) => s.status === 'skipped').length;
+      toast.success(`Imported ${out.total} row${out.total === 1 ? '' : 's'} · ${created} new section${created === 1 ? '' : 's'}, ${updated} replaced, ${skipped} skipped.`);
+      router.refresh();
+    },
+    onError: (e: Error) => toast.error(`Migration failed: ${e.message}`),
+  });
 
   const addPreset = useMutation({
     mutationFn: async (slug: string) => {
@@ -87,6 +103,34 @@ export function SettingsView({
             );
           })}
         </ul>
+      </section>
+
+      <section className="mt-12">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Migrate from v1</h2>
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+          One-shot import of your existing <code>Minerva</code> spreadsheet from Drive into v2&rsquo;s database. New sections are created; sections that already exist in v2 are skipped unless you choose <em>Replace</em>.
+        </p>
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            onClick={() => migrate.mutate(false)}
+            disabled={migrate.isPending}
+            className="inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+          >
+            <Download className="h-4 w-4" /> {migrate.isPending ? 'Importing…' : 'Import from v1'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirm('Replace existing v2 sections with the v1 data? This deletes any rows currently in v2 for those sections.')) return;
+              migrate.mutate(true);
+            }}
+            disabled={migrate.isPending}
+            className="rounded-full border border-zinc-300 px-4 py-1.5 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Replace
+          </button>
+        </div>
       </section>
 
       <section className="mt-12">
