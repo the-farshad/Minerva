@@ -102,10 +102,16 @@ services:
   #   NEXTAUTH_URL             https://<domain you'll point at v2>
   minerva-web:
     profiles: ["web"]
+    # Image is built by .github/workflows/web-publish.yml on every
+    # push to web/. The droplet just pulls. Local dev can still
+    # `docker compose --profile web build minerva-web` to rebuild
+    # against `web/` directly — the build context is set so it
+    # works without changes.
     build:
       context: ../web
       dockerfile: Dockerfile
     image: thefarshad/minerva-web:latest
+    pull_policy: always
     container_name: minerva-web
     restart: unless-stopped
     depends_on:
