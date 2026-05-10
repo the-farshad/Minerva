@@ -11,17 +11,23 @@ export default async function SettingsPage() {
   if (!session?.user) redirect('/sign-in');
   const userId = (session.user as { id: string }).id;
 
-  const allSections = await db.query.sections.findMany({
+  const navSections = await db.query.sections.findMany({
     where: and(eq(schema.sections.userId, userId), eq(schema.sections.enabled, true)),
+    orderBy: [asc(schema.sections.order)],
+  });
+  // Settings shows every section (enabled or not) so the user can
+  // re-enable a previously hidden one without losing its rows.
+  const ownedSections = await db.query.sections.findMany({
+    where: eq(schema.sections.userId, userId),
     orderBy: [asc(schema.sections.order)],
   });
 
   return (
     <>
-      <Nav sections={allSections} email={session.user.email} />
+      <Nav sections={navSections} email={session.user.email} />
       <SettingsView
         email={session.user.email || ''}
-        sections={allSections.map((s) => ({ slug: s.slug, title: s.title }))}
+        sections={ownedSections.map((s) => ({ slug: s.slug, title: s.title, enabled: s.enabled }))}
         presets={PRESETS.map((p) => ({ slug: p.slug, title: p.title, icon: p.icon }))}
       />
     </>

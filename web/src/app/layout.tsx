@@ -6,8 +6,15 @@ import { Providers } from './providers';
 const inter = Inter({ variable: '--font-inter', subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Minerva',
+  title: { default: 'Minerva', template: '%s · Minerva' },
   description: 'A schema-driven planner backed by your own Google data.',
+  applicationName: 'Minerva',
+  authors: [{ name: 'Farshad' }],
+  themeColor: [
+    { color: '#fbfbfa', media: '(prefers-color-scheme: light)' },
+    { color: '#0b0d10', media: '(prefers-color-scheme: dark)' },
+  ],
+  formatDetection: { telephone: false, email: false, address: false },
 };
 
 export default function RootLayout({

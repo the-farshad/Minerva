@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Home, Settings, LogOut } from 'lucide-react';
+import { signOutAction } from '@/app/actions';
 
 const PRIMARY = [
   { href: '/', label: 'Home', icon: Home },
@@ -44,7 +45,7 @@ export function Nav({
         </NavLink>
       ))}
       {email && (
-        <form action="/api/auth/signout" method="post" className="ml-auto flex items-center gap-2">
+        <form action={signOutAction} className="ml-auto flex items-center gap-2">
           <span className="text-xs text-zinc-500">{email}</span>
           <button
             type="submit"
