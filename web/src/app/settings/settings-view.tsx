@@ -6,6 +6,7 @@ import { Plus, Check, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOutAction } from '@/app/actions';
+import { LocalMirrorCard } from '@/components/local-mirror-card';
 
 type Preset = { slug: string; title: string; icon: string };
 type Existing = { slug: string; title: string; enabled: boolean };
@@ -89,6 +90,7 @@ export function SettingsView({
         <p className="mt-2 text-sm">
           Signed in as <strong>{email}</strong>.
         </p>
+        <LocalMirrorCard />
       </section>
 
       {own.length > 0 && (
