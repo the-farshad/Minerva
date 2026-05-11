@@ -12,6 +12,7 @@ import { ThemeCard } from '@/components/theme-card';
 import { FeedsCard } from '@/components/feeds-card';
 import { BookmarkletCard } from '@/components/bookmarklet-card';
 import { TelegramCard } from '@/components/telegram-card';
+import { BackupCard } from '@/components/backup-card';
 
 type Preset = { slug: string; title: string; icon: string };
 type Existing = { slug: string; title: string; enabled: boolean };
@@ -151,6 +152,7 @@ export function SettingsView({
         <FeedsCard />
         <BookmarkletCard />
         <TelegramCard />
+        <BackupCard />
       </section>
 
       {own.length > 0 && (

@@ -1,12 +1,27 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Trash2, GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server } from 'lucide-react';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
 import { GroupNotes } from './group-notes';
 
 export type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
+
+function OfflineBadges({ marker }: { marker: string }) {
+  const has = (p: string) => marker.split(' · ').some((s) => s.trim().startsWith(p));
+  const hasDrive = has('drive:');
+  const hasLocal = has('local:');
+  const hasHost = has('host:');
+  if (!hasDrive && !hasLocal && !hasHost) return null;
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 text-zinc-400">
+      {hasDrive && <Cloud className="h-3 w-3" aria-label="On Drive" />}
+      {hasLocal && <HardDrive className="h-3 w-3" aria-label="On local mirror" />}
+      {hasHost && <Server className="h-3 w-3" aria-label="On helper" />}
+    </div>
+  );
+}
 
 type Section = {
   id: string;
@@ -220,8 +235,11 @@ export function GroupedGrid({
                       onClick={() => onOpen(r)}
                       className="block w-full text-left"
                     >
-                      <div className="text-sm font-medium">
-                        {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 text-sm font-medium">
+                          {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
+                        </div>
+                        <OfflineBadges marker={String(r.data.offline || '')} />
                       </div>
                       <div className="mt-1.5 line-clamp-1 text-xs text-zinc-500">
                         {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
