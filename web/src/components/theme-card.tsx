@@ -27,8 +27,16 @@ const FONTS: { v: Font; label: string }[] = [
 
 export function applyTheme(t: Theme) {
   if (typeof document === 'undefined') return;
-  if (t === 'system') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', t);
+  const html = document.documentElement;
+  if (t === 'system') html.removeAttribute('data-theme');
+  else html.setAttribute('data-theme', t);
+  // Toggle the `dark` class so Tailwind dark utilities only fire
+  // when the chosen theme is dark-flavoured. System honours the OS.
+  const wantDark =
+    t === 'dark' || t === 'vt323' ||
+    (t === 'system' && typeof window !== 'undefined' &&
+     window.matchMedia('(prefers-color-scheme: dark)').matches);
+  html.classList.toggle('dark', wantDark);
 }
 export function applyFont(f: Font) {
   if (typeof document === 'undefined') return;

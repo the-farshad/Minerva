@@ -62,25 +62,6 @@ export function PreviewModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Wire the preview modal into the browser history stack so the
-  // Back button closes the overlay instead of navigating off the
-  // section. We push a sentinel state when the modal opens, and
-  // when popstate fires (Back pressed), we just close the modal.
-  useEffect(() => {
-    if (!open) return;
-    history.pushState({ minervaPreview: true }, '');
-    function onPop() { setOpen(false); }
-    window.addEventListener('popstate', onPop);
-    return () => {
-      window.removeEventListener('popstate', onPop);
-      // If the modal closes for any reason other than a pop event,
-      // pop our sentinel ourselves so we don't leak a history entry.
-      if (history.state && (history.state as { minervaPreview?: boolean }).minervaPreview) {
-        history.back();
-      }
-    };
-  }, [open]);
-
   // Listen for postMessage from the YT iframe's IFrame API so we
   // can track current time + persist a resume position. The iframe
   // is mounted with `enablejsapi=1` below; postMessage handshake is
@@ -283,15 +264,17 @@ export function PreviewModal({
                 <Download className="h-4 w-4" />
               </a>
             )}
-            {yt && !view.driveFileId && !view.hostPath && view.sectionSlug && view.rowId && (
+            {yt && view.sectionSlug && view.rowId && (
               <button
                 type="button"
                 onClick={() => saveOffline('video')}
                 disabled={downloading}
-                title="Download via yt-dlp + upload to Drive so this plays offline"
+                title={view.driveFileId
+                  ? 'Already saved — click to re-download via yt-dlp + upload to Drive'
+                  : 'Download via yt-dlp + upload to Drive so this plays offline'}
                 className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
               >
-                <Save className="h-3.5 w-3.5" /> {downloading ? 'Saving…' : 'Save offline'}
+                <Save className="h-3.5 w-3.5" /> {downloading ? 'Saving…' : view.driveFileId ? 'Re-save' : 'Save offline'}
               </button>
             )}
             {pdf && view.driveFileId && view.sectionSlug && view.rowId && (

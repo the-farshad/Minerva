@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Move Tailwind's `dark:` variant off the prefers-color-scheme media
+ * query and onto an explicit `dark` class on <html>. ThemeBoot adds /
+ * removes that class, so picking Light or Sepia actually flips dark
+ * utilities off even when the OS prefers dark.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -12,12 +19,15 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Default OS-dark variables — the dark class is what triggers
+ * Tailwind dark utilities via the custom-variant above. */
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
   }
 }
+html.dark { --background: #0b0d10; --foreground: #ededed; }
 
 /* User-pickable themes — applied via <html data-theme="..."> */
 html[data-theme="light"] { color-scheme: light; --background: #fbfbfa; --foreground: #171717; }
