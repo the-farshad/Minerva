@@ -2,13 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import { naturalCompare, cn } from '@/lib/utils';
-import { Plus, LayoutGrid, List, Trash2 } from 'lucide-react';
+import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
 import { InlineCell, parseType } from '@/components/inline-cell';
 import { AddByUrl } from '@/components/add-by-url';
 import { GroupedGrid } from '@/components/grouped-grid';
+import { KanbanView } from '@/components/kanban-view';
+import { CalendarView } from '@/components/calendar-view';
 
 type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
 type Section = {
@@ -27,7 +29,7 @@ export function SectionView({
   initialRows: Row[];
 }) {
   const [rows, setRows] = useState<Row[]>(initialRows);
-  const [mode, setMode] = useState<'list' | 'grid'>('list');
+  const [mode, setMode] = useState<'list' | 'grid' | 'kanban' | 'calendar'>('list');
   const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; notes?: string } | null>(null);
   const qc = useQueryClient();
 
@@ -107,33 +109,28 @@ export function SectionView({
     <main className="mx-auto w-full max-w-6xl px-6 py-8">
       <header className="mb-6 flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold tracking-tight">{section.title}</h1>
-        <div className="flex items-center gap-1 rounded-full border border-zinc-200 p-1 dark:border-zinc-800">
-          <button
-            type="button"
-            onClick={() => setMode('list')}
-            className={cn(
-              'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
-              mode === 'list'
-                ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-                : 'text-zinc-500',
-            )}
-            title="List view"
-          >
-            <List className="h-3.5 w-3.5" /> List
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('grid')}
-            className={cn(
-              'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
-              mode === 'grid'
-                ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-                : 'text-zinc-500',
-            )}
-            title="Grid view"
-          >
-            <LayoutGrid className="h-3.5 w-3.5" /> Grid
-          </button>
+        <div className="flex flex-wrap items-center gap-1 rounded-full border border-zinc-200 p-1 dark:border-zinc-800">
+          {([
+            ['list', List, 'List'],
+            ['grid', LayoutGrid, 'Grid'],
+            ['kanban', Columns3, 'Kanban'],
+            ['calendar', CalendarIcon, 'Calendar'],
+          ] as const).map(([m, Icon, label]) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
+                mode === m
+                  ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500',
+              )}
+              title={`${label} view`}
+            >
+              <Icon className="h-3.5 w-3.5" /> {label}
+            </button>
+          ))}
           <AddByUrl
             section={section}
             onAdded={(row) => setRows((rs) => [...rs, row])}
@@ -155,8 +152,12 @@ export function SectionView({
         </p>
       ) : mode === 'list' ? (
         <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />
-      ) : (
+      ) : mode === 'grid' ? (
         <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} />
+      ) : mode === 'kanban' ? (
+        <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} />
+      ) : (
+        <CalendarView section={section} rows={sorted} onOpen={openPreview} />
       )}
       <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
     </main>

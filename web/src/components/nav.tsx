@@ -3,12 +3,13 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { Home, Settings, LogOut, Share2 } from 'lucide-react';
+import { Home, Settings, LogOut, Share2, Calendar } from 'lucide-react';
 import { signOutAction } from '@/app/actions';
 import { SearchBar } from './search-bar';
 
 const PRIMARY = [
   { href: '/', label: 'Home', icon: Home },
+  { href: '/schedule', label: 'Schedule', icon: Calendar },
 ];
 const UTILITY = [
   { href: '/share', label: 'Share', icon: Share2 },
