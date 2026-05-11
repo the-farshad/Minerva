@@ -42,7 +42,7 @@ export function SectionView({
     ? (['list', 'grid'] as const)
     : (['list', 'grid', 'kanban', 'calendar'] as const);
   const [mode, setMode] = useState<'list' | 'grid' | 'kanban' | 'calendar'>('grid');
-  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; notes?: string; data?: Record<string, unknown> } | null>(null);
+  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; originalFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; notes?: string; data?: Record<string, unknown> } | null>(null);
   const qc = useQueryClient();
 
   const search = useSearchParams();
@@ -67,6 +67,7 @@ export function SectionView({
       url,
       title: String(r.data.title || r.data.name || ''),
       driveFileId: drive ? drive[1] : undefined,
+      originalFileId: r.data.originalFileId ? String(r.data.originalFileId) : undefined,
       hostPath: host ? host.slice(5).trim() : undefined,
       rowId: r.id,
       sectionSlug: section.slug,

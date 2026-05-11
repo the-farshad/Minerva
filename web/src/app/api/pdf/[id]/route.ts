@@ -74,7 +74,12 @@ async function serve(
         return new Response(r.body, {
           headers: {
             'Content-Type': r.headers.get('Content-Type') || 'application/pdf',
-            'Cache-Control': 'private, max-age=300',
+            // no-store so an annotation save (which overwrites the underlying
+// Drive bytes in place) is visible the next time the iframe asks
+// for the same /api/pdf/<rowId> URL — without this, the browser
+// served the pre-save body for 5 min and "click does not show the
+// edited version" was the resulting bug.
+'Cache-Control': 'no-store',
           },
         });
       }
@@ -93,7 +98,12 @@ async function serve(
       return new Response(r.body, {
         headers: {
           'Content-Type': r.headers.get('Content-Type') || 'application/pdf',
-          'Cache-Control': 'private, max-age=300',
+          // no-store so an annotation save (which overwrites the underlying
+// Drive bytes in place) is visible the next time the iframe asks
+// for the same /api/pdf/<rowId> URL — without this, the browser
+// served the pre-save body for 5 min and "click does not show the
+// edited version" was the resulting bug.
+'Cache-Control': 'no-store',
         },
       });
     }
@@ -121,7 +131,12 @@ async function serve(
   return new Response(r.body, {
     headers: {
       'Content-Type': ct || 'application/pdf',
-      'Cache-Control': 'private, max-age=300',
+      // no-store so an annotation save (which overwrites the underlying
+// Drive bytes in place) is visible the next time the iframe asks
+// for the same /api/pdf/<rowId> URL — without this, the browser
+// served the pre-save body for 5 min and "click does not show the
+// edited version" was the resulting bug.
+'Cache-Control': 'no-store',
     },
   });
 }

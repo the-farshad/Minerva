@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, ExternalLink, Download, Save, FileCheck2, Info } from 'lucide-react';
+import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { BookmarkDrawer } from './bookmark-drawer';
@@ -16,6 +16,10 @@ type PreviewItem = {
   title?: string;
   /** Drive fileId of an offline copy, when one has been mirrored. */
   driveFileId?: string;
+  /** Drive fileId of the pristine snapshot taken on the first
+   * annotation save. Present only after the user has edited at
+   * least once; gates the "Reset to original" button. */
+  originalFileId?: string;
   /** host:<path> marker if the helper has a copy on disk. */
   hostPath?: string;
   /** Row id — needed when the preview triggers a download or
@@ -76,6 +80,17 @@ export function PreviewModal({
   const [pdfPage, setPdfPage] = useState(1);
   const [notesOpen, setNotesOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  // PDF theme — light is the default; sepia and dark are baked into
+  // the viewer iframe via PDF.js's #pagecolors hash. Changing theme
+  // re-keys the iframe (its `key` prop combines theme + bust), which
+  // is the only way to re-render canvas pages with new colors.
+  const [pdfTheme, setPdfTheme] = useState<'light' | 'sepia' | 'dark'>('light');
+  const [pdfReload, setPdfReload] = useState(0);
+  const [resettingPdf, setResettingPdf] = useState(false);
+  useEffect(() => {
+    const saved = readPref<string>('paper.theme', 'light');
+    if (saved === 'sepia' || saved === 'dark' || saved === 'light') setPdfTheme(saved);
+  }, []);
   // Local mirror of the item so async writes (auto-mirror, manual
   // download) can flip the modal to a freshly-uploaded Drive blob
   // without the parent re-rendering.
@@ -186,21 +201,31 @@ export function PreviewModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view?.url, view?.rowId]);
 
-  // Auto-save annotations 4 s after the user pauses editing. The
-  // bundled PDF.js viewer (served same-origin at /pdfjs/) exposes
-  // PDFViewerApplication on the iframe's contentWindow; eventBus
-  // fires `annotationeditorstateschanged` whenever the editor
-  // commits a highlight/note/ink/free-text change. Debounced so a
-  // single stroke doesn't trigger a Drive upload per pixel.
+  // Auto-save annotations 4 s after the user pauses editing. PDF.js
+  // exposes `pdfDocument.annotationStorage.onSetModified`, a callback
+  // that fires whenever any annotation is added / moved / edited /
+  // deleted. (The earlier `annotationeditorstateschanged` event we
+  // tried does not exist in viewer.mjs 4.10 — `dispatch(...)` only
+  // emits `annotationeditormodechanged` and `annotationeditorparamschanged`,
+  // both of which fire on tool/colour switches, not on actual content
+  // edits.) annotationStorage isn't populated until the document
+  // finishes loading, so we hook `pagesloaded` first and wire the
+  // callback then. Debounced so a single stroke isn't a Drive upload
+  // per pixel.
   useEffect(() => {
     if (!view || !isPdf(view.url) || !view.rowId || !view.sectionSlug) return;
     const iframe = pdfIframeRef.current;
     if (!iframe) return;
     let cancelled = false;
     let debounce: ReturnType<typeof setTimeout> | null = null;
-    let detach: (() => void) | null = null;
+    let detachStorage: (() => void) | null = null;
+    let detachEvent: (() => void) | null = null;
+    interface AnnotationStorage {
+      onSetModified: (() => void) | null;
+    }
     interface PdfApp {
       initializedPromise?: Promise<void>;
+      pdfDocument?: { annotationStorage?: AnnotationStorage };
       eventBus?: {
         on: (name: string, fn: () => void) => void;
         off: (name: string, fn: () => void) => void;
@@ -213,12 +238,21 @@ export function PreviewModal({
       if (!app?.initializedPromise || !app.eventBus) return;
       try { await app.initializedPromise; } catch { return; }
       if (cancelled) return;
-      const onChange = () => {
-        if (debounce) clearTimeout(debounce);
-        debounce = setTimeout(() => { void saveAnnotations(); }, 4000);
+      const wire = () => {
+        const storage = app.pdfDocument?.annotationStorage;
+        if (!storage) return false;
+        storage.onSetModified = () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => { void saveAnnotations(); }, 4000);
+        };
+        detachStorage = () => { try { storage.onSetModified = null; } catch { /* tolerate */ } };
+        return true;
       };
-      app.eventBus.on('annotationeditorstateschanged', onChange);
-      detach = () => app.eventBus?.off('annotationeditorstateschanged', onChange);
+      if (!wire()) {
+        const onLoaded = () => { wire(); if (detachEvent) detachEvent(); };
+        app.eventBus.on('pagesloaded', onLoaded);
+        detachEvent = () => app.eventBus?.off('pagesloaded', onLoaded);
+      }
     };
     iframe.addEventListener('load', attach);
     void attach();
@@ -226,10 +260,11 @@ export function PreviewModal({
       cancelled = true;
       if (debounce) clearTimeout(debounce);
       iframe.removeEventListener('load', attach);
-      if (detach) detach();
+      if (detachStorage) detachStorage();
+      if (detachEvent) detachEvent();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view?.url, view?.rowId, view?.sectionSlug]);
+  }, [view?.url, view?.rowId, view?.sectionSlug, pdfReload]);
 
   if (!view) return null;
 
@@ -279,30 +314,26 @@ export function PreviewModal({
       return;
     }
     setSavingAnnot(true);
-    toast.info('Saving annotations to Drive…');
     try {
       const bytes = await app.pdfDocument.saveDocument();
       const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
-      const stem = (view.title || 'paper').replace(/[^\w.\- ]+/g, '_').slice(0, 100);
-      const filename = `${stem}.annotated.pdf`;
       const fd = new FormData();
-      fd.append('file', blob, filename);
-      fd.append('name', filename);
-      const up = await fetch('/api/drive/upload', { method: 'POST', body: fd });
-      const upJson = await up.json();
-      if (!up.ok) throw new Error(upJson.error || `upload: ${up.status}`);
-      // Point the row at the new Drive copy.
-      await fetch(`/api/sections/${view.sectionSlug}/rows/${view.rowId}/mark-offline`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ marker: `drive:${upJson.fileId}` }),
-      });
-      setView((prev) => (prev ? { ...prev, driveFileId: upJson.fileId } : prev));
-      // Mirror locally too if the user opted in.
-      if (view.sectionSlug && view.rowId) {
-        mirrorToLocal('paper', upJson.fileId, filename, view.sectionSlug, view.rowId);
-      }
-      toast.success('Annotations saved.');
+      fd.append('file', blob, 'annotated.pdf');
+      const up = await fetch(
+        `/api/sections/${view.sectionSlug}/rows/${view.rowId}/save-annotations`,
+        { method: 'POST', body: fd },
+      );
+      const upJson = (await up.json().catch(() => ({}))) as {
+        error?: string; fileId?: string; originalFileId?: string | null;
+      };
+      if (!up.ok) throw new Error(upJson.error || `save-annotations: ${up.status}`);
+      // Same fileId as before — overwrite-in-place. Capture the
+      // originalFileId from the server so the Reset button appears
+      // immediately on first edit, without waiting for a refresh.
+      setView((prev) => (prev ? {
+        ...prev,
+        originalFileId: upJson.originalFileId || prev.originalFileId,
+      } : prev));
     } catch (e) {
       notify.error((e as Error).message);
     } finally {
@@ -399,11 +430,61 @@ export function PreviewModal({
                 type="button"
                 onClick={saveAnnotations}
                 disabled={savingAnnot}
-                title="Save the current PDF, including highlights / sticky notes / ink, back to Drive"
+                title="Save edits now (auto-save runs 4 s after the last change anyway)"
                 className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
               >
-                <FileCheck2 className="h-3.5 w-3.5" /> {savingAnnot ? 'Saving…' : 'Save annotations'}
+                <FileCheck2 className="h-3.5 w-3.5" /> {savingAnnot ? 'Saving…' : 'Save'}
               </button>
+            )}
+            {pdf && view.driveFileId && view.originalFileId && view.sectionSlug && view.rowId && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!view.sectionSlug || !view.rowId) return;
+                  if (!window.confirm('Reset this paper to the pristine original? Your annotations will be replaced.')) return;
+                  setResettingPdf(true);
+                  try {
+                    const r = await fetch(
+                      `/api/sections/${view.sectionSlug}/rows/${view.rowId}/reset-pdf`,
+                      { method: 'POST' },
+                    );
+                    const j = (await r.json().catch(() => ({}))) as { error?: string };
+                    if (!r.ok) throw new Error(j.error || `reset-pdf: ${r.status}`);
+                    setPdfReload((n) => n + 1);
+                  } catch (e) {
+                    notify.error((e as Error).message);
+                  } finally {
+                    setResettingPdf(false);
+                  }
+                }}
+                disabled={resettingPdf}
+                title="Discard annotations and reload the pristine PDF from the saved snapshot"
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> {resettingPdf ? 'Resetting…' : 'Reset'}
+              </button>
+            )}
+            {pdf && (
+              <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
+                {(['light', 'sepia', 'dark'] as const).map((t) => {
+                  const Icon = t === 'light' ? Sun : t === 'sepia' ? Coffee : Moon;
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => {
+                        if (t === pdfTheme) return;
+                        setPdfTheme(t);
+                        writePref('paper.theme', t);
+                      }}
+                      title={`${t[0].toUpperCase() + t.slice(1)} reading theme`}
+                      className={`rounded-full p-1 ${pdfTheme === t ? 'bg-white shadow-sm dark:bg-zinc-950' : 'opacity-60 hover:opacity-100'}`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  );
+                })}
+              </div>
             )}
             {view.data && Object.keys(view.data).length > 0 && (
               <button
@@ -446,9 +527,19 @@ export function PreviewModal({
                * Drive OAuth token — no upstream CORS, no nested
                * query strings. */
               <iframe
+                key={`${pdfTheme}-${pdfReload}`}
                 ref={pdfIframeRef}
                 title="PDF"
-                src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(`/api/pdf/${view.rowId}`)}#page=${pdfPage}`}
+                src={(() => {
+                  const file = `/api/pdf/${view.rowId}?v=${pdfReload}`;
+                  const hashParts: string[] = [`page=${pdfPage}`];
+                  if (pdfTheme === 'sepia') {
+                    hashParts.push('pagecolors=foreground=%235b4636,background=%23f4ecd8');
+                  } else if (pdfTheme === 'dark') {
+                    hashParts.push('pagecolors=foreground=%23e6e6e6,background=%231f1f1f');
+                  }
+                  return `/pdfjs/web/viewer.html?file=${encodeURIComponent(file)}#${hashParts.join('&')}`;
+                })()}
                 className="h-full w-full border-0 bg-zinc-100 dark:bg-zinc-900"
                 referrerPolicy="no-referrer"
               />
@@ -602,12 +693,18 @@ function IframeWithFallback({
         onLoad={() => { setLoaded(true); setStuck(false); }}
       />
       {stuck && !loaded && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-50/95 p-6 text-center text-sm dark:bg-zinc-950/95">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-zinc-50/95 p-6 text-center text-sm dark:bg-zinc-950/95">
           <strong>Couldn&rsquo;t load the preview.</strong>
           <p className="max-w-md text-xs text-zinc-500">
-            The page took too long or refused to embed.
+            The page took too long or refused to embed. Click the URL to copy it.
           </p>
-          <code className="max-w-md break-all rounded bg-zinc-100 px-2 py-1 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{src}</code>
+          <code
+            role="button"
+            tabIndex={0}
+            onClick={() => { try { void navigator.clipboard.writeText(src); toast.success('URL copied'); } catch { /* tolerate */ } }}
+            className="max-w-md cursor-copy break-all rounded bg-zinc-100 px-2 py-1 text-[10px] text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            title="Click to copy"
+          >{src}</code>
           {fallbackHref && (
             <a
               href={fallbackHref}
@@ -685,11 +782,20 @@ function YouTubeFrame({
         }}
       />
       {stuck && !loaded && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-50/95 p-6 text-center text-sm dark:bg-zinc-950/95">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-zinc-50/95 p-6 text-center text-sm dark:bg-zinc-950/95">
           <strong>This video can&rsquo;t be embedded.</strong>
           <p className="max-w-md text-xs text-zinc-500">
-            The uploader disabled playback on third-party sites, or the embed timed out.
+            The uploader disabled playback on third-party sites, the embed
+            timed out, or YouTube returned an error inside the iframe.
+            Click the URL to copy it.
           </p>
+          <code
+            role="button"
+            tabIndex={0}
+            onClick={() => { try { void navigator.clipboard.writeText(fallbackUrl); toast.success('URL copied'); } catch { /* tolerate */ } }}
+            className="max-w-md cursor-copy break-all rounded bg-zinc-100 px-2 py-1 text-[10px] text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            title="Click to copy"
+          >{fallbackUrl}</code>
           <a
             href={fallbackUrl}
             target="_blank"

@@ -129,3 +129,85 @@ export async function uploadToMinervaDrive(
   }
   return (await put.json()) as { id: string };
 }
+
+/** Overwrite an existing Drive file's bytes in place. Same fileId,
+ * same name, same parents — just new media. Used by the annotation
+ * round-trip so the SPA never accumulates orphan "v1, v2, v3" copies
+ * of the same paper. */
+export async function updateDriveFileMedia(
+  userId: string,
+  fileId: string,
+  bytes: ArrayBuffer,
+  mime: string,
+): Promise<{ id: string }> {
+  const token = await getGoogleAccessToken(userId);
+  const r = await fetch(
+    `${DRIVE_UPLOAD}/files/${encodeURIComponent(fileId)}?uploadType=media&fields=id`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': mime,
+        'Content-Length': String(bytes.byteLength),
+      },
+      body: bytes,
+    },
+  );
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error(`Drive media PATCH ${r.status}: ${txt.slice(0, 200)}`);
+  }
+  return (await r.json()) as { id: string };
+}
+
+/** Server-side copy of an existing Drive file (no bytes round-trip
+ * through us). Used to snapshot the pristine PDF as `<title>.original.pdf`
+ * the first time a user annotates, so the working copy can be reset
+ * later without re-downloading anything. */
+export async function copyDriveFile(
+  userId: string,
+  fileId: string,
+  newName: string,
+  parentId: string | null = null,
+): Promise<{ id: string }> {
+  const token = await getGoogleAccessToken(userId);
+  const body: Record<string, unknown> = { name: newName };
+  if (parentId) body.parents = [parentId];
+  const r = await fetch(
+    `${DRIVE}/files/${encodeURIComponent(fileId)}/copy?fields=id`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error(`Drive copy ${r.status}: ${txt.slice(0, 200)}`);
+  }
+  return (await r.json()) as { id: string };
+}
+
+/** Stream a Drive file's bytes server-side. Returns the full
+ * ArrayBuffer + mime — small for PDFs, ok to buffer. */
+export async function fetchDriveFileBytes(
+  userId: string,
+  fileId: string,
+): Promise<{ bytes: ArrayBuffer; mime: string }> {
+  const token = await getGoogleAccessToken(userId);
+  const r = await fetch(
+    `${DRIVE}/files/${encodeURIComponent(fileId)}?alt=media`,
+    { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' },
+  );
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error(`Drive download ${r.status}: ${txt.slice(0, 200)}`);
+  }
+  return {
+    bytes: await r.arrayBuffer(),
+    mime: r.headers.get('Content-Type') || 'application/octet-stream',
+  };
+}
