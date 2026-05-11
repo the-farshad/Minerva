@@ -84,6 +84,16 @@ async function saveOffline(
     }
     bytes = await r.arrayBuffer();
     mime = r.headers.get('Content-Type') || 'video/mp4';
+    // Guard against yt-dlp returning 200 with an HTML body — happens
+    // when YouTube bot-checks the helper. Without this we'd happily
+    // upload "video.html" to Drive.
+    if (/text\/html|application\/json/i.test(mime) || bytes.byteLength < 64 * 1024) {
+      const snippet = new TextDecoder().decode(bytes.slice(0, 300));
+      return NextResponse.json(
+        { error: `yt-dlp didn't return a video (got ${mime}, ${bytes.byteLength} bytes). YouTube may be requiring fresh cookies. Snippet: ${snippet}` },
+        { status: 502 },
+      );
+    }
     const disp = r.headers.get('Content-Disposition') || '';
     const m = disp.match(/filename="?([^"]+)"?/);
     const stem = (data.title || data.id || 'video').toString().replace(/[^\w.\- ]+/g, '_').slice(0, 100);
@@ -111,6 +121,14 @@ async function saveOffline(
       return NextResponse.json({ error: `Paper fetch ${resp.status}: ${txt.slice(0, 200)}` }, { status: 502 });
     }
     bytes = await resp.arrayBuffer();
+    const upstreamMime = resp.headers.get('Content-Type') || '';
+    if (!/pdf|octet-stream/i.test(upstreamMime) && bytes.byteLength < 8 * 1024) {
+      const snippet = new TextDecoder().decode(bytes.slice(0, 300));
+      return NextResponse.json(
+        { error: `Upstream returned ${upstreamMime || 'unknown'} (${bytes.byteLength} bytes) instead of a PDF. Snippet: ${snippet}` },
+        { status: 502 },
+      );
+    }
     mime = 'application/pdf';
     const stem = (data.title || data.id || 'paper').toString().replace(/[^\w.\- ]+/g, '_').slice(0, 100);
     filename = `${stem}.pdf`;
