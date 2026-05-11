@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X, ExternalLink, Download, Save } from 'lucide-react';
 import { toast } from 'sonner';
+import { BookmarkDrawer } from './bookmark-drawer';
+import { readPref, writePref } from '@/lib/prefs';
 
 type PreviewItem = {
   url: string;
@@ -39,6 +41,9 @@ export function PreviewModal({
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(!!item), [item]);
   const [downloading, setDownloading] = useState(false);
+  const ytIframeRef = useRef<HTMLIFrameElement>(null);
+  const ytTimeRef = useRef<number>(0);
+  const [pdfPage, setPdfPage] = useState(1);
   // Local mirror of the item so async writes (auto-mirror, manual
   // download) can flip the modal to a freshly-uploaded Drive blob
   // without the parent re-rendering.
@@ -49,10 +54,43 @@ export function PreviewModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Listen for postMessage from the YT iframe's IFrame API so we
+  // can track current time + persist a resume position. The iframe
+  // is mounted with `enablejsapi=1` below; postMessage handshake is
+  // documented at https://developers.google.com/youtube/iframe_api_reference
+  useEffect(() => {
+    function onMsg(ev: MessageEvent) {
+      if (typeof ev.data !== 'string') return;
+      try {
+        const m = JSON.parse(ev.data) as { event?: string; info?: { currentTime?: number } };
+        if (m?.info && typeof m.info.currentTime === 'number') {
+          ytTimeRef.current = m.info.currentTime;
+        }
+      } catch { /* not our message */ }
+    }
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  // Persist resume position when leaving a YT video. Local-only
+  // for now (per-device); a future build pushes through userprefs.
+  useEffect(() => {
+    return () => {
+      const v = view;
+      if (!v) return;
+      const yt = ytId(v.url);
+      if (!yt) return;
+      const t = Math.floor(ytTimeRef.current);
+      if (t > 5) writePref(`resume.${v.url}`, t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!view) return null;
 
   const yt = ytId(view.url);
   const pdf = isPdf(view.url);
+  const ytResume = yt ? readPref<number>(`resume.${view.url}`, 0) : 0;
   const driveSrc = view.driveFileId
     ? `https://drive.google.com/file/d/${encodeURIComponent(view.driveFileId)}/preview`
     : null;
@@ -176,11 +214,20 @@ export function PreviewModal({
               />
             ) : yt ? (
               <iframe
-                src={`https://www.youtube.com/embed/${encodeURIComponent(yt)}?autoplay=1`}
+                ref={ytIframeRef}
+                src={`https://www.youtube.com/embed/${encodeURIComponent(yt)}?autoplay=1&enablejsapi=1&start=${ytResume}&origin=${encodeURIComponent(typeof window !== 'undefined' ? location.origin : '')}`}
                 className="h-full w-full"
                 title="YouTube"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
+                onLoad={() => {
+                  // Subscribe to playback-state events so we get
+                  // periodic currentTime updates via postMessage.
+                  const w = ytIframeRef.current?.contentWindow;
+                  if (!w) return;
+                  w.postMessage(JSON.stringify({ event: 'listening' }), '*');
+                  w.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }), '*');
+                }}
               />
             ) : hostSrc ? (
               <video src={hostSrc} controls autoPlay className="h-full w-full bg-black" />
@@ -194,6 +241,24 @@ export function PreviewModal({
               />
             )}
           </div>
+          {(yt || pdf) && (
+            <BookmarkDrawer
+              url={view.url}
+              kind={yt ? 'video' : 'pdf'}
+              currentRef={() => (yt ? Math.floor(ytTimeRef.current) : pdfPage)}
+              onJump={(ref) => {
+                if (yt) {
+                  const w = ytIframeRef.current?.contentWindow;
+                  if (w) {
+                    w.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [ref, true] }), '*');
+                    w.postMessage(JSON.stringify({ event: 'command', func: 'playVideo' }), '*');
+                  }
+                } else if (pdf) {
+                  setPdfPage(ref);
+                }
+              }}
+            />
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

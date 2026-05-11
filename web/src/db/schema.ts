@@ -125,6 +125,23 @@ export const files = pgTable('files', {
   byUser: index('files_user_idx').on(t.userId, t.kind),
 }));
 
+/** Per-URL bookmarks for the preview modal — YouTube timestamps,
+ * PDF page anchors, markdown note per bookmark. Lives at the URL
+ * level (not row) so the same bookmark survives a row rename or
+ * cross-section move. */
+export const bookmarks = pgTable('bookmarks', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  url: text('url').notNull(),
+  kind: text('kind').notNull(),            // 'video' | 'pdf'
+  ref: integer('ref').notNull(),            // seconds (video) | page (pdf)
+  label: text('label').default('').notNull(),
+  note: text('note').default('').notNull(),  // markdown
+  createdAt: timestamp('createdAt').defaultNow().notNull(),
+}, (t) => ({
+  byUser: index('bookmarks_user_url_idx').on(t.userId, t.url),
+}));
+
 /** Activity log — each user's recent operations for an "undo" surface
  * + audit trail. */
 export const events = pgTable('events', {
