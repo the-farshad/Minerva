@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, ExternalLink, Download, Save } from 'lucide-react';
+import { X, ExternalLink, Download, Save, FileCheck2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookmarkDrawer } from './bookmark-drawer';
 import { NotesPane } from './notes-pane';
@@ -46,6 +46,8 @@ export function PreviewModal({
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(!!item), [item]);
   const [downloading, setDownloading] = useState(false);
+  const [savingAnnot, setSavingAnnot] = useState(false);
+  const pdfIframeRef = useRef<HTMLIFrameElement>(null);
   const ytIframeRef = useRef<HTMLIFrameElement>(null);
   const ytTimeRef = useRef<number>(0);
   const [pdfPage, setPdfPage] = useState(1);
@@ -128,6 +130,50 @@ export function PreviewModal({
       });
       toast.success('Also mirrored to local folder.');
     } catch { /* tolerate */ }
+  }
+
+  async function saveAnnotations() {
+    if (!view || !view.sectionSlug || !view.rowId || savingAnnot) return;
+    const iframe = pdfIframeRef.current;
+    interface PdfViewerApp {
+      pdfDocument?: { saveDocument?: () => Promise<Uint8Array> };
+    }
+    const w = iframe?.contentWindow as (Window & { PDFViewerApplication?: PdfViewerApp }) | null;
+    const app = w?.PDFViewerApplication;
+    if (!app?.pdfDocument?.saveDocument) {
+      toast.error('PDF viewer not ready yet — wait a beat and retry.');
+      return;
+    }
+    setSavingAnnot(true);
+    toast.info('Saving annotations to Drive…');
+    try {
+      const bytes = await app.pdfDocument.saveDocument();
+      const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+      const stem = (view.title || 'paper').replace(/[^\w.\- ]+/g, '_').slice(0, 100);
+      const filename = `${stem}.annotated.pdf`;
+      const fd = new FormData();
+      fd.append('file', blob, filename);
+      fd.append('name', filename);
+      const up = await fetch('/api/drive/upload', { method: 'POST', body: fd });
+      const upJson = await up.json();
+      if (!up.ok) throw new Error(upJson.error || `upload: ${up.status}`);
+      // Point the row at the new Drive copy.
+      await fetch(`/api/sections/${view.sectionSlug}/rows/${view.rowId}/mark-offline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ marker: `drive:${upJson.fileId}` }),
+      });
+      setView((prev) => (prev ? { ...prev, driveFileId: upJson.fileId } : prev));
+      // Mirror locally too if the user opted in.
+      if (view.sectionSlug && view.rowId) {
+        mirrorToLocal('paper', upJson.fileId, filename, view.sectionSlug, view.rowId);
+      }
+      toast.success('Annotations saved.');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSavingAnnot(false);
+    }
   }
 
   async function saveOffline(kind: 'video' | 'paper') {
@@ -229,6 +275,17 @@ export function PreviewModal({
                 <Save className="h-3.5 w-3.5" /> {downloading ? 'Saving…' : 'Save offline'}
               </button>
             )}
+            {pdf && view.driveFileId && view.sectionSlug && view.rowId && (
+              <button
+                type="button"
+                onClick={saveAnnotations}
+                disabled={savingAnnot}
+                title="Save the current PDF, including highlights / sticky notes / ink, back to Drive"
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+              >
+                <FileCheck2 className="h-3.5 w-3.5" /> {savingAnnot ? 'Saving…' : 'Save annotations'}
+              </button>
+            )}
             {view.sectionSlug && view.rowId && (
               <button
                 type="button"
@@ -250,6 +307,7 @@ export function PreviewModal({
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
             {(hostSrc || driveSrc) && pdf ? (
               <iframe
+                ref={pdfIframeRef}
                 src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(
                   hostSrc ?? `/api/drive/file?id=${view.driveFileId}`,
                 )}#page=${pdfPage}`}
