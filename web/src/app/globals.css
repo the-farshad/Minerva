@@ -77,6 +77,13 @@ html[data-theme="sepia"] .border-zinc-200,
 html[data-theme="sepia"] .border-zinc-300,
 html[data-theme="sepia"] .dark\:border-zinc-700,
 html[data-theme="sepia"] .dark\:border-zinc-800 { border-color: #d6c89a !important; }
+/* Sepia primary / selected: warm dark brown with the parchment tone for text. */
+html[data-theme="sepia"] .bg-zinc-900 { background-color: #5b4326 !important; }
+html[data-theme="sepia"] .bg-zinc-900.text-white,
+html[data-theme="sepia"] .bg-zinc-900 .text-white,
+html[data-theme="sepia"] .text-white { color: #f4ecd8 !important; }
+/* Sepia links — replace standard blue with warm brown. */
+html[data-theme="sepia"] .text-blue-600 { color: #8a5a1a !important; }
 
 /* VT323 — neon-green on near-black, monospace everywhere. */
 html[data-theme="vt323"] {
@@ -107,6 +114,17 @@ html[data-theme="vt323"] .border-zinc-200,
 html[data-theme="vt323"] .border-zinc-300,
 html[data-theme="vt323"] .dark\:border-zinc-700,
 html[data-theme="vt323"] .dark\:border-zinc-800 { border-color: #2a4d2a !important; }
+/* VT323 primary / selected: neon green block with black text — CRT
+ * terminal vibe. Applies to both the light-mode filled style
+ * (`bg-zinc-900`) and the dark inverted (`dark:bg-white`) variant. */
+html[data-theme="vt323"] .bg-zinc-900,
+html[data-theme="vt323"] .dark\:bg-white { background-color: #00ff66 !important; }
+html[data-theme="vt323"] .bg-zinc-900.text-white,
+html[data-theme="vt323"] .bg-zinc-900 .text-white,
+html[data-theme="vt323"] .text-white,
+html[data-theme="vt323"] .dark\:text-zinc-900 { color: #000000 !important; }
+/* VT323 links — green underline on the dark background. */
+html[data-theme="vt323"] .text-blue-600 { color: #7dffb6 !important; }
 
 /* Font picker — applied via <html data-font="..."> */
 html[data-font="serif"]   body, html[data-font="serif"]   body * { font-family: ui-serif, Georgia, "Times New Roman", serif !important; }
