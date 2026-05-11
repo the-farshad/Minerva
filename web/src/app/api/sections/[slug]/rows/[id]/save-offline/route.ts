@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { uploadToMinervaDrive } from '@/lib/drive';
+import { uploadToMinervaDrive, DRIVE_SUBFOLDERS } from '@/lib/drive';
 import { notifyTelegram } from '@/lib/telegram';
 
 const HELPER = (process.env.HELPER_BASE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
@@ -120,9 +120,11 @@ async function saveOffline(
   try {
     // Drive treats `/` as a literal in filenames — flatten before upload
     // so the file appears with a clean leaf name. The client receives
-    // the path-prefixed version for the local mirror.
+    // the path-prefixed version for the local mirror. Subfolder picks
+    // between `videos/` and `papers/` under "Minerva offline".
     const driveName = filename.split('/').pop() || filename;
-    const up = await uploadToMinervaDrive(userId, bytes, driveName, mime);
+    const subfolder = DRIVE_SUBFOLDERS[kind] || null;
+    const up = await uploadToMinervaDrive(userId, bytes, driveName, mime, subfolder);
     fileId = up.id;
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });

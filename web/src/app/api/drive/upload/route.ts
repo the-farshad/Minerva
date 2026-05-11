@@ -9,7 +9,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
-import { uploadToMinervaDrive } from '@/lib/drive';
+import { uploadToMinervaDrive, DRIVE_SUBFOLDERS } from '@/lib/drive';
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -21,10 +21,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing file' }, { status: 400 });
   }
   const name = String(form.get('name') || 'minerva-upload.bin').slice(0, 200);
+  const kindRaw = String(form.get('kind') || '').toLowerCase();
+  const subfolder = (kindRaw && kindRaw in DRIVE_SUBFOLDERS)
+    ? DRIVE_SUBFOLDERS[kindRaw as keyof typeof DRIVE_SUBFOLDERS]
+    : (mime => mime === 'application/pdf' ? DRIVE_SUBFOLDERS.paper : null)(file.type || '');
   const mime = file.type || 'application/octet-stream';
   const bytes = await file.arrayBuffer();
   try {
-    const up = await uploadToMinervaDrive(userId, bytes, name, mime);
+    const up = await uploadToMinervaDrive(userId, bytes, name, mime, subfolder);
     return NextResponse.json({ fileId: up.id, name });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });

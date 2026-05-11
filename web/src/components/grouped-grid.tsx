@@ -5,6 +5,7 @@ import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Serv
 import { toast } from 'sonner';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
+import { appPickMany } from './multi-picker';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
 import { GroupNotes } from './group-notes';
@@ -267,16 +268,23 @@ export function GroupedGrid({
                       <button
                         type="button"
                         onClick={async () => {
-                          const next = await appPrompt(`Category for "${key}"`, {
-                            body: `Applied to every item in this group.`,
-                            placeholder: 'e.g. tutorial',
+                          // Pull the category column's schema-defined
+                          // options so the picker offers them as chips,
+                          // then let the user add custom values too.
+                          const headers = section.schema.headers;
+                          const catIdx = headers.indexOf('category');
+                          const raw = catIdx >= 0 ? String(section.schema.types?.[catIdx] || '') : '';
+                          const m = raw.match(/^multiselect\(([^)]*)\)/);
+                          const options = m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+                          const next = await appPickMany(`Categories for "${key}"`, options, {
+                            body: 'Pick one or more — applies to every item in this group.',
                           });
                           if (next === null) return;
                           await Promise.all(groupRows.map((gr) =>
                             fetch(`/api/sections/${section.slug}/rows/${gr.id}`, {
                               method: 'PATCH',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ data: { category: next.trim() } }),
+                              body: JSON.stringify({ data: { category: next.join(', ') } }),
                             }).catch(() => undefined),
                           ));
                           toast.success(`Set category on ${groupRows.length} items.`);

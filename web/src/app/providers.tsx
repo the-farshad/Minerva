@@ -7,6 +7,7 @@ import { AiOverlay } from '@/components/ai-overlay';
 import { ThemeBoot } from '@/components/theme-card';
 import { ConfirmHost } from '@/components/confirm';
 import { PromptHost } from '@/components/prompt';
+import { MultiPickerHost } from '@/components/multi-picker';
 import { pullServerPrefs } from '@/lib/prefs';
 
 function PrefsBoot() {
@@ -27,6 +28,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <PrefsBoot />
       <ConfirmHost />
       <PromptHost />
+      <MultiPickerHost />
     </QueryClientProvider>
   );
 }
