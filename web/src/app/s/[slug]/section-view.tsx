@@ -107,30 +107,32 @@ export function SectionView({
 
   return (
     <main className="mx-auto w-full max-w-6xl px-6 py-8">
-      <header className="mb-6 flex items-center justify-between gap-4">
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">{section.title}</h1>
-        <div className="flex flex-wrap items-center gap-1 rounded-full border border-zinc-200 p-1 dark:border-zinc-800">
-          {([
-            ['list', List, 'List'],
-            ['grid', LayoutGrid, 'Grid'],
-            ['kanban', Columns3, 'Kanban'],
-            ['calendar', CalendarIcon, 'Calendar'],
-          ] as const).map(([m, Icon, label]) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={cn(
-                'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
-                mode === m
-                  ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-                  : 'text-zinc-500',
-              )}
-              title={`${label} view`}
-            >
-              <Icon className="h-3.5 w-3.5" /> {label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-full border border-zinc-200 p-1 dark:border-zinc-800">
+            {([
+              ['list', List, 'List'],
+              ['grid', LayoutGrid, 'Grid'],
+              ['kanban', Columns3, 'Kanban'],
+              ['calendar', CalendarIcon, 'Calendar'],
+            ] as const).map(([m, Icon, label]) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
+                  mode === m
+                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+                    : 'text-zinc-500',
+                )}
+                title={`${label} view`}
+              >
+                <Icon className="h-3.5 w-3.5" /> {label}
+              </button>
+            ))}
+          </div>
           <AddByUrl
             section={section}
             onAdded={(row) => setRows((rs) => [...rs, row])}
@@ -139,7 +141,7 @@ export function SectionView({
             type="button"
             onClick={() => createRow.mutate()}
             disabled={createRow.isPending}
-            className="ml-1 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+            className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
           >
             <Plus className="h-3.5 w-3.5" /> Add empty
           </button>
@@ -158,7 +160,7 @@ export function SectionView({
                 toast.error((e as Error).message);
               }
             }}
-            className="ml-1 inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800"
+            className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800"
             title="One-way export to a new Google Sheet"
           >
             <FileSpreadsheet className="h-3.5 w-3.5" /> Sheets
