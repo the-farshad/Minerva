@@ -337,19 +337,44 @@ def download():
         # progressive-mp4 and DASH-only cases.
         ydl_opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best"
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            path = ydl.prepare_filename(info)
-            if not os.path.exists(path):
-                base, _ = os.path.splitext(path)
-                for ext in (".mp3", ".m4a", ".webm", ".mkv", ".mp4"):
-                    if os.path.exists(base + ext):
-                        path = base + ext
-                        break
-    except Exception as exc:  # noqa: BLE001
+    # YouTube ratchets anti-bot per-client. When the default client
+    # gets blocked, retrying with `web_safari`, `ios`, or `web_embedded`
+    # often slips through — the bot signal is keyed on each client's
+    # signature, not the IP alone. We try them in order and stop on
+    # the first success. Each attempt re-prepares ydl_opts so plugin
+    # state (PO-token cache) resets cleanly.
+    PLAYER_CLIENT_RETRIES = (None, "web_safari", "ios", "web", "mweb")
+    info = None
+    path = None
+    last_exc: Exception | None = None
+    for client in PLAYER_CLIENT_RETRIES:
+        attempt_opts = {k: v.copy() if isinstance(v, dict) else v for k, v in ydl_opts.items()}
+        if client is not None:
+            # Merge into extractor_args without dropping the POT
+            # provider entry that's already there.
+            ea = dict(attempt_opts.get("extractor_args") or {})
+            ea["youtube"] = {"player_client": [client]}
+            attempt_opts["extractor_args"] = ea
+        try:
+            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                path = ydl.prepare_filename(info)
+                if not os.path.exists(path):
+                    base, _ = os.path.splitext(path)
+                    for ext in (".mp3", ".m4a", ".webm", ".mkv", ".mp4"):
+                        if os.path.exists(base + ext):
+                            path = base + ext
+                            break
+            break  # success
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            label = client or "default"
+            print(f"[yt-dlp] {label} failed: {exc}", flush=True)
+            continue
+    if info is None:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        msg = f"yt-dlp failed: {exc}"
+        exc = last_exc or Exception("all yt-dlp player-client retries failed")
+        msg = f"yt-dlp failed (all {len(PLAYER_CLIENT_RETRIES)} clients): {exc}"
         # Annotate the bot-wall error with what the helper actually saw
         # for cookies, so the user can tell whether the volume mount is
         # broken (no cookies path) versus the file is empty (mount works

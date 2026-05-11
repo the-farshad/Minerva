@@ -363,19 +363,16 @@ export function PreviewModal({
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
             {pdf && view.rowId ? (
-              /* Bare PDF URL — the browser's built-in PDF viewer
-               * displays it. We previously routed through the
-               * bundled PDF.js viewer for highlight/sticky-note
-               * annotation tools, but that viewer was silently
-               * failing to mount in the user's browser. The native
-               * viewer is bullet-proof; annotation save still
-               * works from the bundled viewer when explicitly
-               * opened via "Open in new tab". */
-              <IframeWithFallback
-                title="PDF"
+              /* <object> is the standards-compliant way to embed a
+               * PDF. The browser's native viewer renders the data,
+               * and if it can't (Brave strict shields, Safari ITP,
+               * Firefox with the PDF viewer disabled, etc.), the
+               * inner children render instead — a clear download
+               * link, no Chrome "page couldn't load" error. */
+              <PdfObject
                 src={`/api/pdf/${view.rowId}#page=${pdfPage}`}
                 fallbackHref={view.url}
-                iframeRef={pdfIframeRef}
+                pdfRef={pdfIframeRef}
               />
             ) : pdf ? (
               <IframeWithFallback
@@ -452,6 +449,59 @@ export function PreviewModal({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/** <object>-based PDF embed. The native plugin renders the PDF; if
+ * the browser refuses (PDF viewer disabled, strict shields, …),
+ * the inner content renders instead. Importantly, this never
+ * triggers Chrome's "This page couldn't load" error — that error
+ * happens when iframe navigation fails, but <object> just shows
+ * its fallback children when its `data` can't be displayed. */
+function PdfObject({
+  src, fallbackHref, pdfRef,
+}: {
+  src: string;
+  fallbackHref?: string;
+  pdfRef?: React.RefObject<HTMLIFrameElement | null>;
+}) {
+  // pdfRef typed as iframe for backward-compat with the annotations
+  // save flow; we cast through HTMLObjectElement which exposes the
+  // same `contentWindow` for accessing PDFViewerApplication if the
+  // browser's plugin uses the bundled viewer (Firefox does this).
+  return (
+    <object
+      ref={pdfRef as unknown as React.RefObject<HTMLObjectElement>}
+      data={src}
+      type="application/pdf"
+      className="h-full w-full bg-zinc-100 dark:bg-zinc-900"
+    >
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <strong>Your browser couldn&rsquo;t render the PDF inline.</strong>
+        <p className="max-w-md text-xs text-zinc-500">
+          Likely a privacy-mode setting or PDF-viewer block. Use the buttons below.
+        </p>
+        <div className="flex gap-2">
+          <a
+            href={src}
+            download
+            className="rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+          >
+            Download PDF
+          </a>
+          {fallbackHref && (
+            <a
+              href={fallbackHref}
+              target="_blank"
+              rel="noopener"
+              className="rounded-full border border-zinc-300 px-3 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              Open at source
+            </a>
+          )}
+        </div>
+      </div>
+    </object>
   );
 }
 
