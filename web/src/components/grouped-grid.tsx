@@ -200,6 +200,70 @@ export function GroupedGrid({
                     <option value="oldest">Oldest</option>
                   </select>
                   <GroupNotes sectionSlug={section.slug} groupKey={key} />
+                  {(section.preset === 'youtube' || section.preset === 'papers') && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!confirm(`Save offline copies of all ${groupRows.length} items in "${key}"?`)) return;
+                          const kind = section.preset === 'youtube' ? 'video' : 'paper';
+                          toast.info(`Saving ${groupRows.length} items offline…`);
+                          let done = 0, failed = 0;
+                          for (const gr of groupRows) {
+                            try {
+                              const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/save-offline`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ kind }),
+                              });
+                              if (resp.ok) done++; else failed++;
+                            } catch { failed++; }
+                          }
+                          toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}.`);
+                        }}
+                        className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                        title={`Save every item in "${key}" offline`}
+                      >
+                        Save all offline
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!confirm(`Delete ALL ${groupRows.length} items in "${key}"? This cannot be undone.`)) return;
+                          for (const gr of groupRows) {
+                            await onDelete(gr.id);
+                          }
+                          toast.success(`Deleted ${groupRows.length} items.`);
+                        }}
+                        className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-zinc-700 dark:text-red-400 dark:hover:bg-red-950"
+                        title={`Delete every item in "${key}"`}
+                      >
+                        Delete all
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const next = prompt(`Category for all items in "${key}":`);
+                          if (next === null) return;
+                          for (const gr of groupRows) {
+                            try {
+                              await fetch(`/api/sections/${section.slug}/rows/${gr.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ data: { category: next.trim() } }),
+                              });
+                            } catch { /* tolerate */ }
+                          }
+                          toast.success(`Set category on ${groupRows.length} items.`);
+                          location.reload();
+                        }}
+                        className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                        title={`Set category for every item in "${key}"`}
+                      >
+                        Set category
+                      </button>
+                    </>
+                  )}
                 </>
               )}
             </header>

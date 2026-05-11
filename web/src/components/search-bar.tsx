@@ -68,7 +68,7 @@ export function SearchBar() {
                 return (
                   <li key={h.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
                     <Link
-                      href={`/s/${encodeURIComponent(h.sectionSlug)}`}
+                      href={`/s/${encodeURIComponent(h.sectionSlug)}?row=${encodeURIComponent(h.id)}`}
                       onClick={() => setOpen(false)}
                       className="block px-3 py-2 text-xs hover:bg-zinc-50 dark:hover:bg-zinc-900"
                     >

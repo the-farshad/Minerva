@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { naturalCompare, cn } from '@/lib/utils';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -40,6 +41,18 @@ export function SectionView({
   const [mode, setMode] = useState<'list' | 'grid' | 'kanban' | 'calendar'>('grid');
   const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; notes?: string } | null>(null);
   const qc = useQueryClient();
+
+  const search = useSearchParams();
+  // When a search hit deep-links into this section with `?row=<id>`,
+  // auto-open the matching row's preview so the user lands on the
+  // exact thing they searched for instead of having to scan a page.
+  useEffect(() => {
+    const wantedId = search?.get('row');
+    if (!wantedId) return;
+    const r = rows.find((x) => x.id === wantedId);
+    if (r) openPreview(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   function openPreview(r: Row) {
     const url = String(r.data.url || '');
