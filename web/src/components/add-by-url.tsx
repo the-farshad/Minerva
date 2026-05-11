@@ -34,7 +34,15 @@ export function AddByUrl({
   const kind = sectionKind(section);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState('');
-  const [preview, setPreview] = useState<Record<string, string> | null>(null);
+  type LookupItem = Record<string, string>;
+  type LookupSingle = LookupItem & { kind?: string };
+  type LookupPlaylist = { kind: 'playlist'; playlistId: string; items: LookupItem[] };
+  type LookupResult = LookupSingle | LookupPlaylist;
+  function isPlaylist(p: LookupResult): p is LookupPlaylist {
+    return p && (p as LookupPlaylist).kind === 'playlist'
+      && Array.isArray((p as LookupPlaylist).items);
+  }
+  const [preview, setPreview] = useState<LookupResult | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function lookup() {
@@ -48,7 +56,7 @@ export function AddByUrl({
         body: JSON.stringify({ url: url.trim() }),
       });
       if (!r.ok) throw new Error(`Lookup failed: ${r.status}`);
-      setPreview(await r.json());
+      setPreview((await r.json()) as LookupResult);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -59,12 +67,32 @@ export function AddByUrl({
   const create = useMutation({
     mutationFn: async () => {
       if (!preview) throw new Error('Nothing to add yet');
-      // Drop any keys the section doesn't have a column for; the
-      // row's data is schemaless JSONB but keeping it clean makes
-      // the table renderable.
       const allowed = new Set(section.schema.headers);
+
+      // Playlist branch: fan out into N rows, one per video.
+      if (isPlaylist(preview)) {
+        const created: { id: string; data: Record<string, unknown>; updatedAt: string }[] = [];
+        for (const item of preview.items) {
+          const data: Record<string, unknown> = { playlist: '' };
+          if (allowed.has('playlist')) data.playlist = preview.playlistId;
+          for (const [k, v] of Object.entries(item)) {
+            if (v == null || v === '') continue;
+            if (allowed.has(k)) data[k] = v;
+          }
+          const r = await fetch(`/api/sections/${section.slug}/rows`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data }),
+          });
+          if (!r.ok) throw new Error(`Add row failed: ${r.status}`);
+          created.push(await r.json());
+        }
+        return { many: created };
+      }
+
+      // Single row branch.
       const data: Record<string, unknown> = {};
-      Object.entries(preview).forEach(([k, v]) => {
+      Object.entries(preview as LookupItem).forEach(([k, v]) => {
         if (v == null || v === '') return;
         if (allowed.has(k)) data[k] = v;
       });
@@ -75,11 +103,16 @@ export function AddByUrl({
         body: JSON.stringify({ data }),
       });
       if (!r.ok) throw new Error(`add: ${r.status}`);
-      return (await r.json()) as { id: string; data: Record<string, unknown>; updatedAt: string };
+      return { one: (await r.json()) as { id: string; data: Record<string, unknown>; updatedAt: string } };
     },
-    onSuccess: (row) => {
-      onAdded(row);
-      toast.success('Added.');
+    onSuccess: (out) => {
+      if ('many' in out && out.many) {
+        out.many.forEach(onAdded);
+        toast.success(`Added ${out.many.length} videos.`);
+      } else if ('one' in out && out.one) {
+        onAdded(out.one);
+        toast.success('Added.');
+      }
       setOpen(false);
       setUrl('');
       setPreview(null);
@@ -132,19 +165,37 @@ export function AddByUrl({
               disabled={!preview || create.isPending}
               className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
             >
-              {create.isPending ? 'Adding…' : 'Add to ' + section.slug}
+              {create.isPending
+                ? 'Adding…'
+                : preview && isPlaylist(preview)
+                ? `Add ${preview.items.length} videos`
+                : 'Add to ' + section.slug}
             </button>
           </div>
-          {preview && (
+          {preview && isPlaylist(preview) ? (
             <div className="mt-4 max-h-72 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-              {Object.entries(preview).filter(([, v]) => v).map(([k, v]) => (
+              <p className="mb-2 text-zinc-600 dark:text-zinc-400">
+                Playlist with <strong>{preview.items.length} video{preview.items.length === 1 ? '' : 's'}</strong>:
+              </p>
+              <ul className="space-y-1">
+                {preview.items.slice(0, 30).map((it, i) => (
+                  <li key={i} className="line-clamp-1">{it.title}</li>
+                ))}
+                {preview.items.length > 30 && (
+                  <li className="text-zinc-500">…and {preview.items.length - 30} more</li>
+                )}
+              </ul>
+            </div>
+          ) : preview ? (
+            <div className="mt-4 max-h-72 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
+              {Object.entries(preview as Record<string, string>).filter(([, v]) => v).map(([k, v]) => (
                 <div key={k} className="grid grid-cols-[7rem_1fr] gap-2 py-0.5">
                   <span className="text-zinc-500">{k}</span>
                   <span className="break-words">{String(v).slice(0, 400)}</span>
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

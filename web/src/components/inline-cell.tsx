@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { MultiChipEditor } from './multi-chip-editor';
 
 /**
  * Tiny inline editor — click a cell, edit, blur or Enter to commit,
@@ -57,6 +58,18 @@ export function InlineCell({
       }
     }
   }, [editing]);
+
+  // Multiselect uses a chip popover instead of an inline input —
+  // entering "edit mode" doesn't apply.
+  if (typeof type === 'object' && type.kind === 'multiselect') {
+    return (
+      <MultiChipEditor
+        value={stringify(value)}
+        options={type.options}
+        onCommit={onCommit}
+      />
+    );
+  }
 
   async function commit(next: string) {
     setEditing(false);

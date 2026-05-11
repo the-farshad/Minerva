@@ -13,6 +13,7 @@ import { auth } from '@/auth';
 const ARXIV_RE = /(?:arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(?:v\d+)?/i;
 const DOI_RE = /(?:doi\.org\/|^)(10\.\d{4,9}\/\S+)/i;
 const YT_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/;
+const YT_LIST_RE = /[?&]list=([\w-]+)/;
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -29,6 +30,13 @@ export async function POST(req: NextRequest) {
   // DOI
   const dm = raw.match(DOI_RE);
   if (dm) return NextResponse.json(await crossrefLookup(dm[1]));
+  // YouTube playlist (preferred over single video when both are
+  // present in the URL — `?list=...&v=...`).
+  const lm = raw.match(YT_LIST_RE);
+  if (lm) {
+    const items = await youtubePlaylist(lm[1]);
+    return NextResponse.json({ kind: 'playlist', playlistId: lm[1], items });
+  }
   // YouTube single video
   const ym = raw.match(YT_RE);
   if (ym) return NextResponse.json(await youtubeLookup(ym[1], raw));
@@ -107,4 +115,35 @@ async function youtubeLookup(videoId: string, originalUrl: string) {
     thumbnail: j.thumbnail_url || '',
     url: `https://www.youtube.com/watch?v=${videoId}`,
   };
+}
+
+/** Enumerate every video in a YouTube playlist via the helper's
+ * /proxy (which fronts youtube.com on its allow-list). Uses the
+ * lightweight `playlist?list=…` HTML page rather than the Data
+ * API — no key required, but capped at the page-load default. */
+async function youtubePlaylist(listId: string) {
+  const helper = (process.env.HELPER_BASE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+  const target = `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`;
+  const r = await fetch(`${helper}/proxy?${encodeURIComponent(target)}`, { cache: 'no-store' });
+  if (!r.ok) return [];
+  const html = await r.text();
+  // YouTube's playlist HTML embeds an ytInitialData blob with the
+  // video list. Pull every (videoId, title) pair we can find.
+  const items: { url: string; title: string; channel: string; thumbnail: string }[] = [];
+  const seen = new Set<string>();
+  const re = /"playlistVideoRenderer":\s*\{[^}]*?"videoId":"([\w-]{11})"[\s\S]*?"title":\{"runs":\[\{"text":"([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const [, videoId, title] = m;
+    if (seen.has(videoId)) continue;
+    seen.add(videoId);
+    items.push({
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      title: title.replace(/\\u0026/g, '&').replace(/\\"/g, '"'),
+      channel: '',
+      thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+    });
+    if (items.length >= 200) break;
+  }
+  return items;
 }
