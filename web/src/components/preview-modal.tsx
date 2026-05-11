@@ -35,6 +35,14 @@ function ytId(url: string) {
 function isPdf(url: string) {
   return PDF_RE.test(url);
 }
+/** Resolve a paper row's URL to the actual PDF: arxiv `/abs/` →
+ * `/pdf/`, otherwise return as-is. */
+function pdfDirectUrl(url: string): string {
+  if (/arxiv\.org\/abs\//i.test(url)) {
+    return url.replace(/\/abs\//i, '/pdf/').replace(/(\.pdf)?$/i, '.pdf');
+  }
+  return url;
+}
 
 export function PreviewModal({
   item,
@@ -307,43 +315,27 @@ export function PreviewModal({
           </header>
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
-            {(hostSrc || driveSrc) && pdf ? (
+            {pdf ? (
+              /* Always load the PDF immediately, regardless of whether
+               * the user has a Drive copy yet. Priority for the inner
+               * `file=` URL:
+               *   1. host:<path>   — local copy via helper /file/serve
+               *   2. drive:<id>    — auth-gated proxy to /api/drive/file
+               *   3. helper /proxy → fetches the public PDF URL with
+               *      CORS stripped (so arxiv loads inside an iframe).
+               * The background auto-mirror still uploads to Drive so
+               * annotations persist, but the user doesn't wait for it.
+               */
               <IframeWithFallback
                 title="PDF"
                 src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(
-                  hostSrc ?? `/api/drive/file?id=${view.driveFileId}`,
+                  hostSrc
+                    ?? (view.driveFileId ? `/api/drive/file?id=${view.driveFileId}` : null)
+                    ?? `/api/helper/proxy?${encodeURIComponent(pdfDirectUrl(view.url))}`,
                 )}#page=${pdfPage}`}
                 fallbackHref={view.url}
                 iframeRef={pdfIframeRef}
               />
-            ) : pdf ? (
-              <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-center text-sm text-zinc-500">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-300" />
-                <div>
-                  Mirroring PDF to your Drive…
-                  <div className="mt-1 text-xs">
-                    arxiv blocks direct framing, so we copy the PDF first.
-                  </div>
-                </div>
-                {view.sectionSlug && view.rowId && (
-                  <button
-                    type="button"
-                    onClick={() => saveOffline('paper')}
-                    disabled={downloading}
-                    className="mt-2 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
-                  >
-                    {downloading ? 'Mirroring…' : 'Retry mirror'}
-                  </button>
-                )}
-                <a
-                  href={view.url}
-                  target="_blank"
-                  rel="noopener"
-                  className="text-xs underline-offset-2 hover:underline"
-                >
-                  Open at the source instead
-                </a>
-              </div>
             ) : yt ? (
               <YouTubeFrame
                 videoId={yt}

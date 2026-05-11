@@ -58,3 +58,10 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Bake the commit SHA + build timestamp into the image so
+          # the running UI can display them. NEXT_PUBLIC_* envs are
+          # frozen at next-build time, so we pass them through as
+          # build-args and the Dockerfile re-exports them.
+          build-args: |
+            NEXT_PUBLIC_BUILD_SHA=${{ github.sha }}
+            NEXT_PUBLIC_BUILD_TIME=${{ github.event.head_commit.timestamp }}

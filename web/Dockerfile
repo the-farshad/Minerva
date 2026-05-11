@@ -17,13 +17,23 @@ ENV DATABASE_URL=postgresql://x:x@127.0.0.1:5432/x \
     GOOGLE_OAUTH_CLIENT_ID=build \
     GOOGLE_OAUTH_CLIENT_SECRET=build \
     NEXTAUTH_URL=http://localhost:3000
+# Build-time provenance — surfaced in the UI's version badge so the
+# user can see exactly which commit + image they're running.
+ARG NEXT_PUBLIC_BUILD_SHA=unknown
+ARG NEXT_PUBLIC_BUILD_TIME=
+ENV NEXT_PUBLIC_BUILD_SHA=${NEXT_PUBLIC_BUILD_SHA}
+ENV NEXT_PUBLIC_BUILD_TIME=${NEXT_PUBLIC_BUILD_TIME}
 RUN npm run build
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
+ARG NEXT_PUBLIC_BUILD_SHA=unknown
+ARG NEXT_PUBLIC_BUILD_TIME=
 ENV NODE_ENV=production \
     PORT=3000 \
-    HOSTNAME=0.0.0.0
+    HOSTNAME=0.0.0.0 \
+    NEXT_PUBLIC_BUILD_SHA=${NEXT_PUBLIC_BUILD_SHA} \
+    NEXT_PUBLIC_BUILD_TIME=${NEXT_PUBLIC_BUILD_TIME}
 RUN apk add --no-cache tini curl unzip
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules

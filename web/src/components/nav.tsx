@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { Home, Settings, LogOut, Share2, Calendar, Timer, Network } from 'lucide-react';
 import { signOutAction } from '@/app/actions';
 import { SearchBar } from './search-bar';
+import { VersionBadge } from './version-badge';
 
 const PRIMARY = [
   { href: '/', label: 'Home', icon: Home },
@@ -50,6 +51,7 @@ export function Nav({
         </NavLink>
       ))}
       <div className="ml-auto flex items-center gap-3">
+        <VersionBadge />
         <SearchBar />
         {email && (
         <form action={signOutAction} className="flex items-center gap-2">
