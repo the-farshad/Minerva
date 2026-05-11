@@ -16,6 +16,7 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { uploadToMinervaDrive } from '@/lib/drive';
+import { notifyTelegram } from '@/lib/telegram';
 
 const HELPER = (process.env.HELPER_BASE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
 
@@ -114,5 +115,9 @@ export async function POST(
   await db.update(schema.rows)
     .set({ data: nextData, updatedAt: new Date() })
     .where(eq(schema.rows.id, row.id));
+  void notifyTelegram(
+    userId,
+    `*[${sec.title}]* offline copy ready: ${filename}`,
+  );
   return NextResponse.json({ fileId, kind, filename });
 }

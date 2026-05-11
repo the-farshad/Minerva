@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { naturalCompare, cn } from '@/lib/utils';
-import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon } from 'lucide-react';
+import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
@@ -142,6 +142,26 @@ export function SectionView({
             className="ml-1 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
           >
             <Plus className="h-3.5 w-3.5" /> Add empty
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              toast.info('Exporting to Sheets…');
+              try {
+                const r = await fetch(`/api/sections/${section.slug}/export-sheet`, { method: 'POST' });
+                const j = await r.json();
+                if (!r.ok) throw new Error(j.error || String(r.status));
+                toast.success(`Exported ${j.rows} rows.`, {
+                  action: { label: 'Open', onClick: () => window.open(j.webViewLink, '_blank') },
+                });
+              } catch (e) {
+                toast.error((e as Error).message);
+              }
+            }}
+            className="ml-1 inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800"
+            title="One-way export to a new Google Sheet"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" /> Sheets
           </button>
         </div>
       </header>

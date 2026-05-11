@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { eq, and } from 'drizzle-orm';
 import { db, schema } from '@/db';
 import { userIdFromFeedToken } from '@/lib/feed-token';
+import { notifyTelegram } from '@/lib/telegram';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -54,5 +55,9 @@ export async function POST(req: NextRequest) {
       notes: '',
     },
   }).returning();
+  void notifyTelegram(
+    userId,
+    `*Inbox:* [${(body.title || url).slice(0, 80)}](${url})`,
+  );
   return NextResponse.json({ ok: true, id: created.id }, { headers: CORS });
 }
