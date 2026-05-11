@@ -19,17 +19,28 @@ export async function GET(req: NextRequest) {
   if (!id) return new Response('Missing id', { status: 400 });
 
   const token = await getGoogleAccessToken(userId);
+  // Forward the client's Range header so <video> can seek and start
+  // playback before the full file is buffered. Drive supports Range
+  // on alt=media and will respond with 206 + Content-Range, which we
+  // pass through verbatim.
+  const reqHeaders: Record<string, string> = { Authorization: `Bearer ${token}` };
+  const range = req.headers.get('range');
+  if (range) reqHeaders.Range = range;
   const upstream = await fetch(
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`,
-    { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' },
+    { headers: reqHeaders, cache: 'no-store' },
   );
-  if (!upstream.ok) {
+  if (!upstream.ok && upstream.status !== 206) {
     return new Response(`Drive ${upstream.status}`, { status: upstream.status });
   }
-  return new Response(upstream.body, {
-    headers: {
-      'Content-Type': upstream.headers.get('Content-Type') || 'application/pdf',
-      'Cache-Control': 'private, max-age=300',
-    },
-  });
+  const respHeaders: Record<string, string> = {
+    'Content-Type': upstream.headers.get('Content-Type') || 'application/octet-stream',
+    'Cache-Control': 'private, max-age=300',
+    'Accept-Ranges': 'bytes',
+  };
+  const cr = upstream.headers.get('Content-Range');
+  if (cr) respHeaders['Content-Range'] = cr;
+  const cl = upstream.headers.get('Content-Length');
+  if (cl) respHeaders['Content-Length'] = cl;
+  return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
 }

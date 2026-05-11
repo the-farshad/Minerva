@@ -80,7 +80,28 @@ async function saveOffline(
     });
     if (!r.ok) {
       const txt = await r.text().catch(() => '');
-      return NextResponse.json({ error: `Helper /download ${r.status}: ${txt.slice(0, 200)}` }, { status: 502 });
+      // The helper prefixes the most informative line. Detect the
+      // common terminal failure modes and surface a one-line
+      // actionable message instead of dumping the raw yt-dlp
+      // stack trace into a toast.
+      let friendly: string;
+      if (/Sign in to confirm you'?re not a bot/i.test(txt)) {
+        friendly = /no cookies file found/i.test(txt)
+          ? "YouTube blocked this download (bot check). The helper has no cookies — mount /srv/cookies.txt on the droplet, or set MINERVA_BROWSER_PROFILE to a logged-in profile."
+          : "YouTube blocked this download (bot check). The mounted cookies are stale — re-export youtube.com cookies from a logged-in browser, replace cookies.txt, and retry.";
+      } else if (/age[- ]?restrict|age[- ]?confirm/i.test(txt)) {
+        friendly = "YouTube says this video is age-restricted. Cookies from a signed-in, age-confirmed account are required.";
+      } else if (/Private video|This video is private/i.test(txt)) {
+        friendly = "This video is private — yt-dlp can't reach it.";
+      } else if (/Video unavailable|This video is no longer available/i.test(txt)) {
+        friendly = "YouTube says this video is unavailable (removed, region-locked, or DMCA).";
+      } else if (/HTTP Error 429|Too Many Requests/i.test(txt)) {
+        friendly = "YouTube is rate-limiting this server. Wait a few minutes and retry.";
+      } else {
+        const head = txt.split('\n').find((l) => l.trim()) ?? '';
+        friendly = `Helper /download ${r.status}: ${head.slice(0, 400)}`;
+      }
+      return NextResponse.json({ error: friendly }, { status: 502 });
     }
     bytes = await r.arrayBuffer();
     mime = r.headers.get('Content-Type') || 'video/mp4';

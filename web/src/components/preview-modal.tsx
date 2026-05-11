@@ -29,7 +29,13 @@ type PreviewItem = {
 };
 
 const YT_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/;
-const PDF_RE = /\.pdf(\?|#|$)|arxiv\.org\/(?:abs|pdf)\//i;
+// Match: .pdf extension, arxiv abs/pdf URLs, and any Drive file
+// link — directly-uploaded papers carry a drive.google.com/file/d/<id>
+// URL, and iframing that URL hits Google's "You need access" page
+// (Drive's web preview enforces browser-session auth, not the app's
+// drive.file scope). Treating these as PDFs routes them through
+// /api/pdf/<rowId>, which streams the bytes via our OAuth token.
+const PDF_RE = /\.pdf(\?|#|$)|arxiv\.org\/(?:abs|pdf)\/|drive\.google\.com\/file\/d\//i;
 
 function ytId(url: string) {
   const m = url.match(YT_RE);
@@ -179,9 +185,6 @@ export function PreviewModal({
   const yt = ytId(view.url);
   const pdf = isPdf(view.url);
   const ytResume = yt ? readPref<number>(`resume.${view.url}`, 0) : 0;
-  const driveSrc = view.driveFileId
-    ? `https://drive.google.com/file/d/${encodeURIComponent(view.driveFileId)}/preview`
-    : null;
   const hostSrc = view.hostPath
     ? `/api/helper/file/serve?path=${encodeURIComponent(view.hostPath)}`
     : null;
@@ -384,6 +387,18 @@ export function PreviewModal({
                 )}#page=${pdfPage}`}
                 fallbackHref={view.url}
                 iframeRef={pdfIframeRef}
+              />
+            ) : yt && view.driveFileId ? (
+              /* Offline-first: once the video has been downloaded
+               * via yt-dlp + mirrored to Drive, play the local MP4
+               * instead of the YouTube embed. Drive auth is handled
+               * server-side; the <video> element sees plain
+               * same-origin bytes with Range support. */
+              <video
+                src={`/api/drive/file?id=${encodeURIComponent(view.driveFileId)}`}
+                controls
+                autoPlay
+                className="h-full w-full bg-black"
               />
             ) : yt ? (
               <YouTubeFrame
