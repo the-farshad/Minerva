@@ -6,6 +6,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
+import { readNdjsonResult } from '@/lib/ndjson';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
 import { appPickMany } from './multi-picker';
@@ -226,7 +227,8 @@ export function GroupedGrid({
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ kind }),
                               });
-                              if (resp.ok) done++; else failed++;
+                              await readNdjsonResult(resp);
+                              done++;
                             } catch { failed++; }
                           }));
                           toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}.`);
@@ -393,10 +395,7 @@ function CardActions({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind }),
       });
-      const text = await resp.text();
-      let j: { error?: string; skipped?: boolean } = {};
-      try { j = text ? JSON.parse(text) : {}; } catch { j = { error: text.slice(0, 200) }; }
-      if (!resp.ok) throw new Error(j.error || `save-offline: ${resp.status}`);
+      const j = await readNdjsonResult<{ skipped?: boolean }>(resp);
       toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
     } catch (err) {
       notify.error((err as Error).message);

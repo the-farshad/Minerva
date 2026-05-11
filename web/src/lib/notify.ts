@@ -1,10 +1,10 @@
 /**
- * Toast helpers — wrap Sonner so every error message gets a built-in
- * `Copy` action and stays on screen long enough to actually read.
- * Call sites use `notify.error(msg)` instead of `toast.error(msg)`.
+ * Toast helpers — wrap Sonner so every error message is a single,
+ * click-anywhere-to-copy panel. Call sites use `notify.error(msg)`.
  */
 'use client';
 
+import type { MouseEvent } from 'react';
 import { createElement } from 'react';
 import { toast } from 'sonner';
 
@@ -16,30 +16,38 @@ function doCopy(s: string) {
 }
 
 export const notify = {
+  /** Open a click-to-copy error toast. We bypass `toast.error()`
+   * because Sonner v2 wraps the message inside its own clickable
+   * shell and on some surfaces (modals over iframes, narrow grids)
+   * the click never makes it to the message span. `toast.custom`
+   * gives us a single owning element where we can mount our own
+   * click handler at the root. */
   error(msg: string) {
-    // Wrap the message in a span with an onClick so a single
-    // click anywhere on the toast body copies the full text. The
-    // earlier design required hitting a 40-px "Copy" action button
-    // — impossible when an iframe (Drive preview, YouTube embed)
-    // takes up most of the screen and eats every imprecise click.
-    // The explicit Copy action is still rendered as a visual cue.
-    toast.error(
-      createElement(
-        'span',
-        {
-          role: 'button',
-          tabIndex: 0,
-          onClick: () => doCopy(msg),
-          className: 'cursor-copy block',
-          title: 'Click to copy the full error',
-        },
-        msg,
-      ),
+    toast.custom((id) => createElement(
+      'div',
       {
-        duration: 15_000,
-        action: { label: 'Copy', onClick: () => doCopy(msg) },
+        role: 'button',
+        tabIndex: 0,
+        title: 'Click anywhere to copy this error',
+        onClick: (e: MouseEvent<HTMLDivElement>) => {
+          e.stopPropagation();
+          doCopy(msg);
+          toast.dismiss(id);
+        },
+        className: [
+          'pointer-events-auto cursor-copy select-text',
+          'max-w-md rounded-lg border shadow-lg p-3 text-sm',
+          'border-red-300 bg-red-50 text-red-900',
+          'dark:border-red-700 dark:bg-red-950 dark:text-red-100',
+        ].join(' '),
       },
-    );
+      createElement('div', { className: 'break-words' }, msg),
+      createElement(
+        'div',
+        { className: 'mt-2 text-[10px] opacity-70' },
+        'Click anywhere on this banner to copy. Tap again to dismiss.',
+      ),
+    ), { duration: 15_000 });
   },
   info(msg: string) { toast.info(msg); },
   success(msg: string) { toast.success(msg); },

@@ -5,6 +5,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
+import { readNdjsonResult } from '@/lib/ndjson';
 import { Link as LinkIcon, X } from 'lucide-react';
 
 type Section = { slug: string; schema: { headers: string[]; types: string[] }; preset?: string | null };
@@ -136,12 +137,7 @@ export function AddByUrl({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ kind: 'paper' }),
             });
-            const text = await r.text();
-            let j: { error?: string; skipped?: boolean } = {};
-            try { j = text ? JSON.parse(text) : {}; } catch { j = { error: text.slice(0, 200) }; }
-            if (!r.ok) {
-              notify.error(`Paper auto-save to Drive failed: ${j.error || r.status}`);
-            }
+            await readNdjsonResult(r);
           } catch (e) {
             notify.error(`Paper auto-save to Drive failed: ${(e as Error).message}`);
           }

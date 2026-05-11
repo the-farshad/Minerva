@@ -10,6 +10,7 @@ import { NotesPane } from './notes-pane';
 import { readPref, writePref } from '@/lib/prefs';
 import { StickyNote } from 'lucide-react';
 import { localMirror } from '@/lib/local-mirror';
+import { readNdjsonResult } from '@/lib/ndjson';
 
 type PreviewItem = {
   url: string;
@@ -189,13 +190,13 @@ export function PreviewModal({
           },
         );
         if (cancelled) return;
-        if (!r.ok) return;
-        const j = await r.json().catch(() => ({}));
+        const j = await readNdjsonResult<{ fileId?: string; filename?: string; skipped?: boolean }>(r);
+        if (cancelled) return;
         if (j.fileId) setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
         if (!j.skipped && j.fileId && j.filename && v.sectionSlug && v.rowId) {
           mirrorToLocal('paper', j.fileId, j.filename, v.sectionSlug, v.rowId);
         }
-      } catch { /* tolerate */ }
+      } catch { /* auto-mirror is best-effort; toast UX comes from the explicit Save offline button */ }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -354,24 +355,12 @@ export function PreviewModal({
           body: JSON.stringify({ kind }),
         },
       );
-      // Save-offline normally returns JSON. When the request runs
-      // past Cloudflare's 100 s edge timeout (long yt-dlp + Drive
-      // upload), Cloudflare returns its own HTML error page — and
-      // .json() would throw on the `<!DOCTYPE html>` opener. Sniff
-      // the content-type and translate to an actionable sentence.
-      const ct = r.headers.get('Content-Type') || '';
-      let j: { error?: string; fileId?: string; filename?: string; skipped?: boolean } = {};
-      if (/application\/json/i.test(ct)) {
-        j = await r.json().catch(() => ({}));
-      } else {
-        const text = await r.text().catch(() => '');
-        if (/<!doctype html|<html/i.test(text)) {
-          j = { error: `Edge timeout (${r.status}). yt-dlp likely ran past Cloudflare's 100 s limit — the download may still be finishing on the server. Wait ~1 min and click Save offline again; if a Drive copy landed, the preview will switch to it automatically.` };
-        } else {
-          j = { error: text.trim().slice(0, 400) || `save-offline: ${r.status}` };
-        }
-      }
-      if (!r.ok) throw new Error(j.error || `save-offline: ${r.status}`);
+      // save-offline now streams NDJSON with 20 s heartbeats so
+      // Cloudflare's 100 s edge timeout doesn't kill long yt-dlp
+      // downloads. readNdjsonResult discards heartbeats and either
+      // returns the final {type:'done', …} payload or throws with
+      // the {type:'error', error: …} message verbatim.
+      const j = await readNdjsonResult<{ fileId?: string; filename?: string; skipped?: boolean }>(r);
       toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
       setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
       if (!j.skipped && j.fileId && j.filename && view.sectionSlug && view.rowId) {
