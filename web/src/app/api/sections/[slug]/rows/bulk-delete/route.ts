@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and, inArray, sql } from 'drizzle-orm';
+import { deleteDriveFile } from '@/lib/drive';
 
 export async function POST(
   req: NextRequest,
@@ -40,8 +41,23 @@ export async function POST(
     const field = body.field || (body.playlist != null ? 'playlist' : '');
     const value = body.value != null ? body.value : body.playlist;
 
+    // Collect rows we're about to delete so we can pull their Drive
+    // file ids and clean those up afterwards. RETURNING handles the
+    // count; the offline-marker scan happens in a separate read just
+    // before the update so we don't lose the data.
     let deleted = 0;
+    let driveIds: string[] = [];
     if (Array.isArray(body.ids) && body.ids.length > 0) {
+      const toGo = await db.query.rows.findMany({
+        where: and(
+          eq(schema.rows.userId, userId),
+          eq(schema.rows.sectionId, sec.id),
+          inArray(schema.rows.id, body.ids),
+        ),
+      });
+      driveIds = toGo
+        .flatMap((r) => Array.from(String((r.data as Record<string, unknown>).offline || '')
+          .matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]));
       const res = await db.update(schema.rows)
         .set({ deleted: true, updatedAt: new Date() })
         .where(and(
@@ -64,6 +80,19 @@ export async function POST(
       // Regex-escape the value before splicing it into the pattern.
       const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const pattern = `(^|,\\s*)${escaped}(\\s*,|\\s*$)`;
+      // Pre-fetch the rows we're about to soft-delete so we can scrub
+      // their Drive copies after the update.
+      const toGo = await db.execute<{ id: string; data: Record<string, unknown> }>(
+        sql`SELECT id, data FROM rows
+            WHERE "userId" = ${userId}
+              AND "sectionId" = ${sec.id}
+              AND deleted = false
+              AND ((data ->> ${field}) = ${value} OR (data ->> ${field}) ~ ${pattern})`,
+      );
+      const toGoRows = Array.isArray(toGo) ? toGo : ((toGo as unknown as { rows?: { id: string; data: Record<string, unknown> }[] }).rows || []);
+      driveIds = toGoRows
+        .flatMap((r) => Array.from(String((r.data || {}).offline || '')
+          .matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]));
       const res = await db.execute(
         sql`UPDATE rows SET deleted = true, "updatedAt" = NOW()
             WHERE "userId" = ${userId}
@@ -79,7 +108,13 @@ export async function POST(
       return NextResponse.json({ error: 'Specify ids OR (field+value)' }, { status: 400 });
     }
 
-    return NextResponse.json({ ok: true, deleted });
+    // Fire-and-await Drive cleanups in parallel so the call doesn't
+    // return until they've all been attempted. Each one is
+    // self-tolerant (404 / network failure → silent).
+    if (driveIds.length) {
+      await Promise.all(driveIds.map((fid) => deleteDriveFile(userId, fid)));
+    }
+    return NextResponse.json({ ok: true, deleted, driveDeleted: driveIds.length });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

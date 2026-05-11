@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
+import { deleteDriveFile } from '@/lib/drive';
 
 async function loadSectionAndRow(userId: string, slug: string, id: string) {
   const section = await db.query.sections.findFirst({
@@ -53,8 +54,16 @@ export async function DELETE(
   const ref = await loadSectionAndRow(userId, slug, id);
   if (!ref) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+  // Drive cleanup — pull every `drive:<fileId>` token out of the
+  // offline marker and remove the underlying Drive blobs. Quiet on
+  // failure (file already gone, token expired, etc.); the row gets
+  // soft-deleted regardless so the UI stays consistent.
+  const offline = String((ref.row.data as Record<string, unknown>).offline || '');
+  const driveIds = Array.from(offline.matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]);
+  await Promise.all(driveIds.map((fid) => deleteDriveFile(userId, fid)));
+
   await db.update(schema.rows)
     .set({ deleted: true, updatedAt: new Date() })
     .where(eq(schema.rows.id, id));
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, driveDeleted: driveIds.length });
 }

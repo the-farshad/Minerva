@@ -37,6 +37,23 @@ export async function ensureMinervaFolder(userId: string): Promise<string> {
   return ensureFolder(userId, MINERVA_FOLDER, null);
 }
 
+/** Delete a Drive file by id. Quiet — returns true on 200/204,
+ * false on 404 (already gone) or any other error. Used when a row
+ * with a `drive:<fileId>` offline marker is removed so the user's
+ * Drive doesn't accumulate orphan blobs. */
+export async function deleteDriveFile(userId: string, fileId: string): Promise<boolean> {
+  try {
+    const token = await getGoogleAccessToken(userId);
+    const r = await fetch(`${DRIVE}/files/${encodeURIComponent(fileId)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return r.ok || r.status === 404;
+  } catch {
+    return false;
+  }
+}
+
 /** Find / create a named folder under an optional parent. Returns
  * the folder's fileId. Used to nest `videos/` and `papers/` under
  * the top-level Minerva folder. */
