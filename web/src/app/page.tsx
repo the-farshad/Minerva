@@ -4,6 +4,7 @@ import { db, schema } from '@/db';
 import { eq, and, asc } from 'drizzle-orm';
 import { Nav } from '@/components/nav';
 import { PomodoroWidget } from '@/components/pomodoro-widget';
+import { SectionIcon } from '@/components/section-icon';
 
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
@@ -122,10 +123,13 @@ export default async function Home() {
                 <li key={s.id}>
                   <a
                     href={`/s/${encodeURIComponent(s.slug)}`}
-                    className="block rounded-xl border border-zinc-200 bg-white p-5 transition hover:border-zinc-300 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
+                    className="flex items-start gap-3 rounded-xl border border-zinc-200 bg-white p-5 transition hover:border-zinc-300 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
                   >
-                    <div className="text-sm font-medium">{s.title}</div>
-                    <div className="mt-1 text-xs text-zinc-500">/{s.slug}</div>
+                    <SectionIcon hint={s.icon || s.slug} className="h-5 w-5 text-zinc-500" />
+                    <div>
+                      <div className="text-sm font-medium">{s.title}</div>
+                      <div className="mt-1 text-xs text-zinc-500">/{s.slug}</div>
+                    </div>
                   </a>
                 </li>
               ))}

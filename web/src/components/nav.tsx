@@ -7,6 +7,7 @@ import { Home, Settings, LogOut, Share2, Calendar, Timer, Network } from 'lucide
 import { signOutAction } from '@/app/actions';
 import { SearchBar } from './search-bar';
 import { VersionBadge } from './version-badge';
+import { SectionIcon } from './section-icon';
 
 const PRIMARY = [
   { href: '/', label: 'Home', icon: Home },
@@ -41,6 +42,7 @@ export function Nav({
           href={`/s/${encodeURIComponent(s.slug)}`}
           active={path === `/s/${s.slug}`}
         >
+          <SectionIcon hint={s.icon || s.slug} className="h-3.5 w-3.5" />
           {s.title}
         </NavLink>
       ))}

@@ -15,6 +15,7 @@ import { TelegramCard } from '@/components/telegram-card';
 import { BackupCard } from '@/components/backup-card';
 import { appConfirm } from '@/components/confirm';
 import { appPrompt } from '@/components/prompt';
+import { SectionIcon } from '@/components/section-icon';
 
 type Preset = { slug: string; title: string; icon: string };
 type Existing = { slug: string; title: string; enabled: boolean };
@@ -164,9 +165,12 @@ export function SettingsView({
           <ul className="mt-3 divide-y divide-zinc-200 rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
             {own.map((s) => (
               <li key={s.slug} className="flex items-center justify-between gap-3 px-4 py-3">
-                <div>
-                  <div className="text-sm font-medium">{s.title}</div>
-                  <div className="text-xs text-zinc-500">/{s.slug} · {s.enabled ? 'visible' : 'hidden'}</div>
+                <div className="flex items-center gap-2">
+                  <SectionIcon hint={s.slug} className="h-4 w-4 text-zinc-500" />
+                  <div>
+                    <div className="text-sm font-medium">{s.title}</div>
+                    <div className="text-xs text-zinc-500">/{s.slug} · {s.enabled ? 'visible' : 'hidden'}</div>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button
@@ -231,9 +235,12 @@ export function SettingsView({
                 key={p.slug}
                 className="flex items-start justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
               >
-                <div>
-                  <div className="text-sm font-medium">{p.title}</div>
-                  <div className="text-xs text-zinc-500">/{p.slug}</div>
+                <div className="flex items-start gap-2">
+                  <SectionIcon hint={p.icon || p.slug} className="h-4 w-4 text-zinc-500" />
+                  <div>
+                    <div className="text-sm font-medium">{p.title}</div>
+                    <div className="text-xs text-zinc-500">/{p.slug}</div>
+                  </div>
                 </div>
                 {installed ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
