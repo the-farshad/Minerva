@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical } from 'lucide-react';
-import * as Popover from '@radix-ui/react-popover';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { appConfirm } from './confirm';
@@ -22,11 +22,11 @@ function OfflineBadges({ marker }: { marker: string }) {
   const hasHost = has('host:');
   if (!hasDrive && !hasLocal && !hasHost) return null;
   return (
-    <div className="flex shrink-0 items-center gap-0.5 text-zinc-400">
+    <span className="inline-flex shrink-0 items-center gap-0.5 text-zinc-400">
       {hasDrive && <Cloud className="h-3 w-3" aria-label="On Drive" />}
       {hasLocal && <HardDrive className="h-3 w-3" aria-label="On local mirror" />}
       {hasHost && <Server className="h-3 w-3" aria-label="On helper" />}
-    </div>
+    </span>
   );
 }
 
@@ -336,11 +336,12 @@ export function GroupedGrid({
                       onClick={() => onOpen(r)}
                       className="block w-full text-left"
                     >
-                      <div className="flex items-start gap-2">
-                        <div className="flex-1 text-sm font-medium">
-                          {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
-                        </div>
-                        <OfflineBadges marker={String(r.data.offline || '')} />
+                      {/* Title only; offline-state badges live next
+                        * to the three-dots overflow menu so the
+                        * corner cluster reads as a single control
+                        * group. */}
+                      <div className="pr-12 text-sm font-medium">
+                        {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
                       </div>
                       <div className="mt-1.5 line-clamp-1 text-xs text-zinc-500">
                         {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
@@ -404,59 +405,70 @@ function CardActions({
 
   return (
     <>
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <button
-            type="button"
-            onClick={(e) => e.stopPropagation()}
-            title="Actions"
-            className="absolute right-1 top-1 rounded-full p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-          >
-            <MoreVertical className="h-4 w-4" />
-          </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content
-            align="end"
-            sideOffset={4}
-            className="z-50 min-w-[10rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <DropdownMenu.Item
-              onSelect={(e) => { e.preventDefault(); setInfoOpen(true); }}
-              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+      <div
+        className="absolute right-1 top-1 flex items-center gap-1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <OfflineBadges marker={String(row.data.offline || '')} />
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              title="Actions"
+              className="rounded-full p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
             >
-              <Info className="h-3.5 w-3.5" /> Info
-            </DropdownMenu.Item>
-            {isOffliable && (
+              <MoreVertical className="h-4 w-4" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={4}
+              className="z-50 min-w-[10rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+              onClick={(e) => e.stopPropagation()}
+            >
               <DropdownMenu.Item
-                onSelect={(e) => { e.preventDefault(); void saveOffline(); }}
+                onSelect={(e) => { e.preventDefault(); setInfoOpen(true); }}
                 className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
               >
-                <Save className="h-3.5 w-3.5" /> Save offline
+                <Info className="h-3.5 w-3.5" /> Info
               </DropdownMenu.Item>
-            )}
-            <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
-            <DropdownMenu.Item
-              onSelect={(e) => { e.preventDefault(); void onDelete(row.id); }}
-              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-red-600 outline-none hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Delete
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-      <Popover.Root open={infoOpen} onOpenChange={setInfoOpen}>
-        <Popover.Anchor className="absolute right-1 top-7" />
-        <Popover.Portal>
-          <Popover.Content
-            side="bottom"
-            align="end"
-            sideOffset={4}
-            className="z-50 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+              {isOffliable && (
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); void saveOffline(); }}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <Save className="h-3.5 w-3.5" /> Save offline
+                </DropdownMenu.Item>
+              )}
+              <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+              <DropdownMenu.Item
+                onSelect={(e) => { e.preventDefault(); void onDelete(row.id); }}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-red-600 outline-none hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
+      {/* Info dialog — modal so it actually shows up regardless of
+        * scroll position / overflow clipping that broke the earlier
+        * Popover.Anchor version. */}
+      <Dialog.Root open={infoOpen} onOpenChange={setInfoOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" />
+          <Dialog.Content
+            className="fixed left-1/2 top-1/2 z-50 w-[min(420px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
             onClick={(e) => e.stopPropagation()}
           >
-            <dl className="space-y-2 text-xs">
+            <div className="mb-3 flex items-center justify-between">
+              <Dialog.Title className="text-sm font-semibold">Info</Dialog.Title>
+              <Dialog.Close className="rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                <X className="h-4 w-4" />
+              </Dialog.Close>
+            </div>
+            <dl className="max-h-[60vh] space-y-2 overflow-auto text-xs">
               {Object.entries(row.data)
                 .filter(([k, v]) =>
                   v != null && v !== '' &&
@@ -471,9 +483,9 @@ function CardActions({
                   </div>
                 ))}
             </dl>
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </>
   );
 }
