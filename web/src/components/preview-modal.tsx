@@ -180,6 +180,51 @@ export function PreviewModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view?.url, view?.rowId]);
 
+  // Auto-save annotations 4 s after the user pauses editing. The
+  // bundled PDF.js viewer (served same-origin at /pdfjs/) exposes
+  // PDFViewerApplication on the iframe's contentWindow; eventBus
+  // fires `annotationeditorstateschanged` whenever the editor
+  // commits a highlight/note/ink/free-text change. Debounced so a
+  // single stroke doesn't trigger a Drive upload per pixel.
+  useEffect(() => {
+    if (!view || !isPdf(view.url) || !view.rowId || !view.sectionSlug) return;
+    const iframe = pdfIframeRef.current;
+    if (!iframe) return;
+    let cancelled = false;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    let detach: (() => void) | null = null;
+    interface PdfApp {
+      initializedPromise?: Promise<void>;
+      eventBus?: {
+        on: (name: string, fn: () => void) => void;
+        off: (name: string, fn: () => void) => void;
+      };
+    }
+    const attach = async () => {
+      if (cancelled) return;
+      const w = iframe.contentWindow as (Window & { PDFViewerApplication?: PdfApp }) | null;
+      const app = w?.PDFViewerApplication;
+      if (!app?.initializedPromise || !app.eventBus) return;
+      try { await app.initializedPromise; } catch { return; }
+      if (cancelled) return;
+      const onChange = () => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => { void saveAnnotations(); }, 4000);
+      };
+      app.eventBus.on('annotationeditorstateschanged', onChange);
+      detach = () => app.eventBus?.off('annotationeditorstateschanged', onChange);
+    };
+    iframe.addEventListener('load', attach);
+    void attach();
+    return () => {
+      cancelled = true;
+      if (debounce) clearTimeout(debounce);
+      iframe.removeEventListener('load', attach);
+      if (detach) detach();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view?.url, view?.rowId, view?.sectionSlug]);
+
   if (!view) return null;
 
   const yt = ytId(view.url);
@@ -272,7 +317,23 @@ export function PreviewModal({
           body: JSON.stringify({ kind }),
         },
       );
-      const j = await r.json().catch(() => ({}));
+      // Save-offline normally returns JSON. When the request runs
+      // past Cloudflare's 100 s edge timeout (long yt-dlp + Drive
+      // upload), Cloudflare returns its own HTML error page — and
+      // .json() would throw on the `<!DOCTYPE html>` opener. Sniff
+      // the content-type and translate to an actionable sentence.
+      const ct = r.headers.get('Content-Type') || '';
+      let j: { error?: string; fileId?: string; filename?: string; skipped?: boolean } = {};
+      if (/application\/json/i.test(ct)) {
+        j = await r.json().catch(() => ({}));
+      } else {
+        const text = await r.text().catch(() => '');
+        if (/<!doctype html|<html/i.test(text)) {
+          j = { error: `Edge timeout (${r.status}). yt-dlp likely ran past Cloudflare's 100 s limit — the download may still be finishing on the server. Wait ~1 min and click Save offline again; if a Drive copy landed, the preview will switch to it automatically.` };
+        } else {
+          j = { error: text.trim().slice(0, 400) || `save-offline: ${r.status}` };
+        }
+      }
       if (!r.ok) throw new Error(j.error || `save-offline: ${r.status}`);
       toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
       setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
@@ -368,16 +429,22 @@ export function PreviewModal({
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
             {pdf && view.rowId ? (
-              /* <object> is the standards-compliant way to embed a
-               * PDF. The browser's native viewer renders the data,
-               * and if it can't (Brave strict shields, Safari ITP,
-               * Firefox with the PDF viewer disabled, etc.), the
-               * inner children render instead — a clear download
-               * link, no Chrome "page couldn't load" error. */
-              <PdfObject
-                src={`/api/pdf/${view.rowId}#page=${pdfPage}`}
-                fallbackHref={view.url}
-                pdfRef={pdfIframeRef}
+              /* Bundled Mozilla PDF.js viewer (same-origin under
+               * /pdfjs/) — exposes PDFViewerApplication on the
+               * iframe's contentWindow so the in-viewer annotation
+               * editor (highlight, free-text, ink, sticky-note)
+               * works AND our `Save annotations` + auto-save can
+               * call `pdfDocument.saveDocument()` to round-trip
+               * edits back to Drive. The `file=` param points at
+               * /api/pdf/<rowId>, which streams bytes via our
+               * Drive OAuth token — no upstream CORS, no nested
+               * query strings. */
+              <iframe
+                ref={pdfIframeRef}
+                title="PDF"
+                src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(`/api/pdf/${view.rowId}`)}#page=${pdfPage}`}
+                className="h-full w-full border-0 bg-zinc-100 dark:bg-zinc-900"
+                referrerPolicy="no-referrer"
               />
             ) : pdf ? (
               <IframeWithFallback
@@ -466,59 +533,6 @@ export function PreviewModal({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-/** <object>-based PDF embed. The native plugin renders the PDF; if
- * the browser refuses (PDF viewer disabled, strict shields, …),
- * the inner content renders instead. Importantly, this never
- * triggers Chrome's "This page couldn't load" error — that error
- * happens when iframe navigation fails, but <object> just shows
- * its fallback children when its `data` can't be displayed. */
-function PdfObject({
-  src, fallbackHref, pdfRef,
-}: {
-  src: string;
-  fallbackHref?: string;
-  pdfRef?: React.RefObject<HTMLIFrameElement | null>;
-}) {
-  // pdfRef typed as iframe for backward-compat with the annotations
-  // save flow; we cast through HTMLObjectElement which exposes the
-  // same `contentWindow` for accessing PDFViewerApplication if the
-  // browser's plugin uses the bundled viewer (Firefox does this).
-  return (
-    <object
-      ref={pdfRef as unknown as React.RefObject<HTMLObjectElement>}
-      data={src}
-      type="application/pdf"
-      className="h-full w-full bg-zinc-100 dark:bg-zinc-900"
-    >
-      <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <strong>Your browser couldn&rsquo;t render the PDF inline.</strong>
-        <p className="max-w-md text-xs text-zinc-500">
-          Likely a privacy-mode setting or PDF-viewer block. Use the buttons below.
-        </p>
-        <div className="flex gap-2">
-          <a
-            href={src}
-            download
-            className="rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
-          >
-            Download PDF
-          </a>
-          {fallbackHref && (
-            <a
-              href={fallbackHref}
-              target="_blank"
-              rel="noopener"
-              className="rounded-full border border-zinc-300 px-3 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            >
-              Open at source
-            </a>
-          )}
-        </div>
-      </div>
-    </object>
   );
 }
 
