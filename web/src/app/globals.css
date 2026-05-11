@@ -22,18 +22,72 @@
 /* User-pickable themes — applied via <html data-theme="..."> */
 html[data-theme="light"] { color-scheme: light; --background: #fbfbfa; --foreground: #171717; }
 html[data-theme="dark"]  { color-scheme: dark;  --background: #0b0d10; --foreground: #ededed; }
-html[data-theme="sepia"] { color-scheme: light; --background: #f4ecd8; --foreground: #4b3a1f; }
+
+/* Sepia — light scheme with paper-toned backgrounds and warm text.
+ * Tailwind utility classes are overridden so the inner UI honours
+ * the theme instead of leaking dark cards through. */
+html[data-theme="sepia"] {
+  color-scheme: light;
+  --background: #f4ecd8;
+  --foreground: #4b3a1f;
+}
+html[data-theme="sepia"] body { background: #f4ecd8; color: #4b3a1f; }
+html[data-theme="sepia"] .bg-white,
+html[data-theme="sepia"] .bg-zinc-50,
+html[data-theme="sepia"] .dark\:bg-zinc-900,
+html[data-theme="sepia"] .dark\:bg-zinc-950,
+html[data-theme="sepia"] .dark\:bg-zinc-800,
+html[data-theme="sepia"] .bg-zinc-100,
+html[data-theme="sepia"] .bg-zinc-200 { background-color: #f4ecd8 !important; }
+html[data-theme="sepia"] .bg-zinc-900\/50,
+html[data-theme="sepia"] .bg-white\/70,
+html[data-theme="sepia"] .dark\:bg-zinc-950\/70 { background-color: #ede2c4 !important; }
+html[data-theme="sepia"] .text-zinc-900,
+html[data-theme="sepia"] .dark\:text-zinc-100,
+html[data-theme="sepia"] .dark\:text-zinc-200,
+html[data-theme="sepia"] .text-zinc-800 { color: #4b3a1f !important; }
+html[data-theme="sepia"] .text-zinc-500,
+html[data-theme="sepia"] .text-zinc-600,
+html[data-theme="sepia"] .dark\:text-zinc-400 { color: #7a6a4d !important; }
+html[data-theme="sepia"] .border-zinc-200,
+html[data-theme="sepia"] .border-zinc-300,
+html[data-theme="sepia"] .dark\:border-zinc-700,
+html[data-theme="sepia"] .dark\:border-zinc-800 { border-color: #d6c89a !important; }
+
+/* VT323 — neon-green on near-black, monospace everywhere. */
 html[data-theme="vt323"] {
   color-scheme: dark;
   --background: #0a0f0a;
   --foreground: #b6ffb6;
-  font-family: "VT323", ui-monospace, monospace;
 }
+html[data-theme="vt323"] body { background: #0a0f0a; color: #b6ffb6; }
 html[data-theme="vt323"] body,
 html[data-theme="vt323"] * {
   font-family: "VT323", ui-monospace, monospace !important;
   letter-spacing: 0.01em;
 }
+html[data-theme="vt323"] .bg-white,
+html[data-theme="vt323"] .bg-zinc-50,
+html[data-theme="vt323"] .bg-zinc-100,
+html[data-theme="vt323"] .dark\:bg-zinc-900,
+html[data-theme="vt323"] .dark\:bg-zinc-950,
+html[data-theme="vt323"] .dark\:bg-zinc-800 { background-color: #0a0f0a !important; }
+html[data-theme="vt323"] .text-zinc-900,
+html[data-theme="vt323"] .text-zinc-800,
+html[data-theme="vt323"] .dark\:text-zinc-100,
+html[data-theme="vt323"] .dark\:text-zinc-200 { color: #b6ffb6 !important; }
+html[data-theme="vt323"] .text-zinc-500,
+html[data-theme="vt323"] .text-zinc-600,
+html[data-theme="vt323"] .dark\:text-zinc-400 { color: #6dc06d !important; }
+html[data-theme="vt323"] .border-zinc-200,
+html[data-theme="vt323"] .border-zinc-300,
+html[data-theme="vt323"] .dark\:border-zinc-700,
+html[data-theme="vt323"] .dark\:border-zinc-800 { border-color: #2a4d2a !important; }
+
+/* Font picker — applied via <html data-font="..."> */
+html[data-font="serif"] body, html[data-font="serif"] body * { font-family: ui-serif, Georgia, "Times New Roman", serif !important; }
+html[data-font="mono"]  body, html[data-font="mono"]  body * { font-family: ui-monospace, SFMono-Regular, "Cascadia Code", monospace !important; }
+html[data-font="vt323"] body, html[data-font="vt323"] body * { font-family: "VT323", ui-monospace, monospace !important; letter-spacing: 0.01em; }
 
 body {
   background: var(--background);

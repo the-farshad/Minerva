@@ -29,7 +29,15 @@ export function SectionView({
   initialRows: Row[];
 }) {
   const [rows, setRows] = useState<Row[]>(initialRows);
-  const [mode, setMode] = useState<'list' | 'grid' | 'kanban' | 'calendar'>('list');
+  // URL-keyed presets (youtube / papers) only show list + grid —
+  // kanban needs a `status` column they don't carry and calendar
+  // needs a due-date column they don't carry. Everything else gets
+  // the full set.
+  const isUrlKeyed = section.preset === 'youtube' || section.preset === 'papers';
+  const availableModes = isUrlKeyed
+    ? (['list', 'grid'] as const)
+    : (['list', 'grid', 'kanban', 'calendar'] as const);
+  const [mode, setMode] = useState<'list' | 'grid' | 'kanban' | 'calendar'>('grid');
   const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; notes?: string } | null>(null);
   const qc = useQueryClient();
 
@@ -93,12 +101,13 @@ export function SectionView({
         <h1 className="text-2xl font-semibold tracking-tight">{section.title}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 rounded-full border border-zinc-200 p-1 dark:border-zinc-800">
-            {([
+            {(([
               ['list', List, 'List'],
               ['grid', LayoutGrid, 'Grid'],
               ['kanban', Columns3, 'Kanban'],
               ['calendar', CalendarIcon, 'Calendar'],
-            ] as const).map(([m, Icon, label]) => (
+            ] as const).filter(([m]) => (availableModes as readonly string[]).includes(m))
+            ).map(([m, Icon, label]) => (
               <button
                 key={m}
                 type="button"
@@ -191,15 +200,13 @@ export function SectionView({
         <p className="rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
           Empty section. Click <strong>Add row</strong> to start.
         </p>
-      ) : mode === 'list' ? (
-        <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />
-      ) : mode === 'grid' ? (
-        <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} />
-      ) : mode === 'kanban' ? (
-        <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} />
-      ) : (
-        <CalendarView section={section} rows={sorted} onOpen={openPreview} />
-      )}
+      ) : (() => {
+        const eff = (availableModes as readonly string[]).includes(mode) ? mode : 'grid';
+        if (eff === 'list')     return <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />;
+        if (eff === 'grid')     return <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} />;
+        if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} />;
+        return <CalendarView section={section} rows={sorted} onOpen={openPreview} />;
+      })()}
       <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
     </main>
   );

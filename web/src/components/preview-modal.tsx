@@ -62,6 +62,25 @@ export function PreviewModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Wire the preview modal into the browser history stack so the
+  // Back button closes the overlay instead of navigating off the
+  // section. We push a sentinel state when the modal opens, and
+  // when popstate fires (Back pressed), we just close the modal.
+  useEffect(() => {
+    if (!open) return;
+    history.pushState({ minervaPreview: true }, '');
+    function onPop() { setOpen(false); }
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      // If the modal closes for any reason other than a pop event,
+      // pop our sentinel ourselves so we don't leak a history entry.
+      if (history.state && (history.state as { minervaPreview?: boolean }).minervaPreview) {
+        history.back();
+      }
+    };
+  }, [open]);
+
   // Listen for postMessage from the YT iframe's IFrame API so we
   // can track current time + persist a resume position. The iframe
   // is mounted with `enablejsapi=1` below; postMessage handshake is

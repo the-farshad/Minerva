@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { db, schema } from '@/db';
 import { eq, and, asc } from 'drizzle-orm';
 import { Nav } from '@/components/nav';
+import { PomodoroWidget } from '@/components/pomodoro-widget';
 
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
@@ -63,6 +64,10 @@ export default async function Home() {
             ? 'Get started by adding a section in Settings.'
             : `${overdue.length + dueToday.length} item${(overdue.length + dueToday.length) === 1 ? '' : 's'} need your attention.`}
         </p>
+
+        <div className="mt-6">
+          <PomodoroWidget />
+        </div>
 
         {(overdue.length + dueToday.length) > 0 && (
           <section className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">

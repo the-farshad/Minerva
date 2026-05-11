@@ -99,21 +99,60 @@ async function crossrefLookup(doi: string) {
 }
 
 async function youtubeLookup(videoId: string, originalUrl: string) {
-  // oEmbed is CORS-friendly and quota-free for basic metadata.
+  // oEmbed is CORS-friendly and quota-free for basic metadata
+  // (title, author_name, thumbnail). It does NOT include duration,
+  // upload date, view count, etc. — for those we scrape the watch
+  // page through the helper's /proxy, which is the same path the
+  // playlist scraper uses.
+  const [embedded, scraped] = await Promise.all([
+    fetchOEmbed(originalUrl).catch(() => null),
+    scrapeWatchPage(videoId).catch(() => null),
+  ]);
+  return {
+    kind: 'video',
+    title: embedded?.title || scraped?.title || '',
+    channel: embedded?.author_name || scraped?.channel || '',
+    thumbnail: embedded?.thumbnail_url || `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+    duration: scraped?.duration || '',
+    published: scraped?.published || '',
+    url: `https://www.youtube.com/watch?v=${videoId}`,
+  };
+}
+
+async function fetchOEmbed(originalUrl: string) {
   const r = await fetch(
     `https://www.youtube.com/oembed?url=${encodeURIComponent(originalUrl)}&format=json`,
     { cache: 'no-store' },
   );
-  if (!r.ok) {
-    return { kind: 'video', url: `https://www.youtube.com/watch?v=${videoId}` };
-  }
-  const j = (await r.json()) as { title?: string; author_name?: string; thumbnail_url?: string };
+  if (!r.ok) return null;
+  return (await r.json()) as { title?: string; author_name?: string; thumbnail_url?: string };
+}
+
+function fmtSeconds(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+async function scrapeWatchPage(videoId: string) {
+  const helper = (process.env.HELPER_BASE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+  const target = `https://www.youtube.com/watch?v=${videoId}`;
+  const r = await fetch(`${helper}/proxy?${encodeURIComponent(target)}`, { cache: 'no-store' });
+  if (!r.ok) return null;
+  const html = await r.text();
+  const lengthMatch = html.match(/"lengthSeconds":"(\d+)"/);
+  const titleMatch = html.match(/"videoDetails":\{[^}]*?"title":"([^"]+)"/);
+  const channelMatch = html.match(/"ownerChannelName":"([^"]+)"/) || html.match(/"author":"([^"]+)"/);
+  const publishedMatch = html.match(/"publishDate":"([^"]+)"/) || html.match(/"uploadDate":"([^"]+)"/);
   return {
-    kind: 'video',
-    title: j.title || '',
-    channel: j.author_name || '',
-    thumbnail: j.thumbnail_url || '',
-    url: `https://www.youtube.com/watch?v=${videoId}`,
+    duration: lengthMatch ? fmtSeconds(parseInt(lengthMatch[1], 10)) : '',
+    title: titleMatch ? titleMatch[1].replace(/\\u0026/g, '&').replace(/\\"/g, '"') : '',
+    channel: channelMatch ? channelMatch[1].replace(/\\u0026/g, '&') : '',
+    published: publishedMatch ? publishedMatch[1].slice(0, 10) : '',
   };
 }
 
