@@ -8,6 +8,9 @@ import { useRouter } from 'next/navigation';
 import { signOutAction } from '@/app/actions';
 import { LocalMirrorCard } from '@/components/local-mirror-card';
 import { AiCard } from '@/components/ai-card';
+import { ThemeCard } from '@/components/theme-card';
+import { FeedsCard } from '@/components/feeds-card';
+import { BookmarkletCard } from '@/components/bookmarklet-card';
 
 type Preset = { slug: string; title: string; icon: string };
 type Existing = { slug: string; title: string; enabled: boolean };
@@ -93,6 +96,9 @@ export function SettingsView({
         </p>
         <LocalMirrorCard />
         <AiCard />
+        <ThemeCard />
+        <FeedsCard />
+        <BookmarkletCard />
       </section>
 
       {own.length > 0 && (

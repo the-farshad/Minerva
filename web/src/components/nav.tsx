@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { Home, Settings, LogOut, Share2, Calendar } from 'lucide-react';
+import { Home, Settings, LogOut, Share2, Calendar, Timer } from 'lucide-react';
 import { signOutAction } from '@/app/actions';
 import { SearchBar } from './search-bar';
 
@@ -12,6 +12,7 @@ const PRIMARY = [
   { href: '/schedule', label: 'Schedule', icon: Calendar },
 ];
 const UTILITY = [
+  { href: '/pomodoro', label: 'Pomodoro', icon: Timer },
   { href: '/share', label: 'Share', icon: Share2 },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
