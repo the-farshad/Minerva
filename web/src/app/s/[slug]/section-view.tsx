@@ -137,14 +137,20 @@ export function SectionView({
             section={section}
             onAdded={(row) => setRows((rs) => [...rs, row])}
           />
-          <button
-            type="button"
-            onClick={() => createRow.mutate()}
-            disabled={createRow.isPending}
-            className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
-          >
-            <Plus className="h-3.5 w-3.5" /> Add empty
-          </button>
+          {/* Blank-row escape hatch only makes sense when the section
+            * isn't keyed by an external URL — for YouTube / Papers the
+            * row's identity comes from the URL, so a blank row is dead
+            * weight. */}
+          {section.preset !== 'youtube' && section.preset !== 'papers' && (
+            <button
+              type="button"
+              onClick={() => createRow.mutate()}
+              disabled={createRow.isPending}
+              className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add empty
+            </button>
+          )}
           <button
             type="button"
             onClick={async () => {
