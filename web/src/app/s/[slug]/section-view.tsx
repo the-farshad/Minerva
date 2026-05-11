@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { naturalCompare, cn } from '@/lib/utils';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
 import { InlineCell, parseType } from '@/components/inline-cell';
@@ -68,24 +68,6 @@ export function SectionView({
     qc.invalidateQueries({ queryKey: ['rows', section.slug] });
   }
 
-  const createRow = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`/api/sections/${section.slug}/rows`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: {} }),
-      });
-      if (!r.ok) throw new Error(`add row: ${r.status}`);
-      return (await r.json()) as Row;
-    },
-    onSuccess: (row) => {
-      setRows((rs) => [...rs, row]);
-      toast.success('Row added.');
-      qc.invalidateQueries({ queryKey: ['rows', section.slug] });
-    },
-    onError: (e: Error) => toast.error(`Add failed: ${e.message}`),
-  });
-
   const titleField = useMemo(() => {
     if (section.schema.headers.includes('title')) return 'title';
     if (section.schema.headers.includes('name')) return 'name';
@@ -137,19 +119,25 @@ export function SectionView({
             section={section}
             onAdded={(row) => setRows((rs) => [...rs, row])}
           />
-          {/* Blank-row escape hatch only makes sense when the section
-            * isn't keyed by an external URL — for YouTube / Papers the
-            * row's identity comes from the URL, so a blank row is dead
-            * weight. */}
+          {/* URL-keyed presets only accept rows via Add-by-URL. Other
+            * sections (tasks / notes / projects / habits / inbox /
+            * bookmarks) get a quick-add input so the row lands with a
+            * title already on it — no more blank-row dead weight. */}
           {section.preset !== 'youtube' && section.preset !== 'papers' && (
-            <button
-              type="button"
-              onClick={() => createRow.mutate()}
-              disabled={createRow.isPending}
-              className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
-            >
-              <Plus className="h-3.5 w-3.5" /> Add empty
-            </button>
+            <QuickAdd
+              titleField={titleField}
+              onCreate={async (title) => {
+                const r = await fetch(`/api/sections/${section.slug}/rows`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ data: titleField ? { [titleField]: title } : { title } }),
+                });
+                if (!r.ok) { toast.error(`Add failed: ${r.status}`); return; }
+                const row = (await r.json()) as Row;
+                setRows((rs) => [...rs, row]);
+                qc.invalidateQueries({ queryKey: ['rows', section.slug] });
+              }}
+            />
           )}
           <button
             type="button"
@@ -284,6 +272,49 @@ function Table({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function QuickAdd({
+  titleField, onCreate,
+}: {
+  titleField: string | null;
+  onCreate: (title: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit() {
+    const v = value.trim();
+    if (!v || busy) return;
+    setBusy(true);
+    try {
+      await onCreate(v);
+      setValue('');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); void submit(); }}
+      className="flex items-center gap-1"
+    >
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={titleField ? `New ${titleField}…` : 'New row title…'}
+        className="w-44 rounded-full border border-zinc-300 bg-white px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900"
+      />
+      <button
+        type="submit"
+        disabled={busy || !value.trim()}
+        className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+        title={titleField ? `Create with ${titleField} set` : 'Create row'}
+      >
+        <Plus className="h-3.5 w-3.5" /> Add
+      </button>
+    </form>
   );
 }
 
