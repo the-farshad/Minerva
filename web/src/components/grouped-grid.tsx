@@ -240,13 +240,16 @@ export function GroupedGrid({
                             { body: 'This cannot be undone.', dangerLabel: 'Delete all' },
                           );
                           if (!ok) return;
-                          // Server-side one-shot delete by playlist value —
+                          // Server-side one-shot delete by group field —
                           // no per-row round-trips, no per-row confirms.
+                          // groupCol is the column the grid is currently
+                          // grouped on (playlist for YouTube, category for
+                          // Papers, kind for anything else with a kind col).
                           try {
                             const resp = await fetch(`/api/sections/${section.slug}/rows/bulk-delete`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ playlist: key }),
+                              body: JSON.stringify({ field: groupCol, value: key }),
                             });
                             const j = await resp.json().catch(() => ({}));
                             if (!resp.ok) throw new Error(j.error || String(resp.status));

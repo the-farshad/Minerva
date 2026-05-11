@@ -308,13 +308,13 @@ export function PreviewModal({
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
             {(hostSrc || driveSrc) && pdf ? (
-              <iframe
-                ref={pdfIframeRef}
+              <IframeWithFallback
+                title="PDF"
                 src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(
                   hostSrc ?? `/api/drive/file?id=${view.driveFileId}`,
                 )}#page=${pdfPage}`}
-                className="h-full w-full"
-                title="PDF (annotated viewer)"
+                fallbackHref={view.url}
+                iframeRef={pdfIframeRef}
               />
             ) : pdf ? (
               <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-center text-sm text-zinc-500">
@@ -345,31 +345,19 @@ export function PreviewModal({
                 </a>
               </div>
             ) : yt ? (
-              <iframe
-                ref={ytIframeRef}
-                src={`https://www.youtube.com/embed/${encodeURIComponent(yt)}?autoplay=1&enablejsapi=1&start=${ytResume}&origin=${encodeURIComponent(typeof window !== 'undefined' ? location.origin : '')}`}
-                className="h-full w-full"
-                title="YouTube"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                onLoad={() => {
-                  // Subscribe to playback-state events so we get
-                  // periodic currentTime updates via postMessage.
-                  const w = ytIframeRef.current?.contentWindow;
-                  if (!w) return;
-                  w.postMessage(JSON.stringify({ event: 'listening' }), '*');
-                  w.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }), '*');
-                }}
+              <YouTubeFrame
+                videoId={yt}
+                start={ytResume}
+                iframeRef={ytIframeRef}
+                fallbackUrl={view.url}
               />
             ) : hostSrc ? (
               <video src={hostSrc} controls autoPlay className="h-full w-full bg-black" />
             ) : (
-              <iframe
-                src={view.url}
-                className="h-full w-full"
+              <IframeWithFallback
                 title={view.title || view.url}
-                referrerPolicy="no-referrer"
-                allow="fullscreen"
+                src={view.url}
+                fallbackHref={view.url}
               />
             )}
             </div>
@@ -402,5 +390,120 @@ export function PreviewModal({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/** Wraps an iframe with a load watchdog. If the iframe hasn't fired
+ * `onLoad` within ~6 seconds (long enough for a slow PDF), it's
+ * assumed something blocked it (X-Frame-Options, network 404,
+ * Drive permission, …) and a clear in-modal fallback is shown
+ * instead of leaving the user staring at Chrome's generic
+ * "This page couldn't load" error inside the frame. */
+function IframeWithFallback({
+  title, src, fallbackHref, iframeRef,
+}: {
+  title: string;
+  src: string;
+  fallbackHref?: string;
+  iframeRef?: React.RefObject<HTMLIFrameElement | null>;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    setLoaded(false);
+    setStuck(false);
+    const t = setTimeout(() => { if (!loaded) setStuck(true); }, 6000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+  return (
+    <div className="relative h-full w-full">
+      <iframe
+        ref={iframeRef as React.RefObject<HTMLIFrameElement>}
+        src={src}
+        className="h-full w-full"
+        title={title}
+        referrerPolicy="no-referrer"
+        allow="fullscreen"
+        onLoad={() => { setLoaded(true); setStuck(false); }}
+      />
+      {stuck && !loaded && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-50/95 p-6 text-center text-sm dark:bg-zinc-950/95">
+          <strong>Couldn&rsquo;t load the preview.</strong>
+          <p className="max-w-md text-xs text-zinc-500">
+            The page took too long or refused to embed. Try opening it in a new tab.
+          </p>
+          {fallbackHref && (
+            <a
+              href={fallbackHref}
+              target="_blank"
+              rel="noopener"
+              className="rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+            >
+              Open in new tab
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** YouTube embed with the same fallback pattern, plus the IFrame-API
+ * postMessage handshake the rest of the modal depends on for resume
+ * positions + bookmark seek. */
+function YouTubeFrame({
+  videoId, start, iframeRef, fallbackUrl,
+}: {
+  videoId: string;
+  start: number;
+  iframeRef: React.RefObject<HTMLIFrameElement | null>;
+  fallbackUrl: string;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    setLoaded(false);
+    setStuck(false);
+    const t = setTimeout(() => { if (!loaded) setStuck(true); }, 6000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoId]);
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return (
+    <div className="relative h-full w-full">
+      <iframe
+        ref={iframeRef as React.RefObject<HTMLIFrameElement>}
+        src={`https://www.youtube.com/embed/${encodeURIComponent(videoId)}?autoplay=1&enablejsapi=1&start=${start}&origin=${encodeURIComponent(origin)}`}
+        className="h-full w-full"
+        title="YouTube"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        onLoad={() => {
+          setLoaded(true);
+          setStuck(false);
+          const w = iframeRef.current?.contentWindow;
+          if (!w) return;
+          w.postMessage(JSON.stringify({ event: 'listening' }), '*');
+          w.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }), '*');
+        }}
+      />
+      {stuck && !loaded && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-50/95 p-6 text-center text-sm dark:bg-zinc-950/95">
+          <strong>This video can&rsquo;t be embedded.</strong>
+          <p className="max-w-md text-xs text-zinc-500">
+            The uploader disabled playback on third-party sites, or the embed timed out.
+          </p>
+          <a
+            href={fallbackUrl}
+            target="_blank"
+            rel="noopener"
+            className="rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+          >
+            Open on YouTube
+          </a>
+        </div>
+      )}
+    </div>
   );
 }

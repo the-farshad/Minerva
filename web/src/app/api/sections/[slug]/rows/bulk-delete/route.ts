@@ -26,7 +26,19 @@ export async function POST(
     });
     if (!sec) return NextResponse.json({ error: 'Section not found' }, { status: 404 });
 
-    const body = (await req.json().catch(() => ({}))) as { ids?: string[]; playlist?: string };
+    const body = (await req.json().catch(() => ({}))) as {
+      ids?: string[];
+      field?: string;     // 'playlist' | 'category' | 'kind' | ...
+      value?: string;
+      // legacy
+      playlist?: string;
+    };
+
+    // Backwards-compat: old callers sent { playlist }; new callers
+    // pass { field, value } so Papers (category), YouTube (playlist),
+    // or any other groupable column can use the same endpoint.
+    const field = body.field || (body.playlist != null ? 'playlist' : '');
+    const value = body.value != null ? body.value : body.playlist;
 
     let deleted = 0;
     if (Array.isArray(body.ids) && body.ids.length > 0) {
@@ -39,20 +51,23 @@ export async function POST(
         ))
         .returning({ id: schema.rows.id });
       deleted = res.length;
-    } else if (typeof body.playlist === 'string') {
-      // JSONB equality on data->>'playlist'. Match exactly the value
-      // the caller scoped the bulk action to.
-      const res = await db.update(schema.rows)
-        .set({ deleted: true, updatedAt: new Date() })
-        .where(and(
-          eq(schema.rows.userId, userId),
-          eq(schema.rows.sectionId, sec.id),
-          sql`(data ->> 'playlist') = ${body.playlist}`,
-        ))
-        .returning({ id: schema.rows.id });
-      deleted = res.length;
+    } else if (field && typeof value === 'string') {
+      // JSONB equality on data->>'<field>'. The field name is a
+      // bare identifier so a literal `data ->> 'playlist'` is safe,
+      // but parameterise the value to avoid injection.
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)) {
+        return NextResponse.json({ error: 'Invalid field' }, { status: 400 });
+      }
+      const res = await db.execute(
+        sql`UPDATE rows SET deleted = true, "updatedAt" = NOW()
+            WHERE "userId" = ${userId}
+              AND "sectionId" = ${sec.id}
+              AND (data ->> ${field}) = ${value}
+          RETURNING id`,
+      );
+      deleted = Array.isArray(res) ? res.length : ((res as unknown as { length: number }).length ?? 0);
     } else {
-      return NextResponse.json({ error: 'Specify ids or playlist' }, { status: 400 });
+      return NextResponse.json({ error: 'Specify ids OR (field+value)' }, { status: 400 });
     }
 
     return NextResponse.json({ ok: true, deleted });
