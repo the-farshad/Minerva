@@ -9,6 +9,8 @@ import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
 import { InlineCell, parseType } from '@/components/inline-cell';
 import { AddByUrl } from '@/components/add-by-url';
+import { appConfirm } from '@/components/confirm';
+import { appPrompt } from '@/components/prompt';
 import { GroupedGrid } from '@/components/grouped-grid';
 import { KanbanView } from '@/components/kanban-view';
 import { CalendarView } from '@/components/calendar-view';
@@ -82,7 +84,7 @@ export function SectionView({
     setRows((rs) => rs.map((x) => (x.id === rowId ? next : x)));
   }
   async function deleteRow(rowId: string) {
-    if (!confirm('Delete this row?')) return;
+    if (!(await appConfirm('Delete this row?', { dangerLabel: 'Delete' }))) return;
     const r = await fetch(`/api/sections/${section.slug}/rows/${rowId}`, { method: 'DELETE' });
     if (!r.ok) { toast.error(`Delete failed: ${r.status}`); return; }
     setRows((rs) => rs.filter((x) => x.id !== rowId));
@@ -128,8 +130,8 @@ export function SectionView({
                 className={cn(
                   'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
                   mode === m
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-                    : 'text-zinc-500',
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200'
+                    : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300',
                 )}
                 title={`${label} view`}
               >
@@ -184,7 +186,11 @@ export function SectionView({
           <button
             type="button"
             onClick={async () => {
-              const input = prompt('Paste a Google Sheet URL or id. Existing rows merge by `id` column when present, else append.');
+              const input = await appPrompt('Import from Google Sheet', {
+                body: 'Paste the Sheet URL or id. Rows merge by `id` when present, otherwise append.',
+                placeholder: 'https://docs.google.com/spreadsheets/d/…',
+                okLabel: 'Import',
+              });
               if (!input) return;
               toast.info('Importing from Sheet…');
               try {
@@ -329,7 +335,7 @@ function QuickAdd({
       <button
         type="submit"
         disabled={busy || !value.trim()}
-        className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+        className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
         title={titleField ? `Create with ${titleField} set` : 'Create row'}
       >
         <Plus className="h-3.5 w-3.5" /> Add

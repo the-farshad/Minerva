@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Copy, RefreshCw, Rss, Calendar } from 'lucide-react';
+import { appConfirm } from './confirm';
 
 type Feeds = { token: string; ical: string; rss: string; inbox: string };
 
@@ -25,7 +26,8 @@ export function FeedsCard() {
   }
   async function rotate() {
     if (busy) return;
-    if (!confirm('Rotate the feed token? Old subscription URLs will stop working.')) return;
+    const ok = await appConfirm('Rotate feed token?', { body: 'Old subscription URLs will stop working immediately.', dangerLabel: 'Rotate' });
+    if (!ok) return;
     setBusy(true);
     try {
       const r = await fetch('/api/feeds/rotate', { method: 'POST' });

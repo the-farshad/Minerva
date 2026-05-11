@@ -45,7 +45,7 @@ export function PomodoroWidget() {
         <button
           type="button"
           onClick={() => setRunning((v) => !v)}
-          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500"
         >
           {running ? <><Pause className="h-3 w-3" /> Pause</> : <><Play className="h-3 w-3" /> Start</>}
         </button>

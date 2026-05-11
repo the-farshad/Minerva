@@ -167,14 +167,24 @@ async function youtubePlaylist(listId: string) {
   if (!r.ok) return { name: '', items: [] as Array<{ url: string; title: string; channel: string; thumbnail: string; playlist?: string }> };
   const html = await r.text();
 
-  // Playlist name — usually present as the page's <title> and inside
-  // ytInitialData under `microformat.microformatDataRenderer.title`.
-  // We try a few fallbacks to be tolerant of YouTube HTML drift.
+  // Playlist name — YouTube HTML moves it around between updates, so
+  // try several anchor patterns and pick whichever lands first.
   let name = '';
-  const m1 = html.match(/<meta name="title" content="([^"]+)"/);
-  const m2 = html.match(/"microformatDataRenderer":\{[^}]*?"title":"([^"]+)"/);
-  const m3 = html.match(/<title>([^<]+?) - YouTube<\/title>/);
-  name = (m1?.[1] || m2?.[1] || m3?.[1] || '').replace(/\\u0026/g, '&').replace(/\\"/g, '"').trim();
+  const candidates = [
+    /<meta property="og:title" content="([^"]+)"/,
+    /<meta name="title" content="([^"]+)"/,
+    /"microformatDataRenderer":\{[^}]*?"title":"([^"]+)"/,
+    /"playlistMetadataRenderer":\{[^}]*?"title":"([^"]+)"/,
+    /"playlistSidebarPrimaryInfoRenderer":[\s\S]{0,400}?"title":\{"runs":\[\{"text":"([^"]+)"/,
+    /<title>([^<]+?) - YouTube<\/title>/,
+  ];
+  for (const re of candidates) {
+    const m = html.match(re);
+    if (m && m[1]) {
+      name = m[1].replace(/\\u0026/g, '&').replace(/\\"/g, '"').replace(/&amp;/g, '&').trim();
+      if (name) break;
+    }
+  }
 
   // Owner / channel name applied to every item in the playlist.
   const ownerMatch = html.match(/"ownerText":\{"runs":\[\{"text":"([^"]+)"/);

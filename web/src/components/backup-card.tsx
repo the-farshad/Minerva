@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Download, Upload, Archive } from 'lucide-react';
+import { appConfirm } from './confirm';
 
 export function BackupCard() {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -45,7 +46,7 @@ export function BackupCard() {
         <a
           href="/api/backup"
           download
-          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500"
         >
           <Download className="h-3 w-3" /> Download backup
         </a>
@@ -60,8 +61,9 @@ export function BackupCard() {
         <button
           type="button"
           disabled={busy}
-          onClick={() => {
-            if (!confirm('Replace mode wipes existing rows in matching sections first. Proceed?')) return;
+          onClick={async () => {
+            const ok = await appConfirm('Restore in replace mode?', { body: 'Wipes existing rows in matching sections before importing.', dangerLabel: 'Replace' });
+            if (!ok) return;
             const inp = fileRef.current;
             if (!inp) return;
             inp.dataset.mode = 'replace';

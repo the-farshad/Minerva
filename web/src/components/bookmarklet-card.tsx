@@ -44,7 +44,7 @@ export function BookmarkletCard() {
           <a
             href={snippet}
             onClick={(e) => e.preventDefault()}
-            className="rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+            className="rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500"
           >
             ⭐ Save to Minerva
           </a>

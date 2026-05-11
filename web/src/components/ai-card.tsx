@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Sparkles, X } from 'lucide-react';
+import { appConfirm } from './confirm';
 import {
   readCfg, writeCfg, clearCfg, defaultEndpoint, defaultModel, ask,
   type AiCfg, type AiProvider,
@@ -54,8 +55,9 @@ export function AiCard() {
       setTesting(false);
     }
   }
-  function clearAll() {
-    if (!confirm('Clear AI settings?')) return;
+  async function clearAll() {
+    const ok = await appConfirm('Clear AI settings?', { dangerLabel: 'Clear' });
+    if (!ok) return;
     clearCfg();
     setCfg({});
     setReply(null);
@@ -124,7 +126,7 @@ export function AiCard() {
         <button
           type="button"
           onClick={save}
-          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500"
         >
           Save
         </button>

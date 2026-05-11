@@ -13,6 +13,8 @@ import { FeedsCard } from '@/components/feeds-card';
 import { BookmarkletCard } from '@/components/bookmarklet-card';
 import { TelegramCard } from '@/components/telegram-card';
 import { BackupCard } from '@/components/backup-card';
+import { appConfirm } from '@/components/confirm';
+import { appPrompt } from '@/components/prompt';
 
 type Preset = { slug: string; title: string; icon: string };
 type Existing = { slug: string; title: string; enabled: boolean };
@@ -74,7 +76,7 @@ export function SettingsView({
 
   async function rename(slug: string) {
     const cur = own.find((x) => x.slug === slug)?.title || '';
-    const next = prompt('New title:', cur);
+    const next = await appPrompt(`Rename section`, { initial: cur, okLabel: 'Rename' });
     if (!next || next.trim() === cur) return;
     const prev = own;
     setOwn((s) => s.map((x) => (x.slug === slug ? { ...x, title: next.trim() } : x)));
@@ -123,7 +125,8 @@ export function SettingsView({
   }
 
   async function purge(slug: string) {
-    if (!confirm(`Delete section "${slug}" and all its rows? This cannot be undone.`)) return;
+    const ok = await appConfirm(`Delete section "${slug}"?`, { body: 'This deletes the section and all its rows. Cannot be undone.', dangerLabel: 'Delete section' });
+    if (!ok) return;
     const prev = own;
     setOwn((s) => s.filter((x) => x.slug !== slug));
     try {
@@ -241,7 +244,7 @@ export function SettingsView({
                     type="button"
                     onClick={() => addPreset.mutate(p.slug)}
                     disabled={addPreset.isPending}
-                    className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+                    className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
                   >
                     <Plus className="h-3 w-3" /> Add
                   </button>

@@ -5,6 +5,8 @@ import { Toaster } from 'sonner';
 import { useEffect, useState } from 'react';
 import { AiOverlay } from '@/components/ai-overlay';
 import { ThemeBoot } from '@/components/theme-card';
+import { ConfirmHost } from '@/components/confirm';
+import { PromptHost } from '@/components/prompt';
 import { pullServerPrefs } from '@/lib/prefs';
 
 function PrefsBoot() {
@@ -23,6 +25,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <AiOverlay />
       <ThemeBoot />
       <PrefsBoot />
+      <ConfirmHost />
+      <PromptHost />
     </QueryClientProvider>
   );
 }

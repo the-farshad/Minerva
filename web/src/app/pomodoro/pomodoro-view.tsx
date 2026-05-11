@@ -97,7 +97,7 @@ export function PomodoroView() {
         <button
           type="button"
           onClick={() => setRunning((v) => !v)}
-          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-4 py-2 text-sm text-white dark:bg-white dark:text-zinc-900"
+          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500"
         >
           {running
             ? <><Pause className="h-4 w-4" /> Pause</>

@@ -80,7 +80,7 @@ export function ThemeCard() {
             key={t.v}
             type="button"
             onClick={() => pickTheme(t.v)}
-            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${theme === t.v ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900' : 'border-zinc-200 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800'}`}
+            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${theme === t.v ? 'border-blue-500 bg-blue-100 text-blue-700 dark:border-blue-400 dark:bg-blue-900/40 dark:text-blue-200' : 'border-zinc-200 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800'}`}
           >
             <t.Icon className="h-3 w-3" /> {t.label}
           </button>
@@ -97,7 +97,7 @@ export function ThemeCard() {
             key={f.v}
             type="button"
             onClick={() => pickFont(f.v)}
-            className={`rounded-full border px-2.5 py-1 text-xs ${font === f.v ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900' : 'border-zinc-200 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800'}`}
+            className={`rounded-full border px-2.5 py-1 text-xs ${font === f.v ? 'border-blue-500 bg-blue-100 text-blue-700 dark:border-blue-400 dark:bg-blue-900/40 dark:text-blue-200' : 'border-zinc-200 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800'}`}
           >
             {f.label}
           </button>

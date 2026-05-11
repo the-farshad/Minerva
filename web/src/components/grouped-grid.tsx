@@ -3,6 +3,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save } from 'lucide-react';
 import { toast } from 'sonner';
+import { appConfirm } from './confirm';
+import { appPrompt } from './prompt';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
 import { GroupNotes } from './group-notes';
@@ -205,11 +207,15 @@ export function GroupedGrid({
                       <button
                         type="button"
                         onClick={async () => {
-                          if (!confirm(`Save offline copies of all ${groupRows.length} items in "${key}"?`)) return;
+                          const ok = await appConfirm(
+                            `Save all ${groupRows.length} items in "${key}" offline?`,
+                            { body: 'Downloads each item to your Drive in the background.' },
+                          );
+                          if (!ok) return;
                           const kind = section.preset === 'youtube' ? 'video' : 'paper';
                           toast.info(`Saving ${groupRows.length} items offline…`);
                           let done = 0, failed = 0;
-                          for (const gr of groupRows) {
+                          await Promise.all(groupRows.map(async (gr) => {
                             try {
                               const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/save-offline`, {
                                 method: 'POST',
@@ -218,7 +224,7 @@ export function GroupedGrid({
                               });
                               if (resp.ok) done++; else failed++;
                             } catch { failed++; }
-                          }
+                          }));
                           toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}.`);
                         }}
                         className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
@@ -229,11 +235,26 @@ export function GroupedGrid({
                       <button
                         type="button"
                         onClick={async () => {
-                          if (!confirm(`Delete ALL ${groupRows.length} items in "${key}"? This cannot be undone.`)) return;
-                          for (const gr of groupRows) {
-                            await onDelete(gr.id);
+                          const ok = await appConfirm(
+                            `Delete all ${groupRows.length} items in "${key}"?`,
+                            { body: 'This cannot be undone.', dangerLabel: 'Delete all' },
+                          );
+                          if (!ok) return;
+                          // Server-side one-shot delete by playlist value —
+                          // no per-row round-trips, no per-row confirms.
+                          try {
+                            const resp = await fetch(`/api/sections/${section.slug}/rows/bulk-delete`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ playlist: key }),
+                            });
+                            const j = await resp.json().catch(() => ({}));
+                            if (!resp.ok) throw new Error(j.error || String(resp.status));
+                            toast.success(`Deleted ${j.deleted ?? groupRows.length} items.`);
+                            location.reload();
+                          } catch (e) {
+                            toast.error('Delete failed: ' + (e as Error).message);
                           }
-                          toast.success(`Deleted ${groupRows.length} items.`);
                         }}
                         className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-zinc-700 dark:text-red-400 dark:hover:bg-red-950"
                         title={`Delete every item in "${key}"`}
@@ -243,17 +264,18 @@ export function GroupedGrid({
                       <button
                         type="button"
                         onClick={async () => {
-                          const next = prompt(`Category for all items in "${key}":`);
+                          const next = await appPrompt(`Category for "${key}"`, {
+                            body: `Applied to every item in this group.`,
+                            placeholder: 'e.g. tutorial',
+                          });
                           if (next === null) return;
-                          for (const gr of groupRows) {
-                            try {
-                              await fetch(`/api/sections/${section.slug}/rows/${gr.id}`, {
-                                method: 'PATCH',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ data: { category: next.trim() } }),
-                              });
-                            } catch { /* tolerate */ }
-                          }
+                          await Promise.all(groupRows.map((gr) =>
+                            fetch(`/api/sections/${section.slug}/rows/${gr.id}`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ data: { category: next.trim() } }),
+                            }).catch(() => undefined),
+                          ));
                           toast.success(`Set category on ${groupRows.length} items.`);
                           location.reload();
                         }}
@@ -323,7 +345,9 @@ export function GroupedGrid({
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ kind }),
                             });
-                            const j = await resp.json();
+                            const text = await resp.text();
+                            let j: { error?: string; skipped?: boolean } = {};
+                            try { j = text ? JSON.parse(text) : {}; } catch { j = { error: text.slice(0, 200) }; }
                             if (!resp.ok) throw new Error(j.error || `save-offline: ${resp.status}`);
                             toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
                           } catch (err) {
@@ -331,7 +355,7 @@ export function GroupedGrid({
                           }
                         }}
                         title="Download offline copy"
-                        className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2 py-0.5 text-[10px] text-white opacity-0 transition group-hover:opacity-100 dark:bg-white dark:text-zinc-900"
+                        className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-blue-600 px-2 py-0.5 text-[10px] text-white opacity-0 transition group-hover:opacity-100 hover:bg-blue-500"
                       >
                         <Save className="h-2.5 w-2.5" /> Save offline
                       </button>

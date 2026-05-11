@@ -62,7 +62,7 @@ export function LocalMirrorCard() {
         <button
           type="button"
           onClick={pick}
-          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500"
         >
           <FolderPlus className="h-3 w-3" /> {folderName ? 'Change folder' : 'Pick folder'}
         </button>
