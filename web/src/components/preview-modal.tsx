@@ -139,6 +139,41 @@ export function PreviewModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Paper auto-mirror on first preview-open: fire and forget so
+  // the iframe can start loading the (probably-X-Frame-blocked)
+  // arxiv URL while the helper grabs the PDF in the background.
+  // Must live above the `if (!view) return null` early return —
+  // hooks order must be stable across renders.
+  useEffect(() => {
+    const v = view;
+    if (!v) return;
+    if (!isPdf(v.url)) return;
+    if (v.driveFileId || v.hostPath) return;
+    if (!v.rowId || !v.sectionSlug) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/sections/${v.sectionSlug}/rows/${v.rowId}/save-offline`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'paper' }),
+          },
+        );
+        if (cancelled) return;
+        if (!r.ok) return;
+        const j = await r.json().catch(() => ({}));
+        if (j.fileId) setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
+        if (!j.skipped && j.fileId && j.filename && v.sectionSlug && v.rowId) {
+          mirrorToLocal('paper', j.fileId, j.filename, v.sectionSlug, v.rowId);
+        }
+      } catch { /* tolerate */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view?.url, view?.rowId]);
+
   if (!view) return null;
 
   const yt = ytId(view.url);
@@ -247,39 +282,6 @@ export function PreviewModal({
       setDownloading(false);
     }
   }
-
-  // Paper auto-mirror on first preview-open: fire and forget so
-  // the iframe can start loading the (probably-X-Frame-blocked)
-  // arxiv URL while the helper grabs the PDF in the background.
-  useEffect(() => {
-    const v = view;
-    if (!v) return;
-    if (!isPdf(v.url)) return;
-    if (v.driveFileId || v.hostPath) return;
-    if (!v.rowId || !v.sectionSlug) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch(
-          `/api/sections/${v.sectionSlug}/rows/${v.rowId}/save-offline`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ kind: 'paper' }),
-          },
-        );
-        if (cancelled) return;
-        if (!r.ok) return;
-        const j = await r.json().catch(() => ({}));
-        if (j.fileId) setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
-        if (!j.skipped && j.fileId && j.filename && v.sectionSlug && v.rowId) {
-          mirrorToLocal('paper', j.fileId, j.filename, v.sectionSlug, v.rowId);
-        }
-      } catch { /* tolerate */ }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view?.url, view?.rowId]);
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
