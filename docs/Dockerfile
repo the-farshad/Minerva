@@ -46,7 +46,12 @@ RUN set -e; \
 
 # Python deps. The script self-bootstraps a venv on first host-side run;
 # inside the container we install system-wide so startup is instant.
-RUN pip install --no-cache-dir flask yt-dlp requests "psycopg[binary]" opendataloader-pdf
+# bgutil-ytdlp-pot-provider is the BotGuard PO-token plugin — required
+# since YouTube tightened anti-bot in Q2 2026; without it yt-dlp returns
+# only storyboard formats. The plugin talks to a sidecar at
+# http://minerva-pot:4416 (see docker-compose.yml) for the actual token.
+RUN pip install --no-cache-dir flask yt-dlp requests "psycopg[binary]" opendataloader-pdf \
+    bgutil-ytdlp-pot-provider
 
 WORKDIR /srv
 
@@ -72,4 +77,4 @@ EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health').read()"
 
-CMD ["sh", "-c", "timeout 30 pip install --quiet --no-cache-dir --upgrade yt-dlp 2>/dev/null || true; exec python minerva-services.py"]
+CMD ["sh", "-c", "timeout 30 pip install --quiet --no-cache-dir --upgrade --pre yt-dlp 2>/dev/null || true; timeout 30 pip install --quiet --no-cache-dir --upgrade bgutil-ytdlp-pot-provider 2>/dev/null || true; exec python minerva-services.py"]

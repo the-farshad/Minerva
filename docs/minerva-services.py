@@ -257,6 +257,17 @@ def download():
         # to run the script. The flag tells yt-dlp where to fetch the
         # solver lib from on first need (cached after that).
         "remote_components": ["ejs:github"],
+        # BotGuard PO-token via the bgutil-ytdlp-pot-provider plugin.
+        # YouTube's anti-bot now rejects vanilla yt-dlp requests; the
+        # plugin fetches a fresh token from the sidecar provider every
+        # request. URL is the compose service name resolved over the
+        # `minerva_default` bridge network. Override via env when
+        # running outside compose.
+        "extractor_args": {
+            "youtubepot-bgutilhttp": {
+                "base_url": [os.environ.get("MINERVA_POT_PROVIDER_URL", "http://minerva-pot:4416")],
+            },
+        },
     }
     # YouTube increasingly gates videos behind a "Sign in to confirm
     # you're not a bot" check. yt-dlp can step past it with a Netscape-
