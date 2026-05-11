@@ -87,10 +87,17 @@ async function saveOffline(
     // Guard against yt-dlp returning 200 with an HTML body — happens
     // when YouTube bot-checks the helper. Without this we'd happily
     // upload "video.html" to Drive.
-    if (/text\/html|application\/json/i.test(mime) || bytes.byteLength < 64 * 1024) {
-      const snippet = new TextDecoder().decode(bytes.slice(0, 300));
+    if (/text\/html/i.test(mime) || bytes.byteLength < 64 * 1024) {
+      const head = new TextDecoder().decode(bytes.slice(0, 4096));
+      // Sniff the most common bot-check / consent signatures and
+      // tell the user the actionable thing instead of dumping HTML.
+      const reason =
+        /consent\.youtube\.com|consent\.google\.com/i.test(head) ? 'YouTube is showing the consent page — cookies are likely stale.'
+        : /(captcha|recaptcha|challenge)/i.test(head) ? 'YouTube served a captcha challenge — cookies are likely stale.'
+        : /sign in to confirm/i.test(head) ? 'YouTube asked yt-dlp to sign in — cookies are stale or expired.'
+        : `yt-dlp returned ${mime || 'unknown content-type'} (${bytes.byteLength} bytes) instead of a video.`;
       return NextResponse.json(
-        { error: `yt-dlp didn't return a video (got ${mime}, ${bytes.byteLength} bytes). YouTube may be requiring fresh cookies. Snippet: ${snippet}` },
+        { error: `${reason} Refresh YT cookies on the droplet, then retry.` },
         { status: 502 },
       );
     }
