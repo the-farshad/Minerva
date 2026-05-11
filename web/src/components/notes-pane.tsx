@@ -11,16 +11,27 @@ export function NotesPane({
   sectionSlug,
   rowId,
   initial,
+  onSaved,
 }: {
   sectionSlug: string;
   rowId: string;
   initial: string;
+  /** Notify the parent of a successful save so its local row state
+   * doesn't drift out of sync with the server. Without this, the
+   * parent's `rows` cache still holds the pre-edit notes and any
+   * re-render trickles the stale value back down via `initial`,
+   * wiping the textarea mid-edit. */
+  onSaved?: (next: string) => void;
 }) {
   const [value, setValue] = useState(initial);
   const [saving, setSaving] = useState<'idle' | 'pending' | 'saved' | 'error'>('idle');
   const t = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => { setValue(initial); }, [initial]);
+  // Only resync from `initial` when the row itself changes (the
+  // pane was mounted for a different paper / video). Reacting to
+  // every `initial` change clobbers the user's in-flight edits the
+  // moment any parent re-render happens with a stale value.
+  useEffect(() => { setValue(initial); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [rowId]);
 
   function schedule(next: string) {
     setValue(next);
@@ -38,6 +49,7 @@ export function NotesPane({
       });
       if (!r.ok) throw new Error(String(r.status));
       setSaving('saved');
+      onSaved?.(next);
       setTimeout(() => setSaving('idle'), 1200);
     } catch (e) {
       setSaving('error');

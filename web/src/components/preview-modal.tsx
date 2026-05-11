@@ -56,9 +56,15 @@ function pdfDirectUrl(url: string): string {
 export function PreviewModal({
   item,
   onClose,
+  onNotesSaved,
 }: {
   item: PreviewItem | null;
   onClose: () => void;
+  /** Called after the NotesPane successfully PATCHes the row's
+   * notes. Lets the parent refresh its `rows` cache so a reopen of
+   * the modal shows the just-saved value instead of the pre-edit
+   * one. */
+  onNotesSaved?: (rowId: string, notes: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(!!item), [item]);
@@ -509,6 +515,10 @@ export function PreviewModal({
                 sectionSlug={view.sectionSlug}
                 rowId={view.rowId}
                 initial={view.notes || ''}
+                onSaved={(next) => {
+                  setView((prev) => (prev ? { ...prev, notes: next } : prev));
+                  onNotesSaved?.(view.rowId!, next);
+                }}
               />
             )}
           </div>

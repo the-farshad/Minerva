@@ -234,7 +234,15 @@ export function SectionView({
         if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} />;
         return <CalendarView section={section} rows={sorted} onOpen={openPreview} />;
       })()}
-      <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
+      <PreviewModal
+        item={previewItem}
+        onClose={() => setPreviewItem(null)}
+        onNotesSaved={(rowId, notes) => {
+          setRows((rs) => rs.map((x) => (
+            x.id === rowId ? { ...x, data: { ...x.data, notes } } : x
+          )));
+        }}
+      />
     </main>
   );
 }
