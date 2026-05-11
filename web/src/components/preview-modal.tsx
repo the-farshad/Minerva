@@ -74,6 +74,39 @@ export function PreviewModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Browser-Back-closes-modal — track via a ref whether we own a
+  // sentinel history state. On modal open, push the sentinel and
+  // attach a popstate listener that flips `open` false. On modal
+  // close via X / Escape, pop the sentinel ourselves so the user's
+  // history isn't littered with no-op entries. This is the version
+  // of the earlier attempt that actually keeps the bookkeeping
+  // straight under React StrictMode.
+  const sentinelOwned = useRef(false);
+  useEffect(() => {
+    if (!open) return;
+    history.pushState({ minervaPreview: true }, '');
+    sentinelOwned.current = true;
+    function onPop(e: PopStateEvent) {
+      // popstate fired because the user hit Back — sentinel is
+      // already gone from history; just close the modal without
+      // trying to pop it again.
+      sentinelOwned.current = false;
+      setOpen(false);
+      void e;
+    }
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      // X / Escape / item-changed path: pop our sentinel so the
+      // history stack returns to where it was before the modal
+      // opened. Guarded so we don't pop if popstate already fired.
+      if (sentinelOwned.current) {
+        sentinelOwned.current = false;
+        history.back();
+      }
+    };
+  }, [open]);
+
   // Listen for postMessage from the YT iframe's IFrame API so we
   // can track current time + persist a resume position. The iframe
   // is mounted with `enablejsapi=1` below; postMessage handshake is

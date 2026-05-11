@@ -379,7 +379,7 @@ export function GroupedGrid({
                           type="button"
                           onClick={(e) => e.stopPropagation()}
                           title="Info"
-                          className="absolute right-7 top-1 rounded-full p-1 text-zinc-400 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                          className="absolute right-7 top-1 rounded-full p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                         >
                           <Info className="h-3.5 w-3.5" />
                         </button>
