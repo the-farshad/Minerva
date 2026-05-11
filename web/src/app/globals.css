@@ -33,65 +33,72 @@ html.dark { --background: #0b0d10; --foreground: #ededed; }
 html[data-theme="light"] { color-scheme: light; --background: #fbfbfa; --foreground: #171717; }
 html[data-theme="dark"]  { color-scheme: dark;  --background: #0b0d10; --foreground: #ededed; }
 
-/* Light forced — beat the OS dark preference so dark-utility classes
- * (dark:bg-zinc-900 etc.) don't paint over the chosen light scheme. */
-html[data-theme="light"] body { background: #fbfbfa; color: #171717; }
+/* Light forced — keep dark utility classes from painting over the
+ * chosen scheme. All overrides resolve through the theme variables. */
+html[data-theme="light"] body { background: var(--background); color: var(--foreground); }
 html[data-theme="light"] .dark\:bg-zinc-900,
 html[data-theme="light"] .dark\:bg-zinc-950,
-html[data-theme="light"] .dark\:bg-zinc-800 { background-color: #ffffff !important; }
+html[data-theme="light"] .dark\:bg-zinc-800 { background-color: var(--background) !important; }
 html[data-theme="light"] .dark\:bg-zinc-900\/50,
-html[data-theme="light"] .dark\:bg-zinc-950\/70 { background-color: #ffffffcc !important; }
+html[data-theme="light"] .dark\:bg-zinc-950\/70 { background-color: color-mix(in oklab, var(--background) 90%, transparent) !important; }
 html[data-theme="light"] .dark\:text-zinc-100,
-html[data-theme="light"] .dark\:text-zinc-200 { color: #171717 !important; }
-html[data-theme="light"] .dark\:text-zinc-400 { color: #71717a !important; }
+html[data-theme="light"] .dark\:text-zinc-200 { color: var(--foreground) !important; }
+html[data-theme="light"] .dark\:text-zinc-400 { color: color-mix(in oklab, var(--foreground) 55%, transparent) !important; }
 html[data-theme="light"] .dark\:border-zinc-700,
-html[data-theme="light"] .dark\:border-zinc-800 { border-color: #e4e4e7 !important; }
+html[data-theme="light"] .dark\:border-zinc-800 { border-color: color-mix(in oklab, var(--foreground) 15%, transparent) !important; }
 
-/* Sepia — light scheme with paper-toned backgrounds and warm text.
- * Tailwind utility classes are overridden so the inner UI honours
- * the theme instead of leaking dark cards through. */
+/* Sepia — paper-toned. Every override resolves to the two theme
+ * variables (`--background` = parchment, `--foreground` = ink), so
+ * the palette is consistent and there are no orphan hexes. */
 html[data-theme="sepia"] {
   color-scheme: light;
   --background: #f4ecd8;
   --foreground: #4b3a1f;
 }
-html[data-theme="sepia"] body { background: #f4ecd8; color: #4b3a1f; }
+html[data-theme="sepia"] body { background: var(--background); color: var(--foreground); }
 html[data-theme="sepia"] .bg-white,
 html[data-theme="sepia"] .bg-zinc-50,
 html[data-theme="sepia"] .dark\:bg-zinc-900,
 html[data-theme="sepia"] .dark\:bg-zinc-950,
 html[data-theme="sepia"] .dark\:bg-zinc-800,
 html[data-theme="sepia"] .bg-zinc-100,
-html[data-theme="sepia"] .bg-zinc-200 { background-color: #f4ecd8 !important; }
-html[data-theme="sepia"] .bg-zinc-900\/50,
+html[data-theme="sepia"] .bg-zinc-200 { background-color: var(--background) !important; }
 html[data-theme="sepia"] .bg-white\/70,
-html[data-theme="sepia"] .dark\:bg-zinc-950\/70 { background-color: #ede2c4 !important; }
+html[data-theme="sepia"] .dark\:bg-zinc-950\/70 { background-color: color-mix(in oklab, var(--background) 90%, var(--foreground)) !important; }
 html[data-theme="sepia"] .text-zinc-900,
 html[data-theme="sepia"] .dark\:text-zinc-100,
 html[data-theme="sepia"] .dark\:text-zinc-200,
-html[data-theme="sepia"] .text-zinc-800 { color: #4b3a1f !important; }
+html[data-theme="sepia"] .text-zinc-800 { color: var(--foreground) !important; }
 html[data-theme="sepia"] .text-zinc-500,
 html[data-theme="sepia"] .text-zinc-600,
-html[data-theme="sepia"] .dark\:text-zinc-400 { color: #7a6a4d !important; }
+html[data-theme="sepia"] .dark\:text-zinc-400 { color: color-mix(in oklab, var(--foreground) 65%, transparent) !important; }
+/* Borders + dividers: ink at 25% so they show up but don't shout. */
+html[data-theme="sepia"] .border-zinc-100,
 html[data-theme="sepia"] .border-zinc-200,
 html[data-theme="sepia"] .border-zinc-300,
 html[data-theme="sepia"] .dark\:border-zinc-700,
-html[data-theme="sepia"] .dark\:border-zinc-800 { border-color: #d6c89a !important; }
-/* Sepia primary / selected: warm dark brown with the parchment tone for text. */
-html[data-theme="sepia"] .bg-zinc-900 { background-color: #5b4326 !important; }
+html[data-theme="sepia"] .dark\:border-zinc-800,
+html[data-theme="sepia"] .divide-zinc-200 > * + *,
+html[data-theme="sepia"] .dark\:divide-zinc-800 > * + * { border-color: color-mix(in oklab, var(--foreground) 25%, transparent) !important; }
+/* Selected / primary buttons use the inked palette — same brown as
+ * body text, parchment as the text colour. */
+html[data-theme="sepia"] .bg-zinc-900,
+html[data-theme="sepia"] .dark\:bg-white { background-color: var(--foreground) !important; }
 html[data-theme="sepia"] .bg-zinc-900.text-white,
 html[data-theme="sepia"] .bg-zinc-900 .text-white,
-html[data-theme="sepia"] .text-white { color: #f4ecd8 !important; }
-/* Sepia links — replace standard blue with warm brown. */
-html[data-theme="sepia"] .text-blue-600 { color: #8a5a1a !important; }
+html[data-theme="sepia"] .text-white,
+html[data-theme="sepia"] .dark\:text-zinc-900 { color: var(--background) !important; }
+/* Sepia links also use the ink colour with an underline. */
+html[data-theme="sepia"] .text-blue-600 { color: var(--foreground) !important; text-decoration: underline; }
 
-/* VT323 — neon-green on near-black, monospace everywhere. */
+/* VT323 — neon-green on near-black, monospace everywhere. Same
+ * pattern as sepia: everything reduces to the two theme variables. */
 html[data-theme="vt323"] {
   color-scheme: dark;
   --background: #0a0f0a;
   --foreground: #b6ffb6;
 }
-html[data-theme="vt323"] body { background: #0a0f0a; color: #b6ffb6; }
+html[data-theme="vt323"] body { background: var(--background); color: var(--foreground); }
 html[data-theme="vt323"] body,
 html[data-theme="vt323"] * {
   font-family: "VT323", ui-monospace, monospace !important;
@@ -102,29 +109,30 @@ html[data-theme="vt323"] .bg-zinc-50,
 html[data-theme="vt323"] .bg-zinc-100,
 html[data-theme="vt323"] .dark\:bg-zinc-900,
 html[data-theme="vt323"] .dark\:bg-zinc-950,
-html[data-theme="vt323"] .dark\:bg-zinc-800 { background-color: #0a0f0a !important; }
+html[data-theme="vt323"] .dark\:bg-zinc-800 { background-color: var(--background) !important; }
 html[data-theme="vt323"] .text-zinc-900,
 html[data-theme="vt323"] .text-zinc-800,
 html[data-theme="vt323"] .dark\:text-zinc-100,
-html[data-theme="vt323"] .dark\:text-zinc-200 { color: #b6ffb6 !important; }
+html[data-theme="vt323"] .dark\:text-zinc-200 { color: var(--foreground) !important; }
 html[data-theme="vt323"] .text-zinc-500,
 html[data-theme="vt323"] .text-zinc-600,
-html[data-theme="vt323"] .dark\:text-zinc-400 { color: #6dc06d !important; }
+html[data-theme="vt323"] .dark\:text-zinc-400 { color: color-mix(in oklab, var(--foreground) 55%, transparent) !important; }
+html[data-theme="vt323"] .border-zinc-100,
 html[data-theme="vt323"] .border-zinc-200,
 html[data-theme="vt323"] .border-zinc-300,
 html[data-theme="vt323"] .dark\:border-zinc-700,
-html[data-theme="vt323"] .dark\:border-zinc-800 { border-color: #2a4d2a !important; }
-/* VT323 primary / selected: neon green block with black text — CRT
- * terminal vibe. Applies to both the light-mode filled style
- * (`bg-zinc-900`) and the dark inverted (`dark:bg-white`) variant. */
+html[data-theme="vt323"] .dark\:border-zinc-800,
+html[data-theme="vt323"] .divide-zinc-200 > * + *,
+html[data-theme="vt323"] .dark\:divide-zinc-800 > * + * { border-color: color-mix(in oklab, var(--foreground) 35%, transparent) !important; }
+/* Selected / primary buttons: green CRT block on dark text. */
 html[data-theme="vt323"] .bg-zinc-900,
-html[data-theme="vt323"] .dark\:bg-white { background-color: #00ff66 !important; }
+html[data-theme="vt323"] .dark\:bg-white { background-color: var(--foreground) !important; }
 html[data-theme="vt323"] .bg-zinc-900.text-white,
 html[data-theme="vt323"] .bg-zinc-900 .text-white,
 html[data-theme="vt323"] .text-white,
-html[data-theme="vt323"] .dark\:text-zinc-900 { color: #000000 !important; }
-/* VT323 links — green underline on the dark background. */
-html[data-theme="vt323"] .text-blue-600 { color: #7dffb6 !important; }
+html[data-theme="vt323"] .dark\:text-zinc-900 { color: var(--background) !important; }
+/* Links keep the foreground green with an underline. */
+html[data-theme="vt323"] .text-blue-600 { color: var(--foreground) !important; text-decoration: underline; }
 
 /* Font picker — applied via <html data-font="..."> */
 html[data-font="serif"]   body, html[data-font="serif"]   body * { font-family: ui-serif, Georgia, "Times New Roman", serif !important; }
