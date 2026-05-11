@@ -244,9 +244,20 @@ export function SettingsView({
                   </div>
                 </div>
                 {installed ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                    <Check className="h-3 w-3" /> Added
-                  </span>
+                  // "Added" is now a button: hover shows "Remove" and
+                  // clicks unadd the section (with its rows) so you
+                  // don't have to scroll to the Your-sections list.
+                  <button
+                    type="button"
+                    onClick={() => purge(p.slug)}
+                    className="group inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-red-100 hover:text-red-700 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-red-950 dark:hover:text-red-300"
+                    title="Click to remove this section"
+                  >
+                    <Check className="h-3 w-3 group-hover:hidden" />
+                    <Trash2 className="hidden h-3 w-3 group-hover:inline" />
+                    <span className="group-hover:hidden">Added</span>
+                    <span className="hidden group-hover:inline">Remove</span>
+                  </button>
                 ) : (
                   <button
                     type="button"
