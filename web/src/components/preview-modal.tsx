@@ -5,7 +5,9 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { X, ExternalLink, Download, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookmarkDrawer } from './bookmark-drawer';
+import { NotesPane } from './notes-pane';
 import { readPref, writePref } from '@/lib/prefs';
+import { StickyNote } from 'lucide-react';
 
 type PreviewItem = {
   url: string;
@@ -18,6 +20,8 @@ type PreviewItem = {
    * auto-mirror that writes an offline marker back to the row. */
   rowId?: string;
   sectionSlug?: string;
+  /** Current `notes` value for the row, for the side pane. */
+  notes?: string;
 };
 
 const YT_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/;
@@ -44,6 +48,7 @@ export function PreviewModal({
   const ytIframeRef = useRef<HTMLIFrameElement>(null);
   const ytTimeRef = useRef<number>(0);
   const [pdfPage, setPdfPage] = useState(1);
+  const [notesOpen, setNotesOpen] = useState(false);
   // Local mirror of the item so async writes (auto-mirror, manual
   // download) can flip the modal to a freshly-uploaded Drive blob
   // without the parent re-rendering.
@@ -191,6 +196,16 @@ export function PreviewModal({
                 <Save className="h-3.5 w-3.5" /> {downloading ? 'Saving…' : 'Save offline'}
               </button>
             )}
+            {view.sectionSlug && view.rowId && (
+              <button
+                type="button"
+                onClick={() => setNotesOpen((v) => !v)}
+                title="Show / hide notes pane"
+                className={`rounded-full p-1.5 ${notesOpen ? 'bg-zinc-200 dark:bg-zinc-800' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+              >
+                <StickyNote className="h-4 w-4" />
+              </button>
+            )}
             <Dialog.Close
               aria-label="Close"
               className="rounded-full p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
@@ -198,7 +213,8 @@ export function PreviewModal({
               <X className="h-4 w-4" />
             </Dialog.Close>
           </header>
-          <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
+          <div className="flex flex-1 overflow-hidden">
+            <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
             {hostSrc && pdf ? (
               <iframe
                 src={`${hostSrc}#toolbar=1`}
@@ -238,6 +254,14 @@ export function PreviewModal({
                 title={view.title || view.url}
                 referrerPolicy="no-referrer"
                 allow="fullscreen"
+              />
+            )}
+            </div>
+            {notesOpen && view.sectionSlug && view.rowId && (
+              <NotesPane
+                sectionSlug={view.sectionSlug}
+                rowId={view.rowId}
+                initial={view.notes || ''}
               />
             )}
           </div>

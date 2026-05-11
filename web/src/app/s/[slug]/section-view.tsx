@@ -28,7 +28,7 @@ export function SectionView({
 }) {
   const [rows, setRows] = useState<Row[]>(initialRows);
   const [mode, setMode] = useState<'list' | 'grid'>('list');
-  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string } | null>(null);
+  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; notes?: string } | null>(null);
   const qc = useQueryClient();
 
   function openPreview(r: Row) {
@@ -44,6 +44,7 @@ export function SectionView({
       hostPath: host ? host.slice(5).trim() : undefined,
       rowId: r.id,
       sectionSlug: section.slug,
+      notes: String(r.data.notes || ''),
     });
   }
 

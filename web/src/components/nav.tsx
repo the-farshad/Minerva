@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Home, Settings, LogOut } from 'lucide-react';
 import { signOutAction } from '@/app/actions';
+import { SearchBar } from './search-bar';
 
 const PRIMARY = [
   { href: '/', label: 'Home', icon: Home },
@@ -44,8 +45,10 @@ export function Nav({
           <it.icon className="h-4 w-4" /> {it.label}
         </NavLink>
       ))}
-      {email && (
-        <form action={signOutAction} className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-3">
+        <SearchBar />
+        {email && (
+        <form action={signOutAction} className="flex items-center gap-2">
           <span className="text-xs text-zinc-500">{email}</span>
           <button
             type="submit"
@@ -54,7 +57,8 @@ export function Nav({
             <LogOut className="h-3 w-3" /> Sign out
           </button>
         </form>
-      )}
+        )}
+      </div>
     </nav>
   );
 }
