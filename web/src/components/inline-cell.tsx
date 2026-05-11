@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { MultiChipEditor } from './multi-chip-editor';
+import { SketchEditor } from './sketch-editor';
 
 /**
  * Tiny inline editor — click a cell, edit, blur or Enter to commit,
@@ -14,7 +15,7 @@ import { MultiChipEditor } from './multi-chip-editor';
 export type CellType =
   | 'text' | 'longtext' | 'markdown'
   | 'date' | 'datetime' | 'number'
-  | 'link' | 'check'
+  | 'link' | 'check' | 'sketch'
   | { kind: 'select'; options: string[] }
   | { kind: 'multiselect'; options: string[] };
 
@@ -27,7 +28,7 @@ export function parseType(raw: string): CellType {
   if (m.startsWith('multiselect(')) {
     return { kind: 'multiselect', options: m.slice(12, -1).split(',').map((s) => s.trim()).filter(Boolean) };
   }
-  if (['text', 'longtext', 'markdown', 'date', 'datetime', 'number', 'link', 'check'].includes(m)) {
+  if (['text', 'longtext', 'markdown', 'date', 'datetime', 'number', 'link', 'check', 'sketch'].includes(m)) {
     return m as CellType;
   }
   return 'text';
@@ -69,6 +70,9 @@ export function InlineCell({
         onCommit={onCommit}
       />
     );
+  }
+  if (type === 'sketch') {
+    return <SketchEditor value={stringify(value)} onCommit={onCommit} />;
   }
 
   async function commit(next: string) {
