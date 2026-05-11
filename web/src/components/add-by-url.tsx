@@ -126,13 +126,26 @@ export function AddByUrl({
 
       // Auto-mirror papers to the user's Drive on add so the preview
       // opens straight onto the annotated viewer rather than a
-      // "Mirroring…" placeholder.
+      // "Mirroring…" placeholder. Loud on failure now — silent
+      // failures looked like the auto-save wasn't running at all.
       if (section.preset === 'papers' && created?.id) {
-        fetch(`/api/sections/${section.slug}/rows/${created.id}/save-offline`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: 'paper' }),
-        }).catch(() => undefined);
+        (async () => {
+          try {
+            const r = await fetch(`/api/sections/${section.slug}/rows/${created.id}/save-offline`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ kind: 'paper' }),
+            });
+            const text = await r.text();
+            let j: { error?: string; skipped?: boolean } = {};
+            try { j = text ? JSON.parse(text) : {}; } catch { j = { error: text.slice(0, 200) }; }
+            if (!r.ok) {
+              notify.error(`Paper auto-save to Drive failed: ${j.error || r.status}`);
+            }
+          } catch (e) {
+            notify.error(`Paper auto-save to Drive failed: ${(e as Error).message}`);
+          }
+        })();
       }
       return { one: created };
     },
