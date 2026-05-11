@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save } from 'lucide-react';
+import { toast } from 'sonner';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
 import { GroupNotes } from './group-notes';
@@ -245,6 +246,32 @@ export function GroupedGrid({
                         {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
                       </div>
                     </button>
+                    {(section.preset === 'youtube' || section.preset === 'papers') && typeof r.data.url === 'string' && r.data.url ? (
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const kind = section.preset === 'youtube' ? 'video' : 'paper';
+                          toast.info(kind === 'video' ? 'Downloading + uploading to Drive…' : 'Mirroring PDF to Drive…');
+                          try {
+                            const resp = await fetch(`/api/sections/${section.slug}/rows/${r.id}/save-offline`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ kind }),
+                            });
+                            const j = await resp.json();
+                            if (!resp.ok) throw new Error(j.error || `save-offline: ${resp.status}`);
+                            toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
+                          } catch (err) {
+                            toast.error((err as Error).message);
+                          }
+                        }}
+                        title="Download offline copy"
+                        className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2 py-0.5 text-[10px] text-white opacity-0 transition group-hover:opacity-100 dark:bg-white dark:text-zinc-900"
+                      >
+                        <Save className="h-2.5 w-2.5" /> Save offline
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => onDelete(r.id)}

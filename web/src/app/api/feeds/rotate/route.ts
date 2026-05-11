@@ -7,7 +7,10 @@ export async function POST(req: NextRequest) {
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const userId = (session.user as { id: string }).id;
   const token = await rotateFeedToken(userId);
-  const origin = req.nextUrl.origin;
+  const env = process.env.NEXTAUTH_URL?.replace(/\/+$/, '');
+  const proto = req.headers.get('x-forwarded-proto') || 'https';
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
+  const origin = env || (host ? `${proto}://${host}` : req.nextUrl.origin);
   return NextResponse.json({
     token,
     ical: `${origin}/api/ical/${token}.ics`,

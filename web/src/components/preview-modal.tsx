@@ -241,7 +241,7 @@ export function PreviewModal({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content className="fixed inset-0 z-50 m-0 flex flex-col bg-zinc-100 dark:bg-zinc-950 sm:inset-2 sm:rounded-xl sm:overflow-hidden">
-          <header className="flex items-center gap-2 border-b border-zinc-200 bg-white/70 px-3 py-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/70">
+          <header className="flex flex-wrap items-center gap-1 border-b border-zinc-200 bg-white/70 px-3 py-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/70">
             <Dialog.Title className="flex-1 truncate text-sm font-medium">
               {view.title || view.url}
             </Dialog.Title>
@@ -272,7 +272,7 @@ export function PreviewModal({
                 title={view.driveFileId
                   ? 'Already saved — click to re-download via yt-dlp + upload to Drive'
                   : 'Download via yt-dlp + upload to Drive so this plays offline'}
-                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+                className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
               >
                 <Save className="h-3.5 w-3.5" /> {downloading ? 'Saving…' : view.driveFileId ? 'Re-save' : 'Save offline'}
               </button>
@@ -316,6 +316,34 @@ export function PreviewModal({
                 className="h-full w-full"
                 title="PDF (annotated viewer)"
               />
+            ) : pdf ? (
+              <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-center text-sm text-zinc-500">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-300" />
+                <div>
+                  Mirroring PDF to your Drive…
+                  <div className="mt-1 text-xs">
+                    arxiv blocks direct framing, so we copy the PDF first.
+                  </div>
+                </div>
+                {view.sectionSlug && view.rowId && (
+                  <button
+                    type="button"
+                    onClick={() => saveOffline('paper')}
+                    disabled={downloading}
+                    className="mt-2 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
+                  >
+                    {downloading ? 'Mirroring…' : 'Retry mirror'}
+                  </button>
+                )}
+                <a
+                  href={view.url}
+                  target="_blank"
+                  rel="noopener"
+                  className="text-xs underline-offset-2 hover:underline"
+                >
+                  Open at the source instead
+                </a>
+              </div>
             ) : yt ? (
               <iframe
                 ref={ytIframeRef}

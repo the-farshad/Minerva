@@ -32,7 +32,10 @@ export async function GET(
   });
   const sectionById = new Map(sections.map((s) => [s.id, s]));
 
-  const origin = req.nextUrl.origin;
+  const env = process.env.NEXTAUTH_URL?.replace(/\/+$/, '');
+  const proto = req.headers.get('x-forwarded-proto') || 'https';
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
+  const origin = env || (host ? `${proto}://${host}` : req.nextUrl.origin);
   const items = rows
     .map((r) => {
       const s = sectionById.get(r.sectionId);

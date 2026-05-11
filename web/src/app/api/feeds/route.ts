@@ -10,8 +10,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { getOrCreateFeedToken } from '@/lib/feed-token';
 
+function publicOrigin(req: NextRequest): string {
+  // Behind Caddy/Cloudflare, req.nextUrl.origin is http://localhost:3000 —
+  // useless for feed URLs the user is about to subscribe to. Prefer
+  // an explicit NEXTAUTH_URL, then trust the X-Forwarded-* headers,
+  // then fall back to the request origin.
+  const env = process.env.NEXTAUTH_URL?.replace(/\/+$/, '');
+  if (env) return env;
+  const proto = req.headers.get('x-forwarded-proto') || 'https';
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
+  if (host) return `${proto}://${host}`;
+  return req.nextUrl.origin;
+}
+
 function urls(req: NextRequest, token: string) {
-  const origin = req.nextUrl.origin;
+  const origin = publicOrigin(req);
   return {
     ical: `${origin}/api/ical/${token}.ics`,
     rss:  `${origin}/api/rss/${token}.xml`,
