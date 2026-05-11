@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info } from 'lucide-react';
+import * as Popover from '@radix-ui/react-popover';
 import { toast } from 'sonner';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
@@ -371,6 +372,43 @@ export function GroupedGrid({
                         <Save className="h-2.5 w-2.5" /> Save offline
                       </button>
                     ) : null}
+                    <Popover.Root>
+                      <Popover.Trigger asChild>
+                        <button
+                          type="button"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Info"
+                          className="absolute right-7 top-1 rounded-full p-1 text-zinc-400 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </Popover.Trigger>
+                      <Popover.Portal>
+                        <Popover.Content
+                          side="bottom"
+                          align="end"
+                          sideOffset={4}
+                          className="z-50 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <dl className="space-y-2 text-xs">
+                            {Object.entries(r.data)
+                              .filter(([k, v]) =>
+                                v != null && v !== '' &&
+                                !k.startsWith('_') &&
+                                !['offline', 'notes', 'thumbnail'].includes(k))
+                              .map(([k, v]) => (
+                                <div key={k} className="grid grid-cols-[5rem_1fr] gap-2">
+                                  <dt className="text-zinc-500">{k}</dt>
+                                  <dd className="break-words font-medium text-zinc-700 dark:text-zinc-200">
+                                    {String(v).slice(0, 600)}
+                                  </dd>
+                                </div>
+                              ))}
+                          </dl>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
                     <button
                       type="button"
                       onClick={() => onDelete(r.id)}

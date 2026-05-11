@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { naturalCompare, cn } from '@/lib/utils';
-import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload } from 'lucide-react';
+import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
@@ -144,6 +144,12 @@ export function SectionView({
             section={section}
             onAdded={(row) => setRows((rs) => [...rs, row])}
           />
+          {section.preset === 'papers' && (
+            <UploadPaperButton
+              slug={section.slug}
+              onAdded={(row) => setRows((rs) => [...rs, row])}
+            />
+          )}
           {/* URL-keyed presets only accept rows via Add-by-URL. Other
             * sections (tasks / notes / projects / habits / inbox /
             * bookmarks) get a quick-add input so the row lands with a
@@ -299,6 +305,62 @@ function Table({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function UploadPaperButton({
+  slug, onAdded,
+}: {
+  slug: string;
+  onAdded: (row: Row) => void;
+}) {
+  const inputRef = useMemo(() => ({ current: null as HTMLInputElement | null }), []);
+  const [busy, setBusy] = useState(false);
+  async function pick() {
+    if (!inputRef.current) return;
+    inputRef.current.value = '';
+    inputRef.current.click();
+  }
+  async function onFile(file: File) {
+    if (!file) return;
+    setBusy(true);
+    toast.info('Uploading + extracting metadata…');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`/api/sections/${slug}/upload-paper`, { method: 'POST', body: fd });
+      const text = await r.text();
+      let j: { id?: string; data?: Record<string, unknown>; updatedAt?: string; extracted?: { title?: string }; error?: string } = {};
+      try { j = text ? JSON.parse(text) : {}; } catch { j = { error: text.slice(0, 200) }; }
+      if (!r.ok) throw new Error(j.error || `upload: ${r.status}`);
+      if (j.id && j.data && j.updatedAt) onAdded({ id: j.id, data: j.data, updatedAt: j.updatedAt });
+      const got = j.extracted?.title ? ` · title: "${j.extracted.title}"` : '';
+      toast.success('Uploaded.' + got);
+    } catch (e) {
+      toast.error('Upload failed: ' + (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={pick}
+        disabled={busy}
+        className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-800 dark:hover:bg-zinc-800"
+        title="Upload a PDF — metadata is auto-extracted from the file"
+      >
+        <FileUp className="h-3.5 w-3.5" /> Upload PDF
+      </button>
+      <input
+        ref={(el) => { inputRef.current = el; }}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) void onFile(f); }}
+      />
+    </>
   );
 }
 
