@@ -84,10 +84,16 @@ async function saveOffline(
     }
     bytes = await r.arrayBuffer();
     mime = r.headers.get('Content-Type') || 'video/mp4';
-    // Guard against yt-dlp returning 200 with an HTML body — happens
-    // when YouTube bot-checks the helper. Without this we'd happily
-    // upload "video.html" to Drive.
-    if (/text\/html/i.test(mime) || bytes.byteLength < 64 * 1024) {
+    // Guard against yt-dlp returning HTML even when Content-Type
+    // claims video/mp4 — we sniff the first 4 bytes for MP4's
+    // `ftyp` box marker. Real MP4s have `....ftyp` at offset 4;
+    // HTML starts with `<!DO` or whitespace+`<!`. Without this
+    // sniff a bot-check HTML page would land in Drive as
+    // "video.mp4" and you'd play it as a movie.
+    const head4 = new TextDecoder('latin1').decode(bytes.slice(0, Math.min(32, bytes.byteLength)));
+    const looksHtml = /^\s*<(?:!doctype|html|head|body|script)\b/i.test(head4);
+    const looksMp4 = bytes.byteLength > 16 && /ftyp/i.test(new TextDecoder('latin1').decode(bytes.slice(4, 12)));
+    if (/text\/html/i.test(mime) || looksHtml || (!looksMp4 && bytes.byteLength < 64 * 1024)) {
       const head = new TextDecoder().decode(bytes.slice(0, 4096));
       // Sniff the most common bot-check / consent signatures and
       // tell the user the actionable thing instead of dumping HTML.

@@ -82,13 +82,42 @@ export function TelegramCard() {
         </label>
         <label className="flex flex-col gap-1 text-xs">
           <span className="font-medium">Chat id</span>
-          <input
-            type="text"
-            value={state.chatId}
-            onChange={(e) => setState((s) => ({ ...s, chatId: e.target.value }))}
-            placeholder="e.g. 1234567890"
-            className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-          />
+          <div className="flex gap-1">
+            <input
+              type="text"
+              value={state.chatId}
+              onChange={(e) => setState((s) => ({ ...s, chatId: e.target.value }))}
+              placeholder="DM the bot once, then click ↘"
+              className="flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                if (!state.hasToken && !tokenInput) {
+                  return;
+                }
+                // Save the token first if it's been newly typed.
+                if (tokenInput) await save();
+                setBusy(true);
+                try {
+                  const r = await fetch('/api/telegram/getchat', { method: 'POST' });
+                  const j = await r.json().catch(() => ({}));
+                  if (!r.ok) throw new Error(j.error || `getchat: ${r.status}`);
+                  setState((s) => ({ ...s, chatId: j.chatId }));
+                  toast.success('Chat id pulled from Telegram.');
+                } catch (e) {
+                  notify.error('Get chat id: ' + (e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              disabled={busy || (!state.hasToken && !tokenInput)}
+              title="DM your bot any message first, then click to fetch chat id"
+              className="rounded-md border border-zinc-300 px-2 py-1.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              Get
+            </button>
+          </div>
         </label>
       </div>
 
