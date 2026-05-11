@@ -489,8 +489,9 @@ function IframeWithFallback({
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-50/95 p-6 text-center text-sm dark:bg-zinc-950/95">
           <strong>Couldn&rsquo;t load the preview.</strong>
           <p className="max-w-md text-xs text-zinc-500">
-            The page took too long or refused to embed. Try opening it in a new tab.
+            The page took too long or refused to embed.
           </p>
+          <code className="max-w-md break-all rounded bg-zinc-100 px-2 py-1 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{src}</code>
           {fallbackHref && (
             <a
               href={fallbackHref}
