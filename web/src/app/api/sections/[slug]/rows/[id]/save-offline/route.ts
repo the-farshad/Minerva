@@ -73,7 +73,12 @@ export async function POST(
     const disp = r.headers.get('Content-Disposition') || '';
     const m = disp.match(/filename="?([^"]+)"?/);
     const stem = (data.title || data.id || 'video').toString().replace(/[^\w.\- ]+/g, '_').slice(0, 100);
-    filename = m ? m[1] : `${stem}.mp4`;
+    const leaf = m ? m[1] : `${stem}.mp4`;
+    // Group playlist downloads under <playlist>/ in the local mirror.
+    // The Drive copy keeps the flat name — Drive folders are already
+    // a separate UX path the user can ignore.
+    const pl = String(data.playlist || '').trim().replace(/[/\\]+/g, '_').slice(0, 80);
+    filename = pl ? `${pl}/${leaf}` : leaf;
   } else {
     // Paper. Prefer the row's `pdf` column when present, else
     // rewrite arxiv abs → pdf.
@@ -99,7 +104,11 @@ export async function POST(
 
   let fileId: string;
   try {
-    const up = await uploadToMinervaDrive(userId, bytes, filename, mime);
+    // Drive treats `/` as a literal in filenames — flatten before upload
+    // so the file appears with a clean leaf name. The client receives
+    // the path-prefixed version for the local mirror.
+    const driveName = filename.split('/').pop() || filename;
+    const up = await uploadToMinervaDrive(userId, bytes, driveName, mime);
     fileId = up.id;
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
