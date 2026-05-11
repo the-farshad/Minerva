@@ -215,18 +215,13 @@ export function PreviewModal({
           </header>
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
-            {hostSrc && pdf ? (
+            {(hostSrc || driveSrc) && pdf ? (
               <iframe
-                src={`${hostSrc}#toolbar=1`}
+                src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(
+                  hostSrc ?? `/api/drive/file?id=${view.driveFileId}`,
+                )}#page=${pdfPage}`}
                 className="h-full w-full"
-                title="PDF (host copy)"
-              />
-            ) : driveSrc && pdf ? (
-              <iframe
-                src={driveSrc}
-                className="h-full w-full"
-                title="PDF (Drive)"
-                allow="autoplay"
+                title="PDF (annotated viewer)"
               />
             ) : yt ? (
               <iframe

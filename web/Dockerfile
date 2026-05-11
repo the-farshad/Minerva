@@ -24,7 +24,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0
-RUN apk add --no-cache tini
+RUN apk add --no-cache tini curl unzip
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
@@ -32,9 +32,18 @@ COPY --from=build /app/public ./public
 COPY --from=build /app/src ./src
 COPY --from=build /app/drizzle ./drizzle
 COPY --from=build /app/drizzle.config.ts ./drizzle.config.ts
+
+# Bundle Mozilla's standalone PDF.js viewer so we can mount it via
+# iframe with full annotation editor + highlight / sticky-note /
+# free-text tools enabled. Stored at /app/public/pdfjs so Next
+# serves it at /pdfjs/* under the same origin (required — the
+# viewer iframe needs same-origin access to blob: URLs).
+ARG PDFJS_VERSION=4.10.38
+RUN curl -fsSL "https://github.com/mozilla/pdf.js/releases/download/v${PDFJS_VERSION}/pdfjs-${PDFJS_VERSION}-dist.zip" -o /tmp/pdfjs.zip \
+    && mkdir -p /app/public/pdfjs \
+    && unzip -q /tmp/pdfjs.zip -d /app/public/pdfjs \
+    && rm /tmp/pdfjs.zip
+
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]
-# Apply pending Drizzle migrations on every start, then launch the
-# Next server. The migrations are idempotent — repeated runs are a
-# no-op.
 CMD ["sh", "-c", "npx drizzle-kit migrate || true && npm run start"]
