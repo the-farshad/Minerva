@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { appConfirm } from './confirm';
@@ -345,79 +346,16 @@ export function GroupedGrid({
                         {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
                       </div>
                     </button>
-                    {(section.preset === 'youtube' || section.preset === 'papers') && typeof r.data.url === 'string' && r.data.url ? (
-                      <button
-                        type="button"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const kind = section.preset === 'youtube' ? 'video' : 'paper';
-                          toast.info(kind === 'video' ? 'Downloading + uploading to Drive…' : 'Mirroring PDF to Drive…');
-                          try {
-                            const resp = await fetch(`/api/sections/${section.slug}/rows/${r.id}/save-offline`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ kind }),
-                            });
-                            const text = await resp.text();
-                            let j: { error?: string; skipped?: boolean } = {};
-                            try { j = text ? JSON.parse(text) : {}; } catch { j = { error: text.slice(0, 200) }; }
-                            if (!resp.ok) throw new Error(j.error || `save-offline: ${resp.status}`);
-                            toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
-                          } catch (err) {
-                            notify.error((err as Error).message);
-                          }
-                        }}
-                        title="Download offline copy"
-                        className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2 py-0.5 text-[10px] text-white opacity-0 transition group-hover:opacity-100 dark:bg-white dark:text-zinc-900"
-                      >
-                        <Save className="h-2.5 w-2.5" /> Save offline
-                      </button>
-                    ) : null}
-                    <Popover.Root>
-                      <Popover.Trigger asChild>
-                        <button
-                          type="button"
-                          onClick={(e) => e.stopPropagation()}
-                          title="Info"
-                          className="absolute right-7 top-1 rounded-full p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                        >
-                          <Info className="h-3.5 w-3.5" />
-                        </button>
-                      </Popover.Trigger>
-                      <Popover.Portal>
-                        <Popover.Content
-                          side="bottom"
-                          align="end"
-                          sideOffset={4}
-                          className="z-50 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <dl className="space-y-2 text-xs">
-                            {Object.entries(r.data)
-                              .filter(([k, v]) =>
-                                v != null && v !== '' &&
-                                !k.startsWith('_') &&
-                                !['offline', 'notes', 'thumbnail'].includes(k))
-                              .map(([k, v]) => (
-                                <div key={k} className="grid grid-cols-[5rem_1fr] gap-2">
-                                  <dt className="text-zinc-500">{k}</dt>
-                                  <dd className="break-words font-medium text-zinc-700 dark:text-zinc-200">
-                                    {String(v).slice(0, 600)}
-                                  </dd>
-                                </div>
-                              ))}
-                          </dl>
-                        </Popover.Content>
-                      </Popover.Portal>
-                    </Popover.Root>
-                    <button
-                      type="button"
-                      onClick={() => onDelete(r.id)}
-                      title="Delete row"
-                      className="absolute right-1 top-1 rounded-full p-1 text-zinc-400 opacity-0 transition group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    {/* Single overflow menu — three dots always
+                      * visible in the corner. Inside: Info (opens a
+                      * popover with full metadata), Save offline (for
+                      * YT/Papers rows only), Delete. Replaces three
+                      * separate icons that cluttered the card. */}
+                    <CardActions
+                      row={r}
+                      section={section}
+                      onDelete={onDelete}
+                    />
                     <GripVertical className="pointer-events-none absolute left-1 top-1 h-3.5 w-3.5 text-zinc-300 opacity-0 transition group-hover:opacity-100" />
                   </div>
                 ))}
@@ -427,5 +365,115 @@ export function GroupedGrid({
         );
       })}
     </div>
+  );
+}
+
+/** Per-card overflow menu — single three-dot button that opens a
+ * dropdown with Info / Save offline / Delete. Info itself opens a
+ * second popover with the row's metadata; everything else fires
+ * inline. */
+function CardActions({
+  row, section, onDelete,
+}: {
+  row: Row;
+  section: Section;
+  onDelete: (rowId: string) => Promise<void>;
+}) {
+  const [infoOpen, setInfoOpen] = useState(false);
+  const isOffliable = (section.preset === 'youtube' || section.preset === 'papers')
+    && typeof row.data.url === 'string' && !!row.data.url;
+  const kind = section.preset === 'youtube' ? 'video' : 'paper';
+
+  async function saveOffline() {
+    toast.info(kind === 'video' ? 'Downloading + uploading to Drive…' : 'Mirroring PDF to Drive…');
+    try {
+      const resp = await fetch(`/api/sections/${section.slug}/rows/${row.id}/save-offline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind }),
+      });
+      const text = await resp.text();
+      let j: { error?: string; skipped?: boolean } = {};
+      try { j = text ? JSON.parse(text) : {}; } catch { j = { error: text.slice(0, 200) }; }
+      if (!resp.ok) throw new Error(j.error || `save-offline: ${resp.status}`);
+      toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
+    } catch (err) {
+      notify.error((err as Error).message);
+    }
+  }
+
+  return (
+    <>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            title="Actions"
+            className="absolute right-1 top-1 rounded-full p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          >
+            <MoreVertical className="h-4 w-4" />
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            align="end"
+            sideOffset={4}
+            className="z-50 min-w-[10rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DropdownMenu.Item
+              onSelect={(e) => { e.preventDefault(); setInfoOpen(true); }}
+              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            >
+              <Info className="h-3.5 w-3.5" /> Info
+            </DropdownMenu.Item>
+            {isOffliable && (
+              <DropdownMenu.Item
+                onSelect={(e) => { e.preventDefault(); void saveOffline(); }}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <Save className="h-3.5 w-3.5" /> Save offline
+              </DropdownMenu.Item>
+            )}
+            <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+            <DropdownMenu.Item
+              onSelect={(e) => { e.preventDefault(); void onDelete(row.id); }}
+              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-red-600 outline-none hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <Popover.Root open={infoOpen} onOpenChange={setInfoOpen}>
+        <Popover.Anchor className="absolute right-1 top-7" />
+        <Popover.Portal>
+          <Popover.Content
+            side="bottom"
+            align="end"
+            sideOffset={4}
+            className="z-50 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <dl className="space-y-2 text-xs">
+              {Object.entries(row.data)
+                .filter(([k, v]) =>
+                  v != null && v !== '' &&
+                  !k.startsWith('_') &&
+                  !['offline', 'notes', 'thumbnail'].includes(k))
+                .map(([k, v]) => (
+                  <div key={k} className="grid grid-cols-[5rem_1fr] gap-2">
+                    <dt className="text-zinc-500">{k}</dt>
+                    <dd className="break-words font-medium text-zinc-700 dark:text-zinc-200">
+                      {String(v).slice(0, 600)}
+                    </dd>
+                  </div>
+                ))}
+            </dl>
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+    </>
   );
 }
