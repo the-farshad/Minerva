@@ -109,9 +109,18 @@ async function serve(
     console.warn(`[/api/pdf] helper proxy ${pdfUrl} → ${r.status}: ${txt.slice(0, 200)}`);
     return new Response(`Upstream ${r.status}: ${txt.slice(0, 200)}`, { status: 502 });
   }
+  // Refuse to stream HTML — Cloudflare / consent / bot-check pages
+  // would otherwise be parsed as PDF and produce Chrome's generic
+  // "this page couldn't load" inside the viewer.
+  const ct = r.headers.get('Content-Type') || '';
+  if (/text\/html/i.test(ct)) {
+    const peek = (await r.text().catch(() => '')).slice(0, 200);
+    console.warn(`[/api/pdf] helper proxy returned HTML (${ct}) — likely Cloudflare/consent wall: ${peek.replace(/\s+/g, ' ')}`);
+    return new Response(`Upstream returned HTML, not a PDF: ${peek.slice(0, 120)}`, { status: 502 });
+  }
   return new Response(r.body, {
     headers: {
-      'Content-Type': r.headers.get('Content-Type') || 'application/pdf',
+      'Content-Type': ct || 'application/pdf',
       'Cache-Control': 'private, max-age=300',
     },
   });
