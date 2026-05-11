@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote } from 'lucide-react';
+import { appConfirm } from './confirm';
+import { CITATION_FORMATS } from '@/lib/citations';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { BookmarkDrawer } from './bookmark-drawer';
@@ -78,13 +81,25 @@ export function PreviewModal({
   const pdfIframeRef = useRef<HTMLIFrameElement>(null);
   const ytIframeRef = useRef<HTMLIFrameElement>(null);
   const ytTimeRef = useRef<number>(0);
+  // Initial page is the last page we saw for THIS row — persisted
+  // per-row via writePref under `pdf.page.<rowId>`. The pagechanging
+  // listener (set up further down) keeps this in sync as the user
+  // scrolls; on modal reopen the iframe's `#page=<n>` opens straight
+  // to where they left off.
   const [pdfPage, setPdfPage] = useState(1);
+  useEffect(() => {
+    if (item?.rowId) {
+      const saved = readPref<number>(`pdf.page.${item.rowId}`, 0);
+      setPdfPage(saved > 0 ? saved : 1);
+    } else {
+      setPdfPage(1);
+    }
+  }, [item?.rowId]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
-  // PDF theme — light is the default; sepia and dark are baked into
-  // the viewer iframe via PDF.js's #pagecolors hash. Changing theme
-  // re-keys the iframe (its `key` prop combines theme + bust), which
-  // is the only way to re-render canvas pages with new colors.
+  // PDF theme — light is the default; sepia and dark apply via a
+  // CSS filter injected into the iframe's contentDocument (PDF.js
+  // 4.10's hash parser doesn't recognise `pagecolors`).
   const [pdfTheme, setPdfTheme] = useState<'light' | 'sepia' | 'dark'>('light');
   const [pdfReload, setPdfReload] = useState(0);
   const [resettingPdf, setResettingPdf] = useState(false);
@@ -267,6 +282,93 @@ export function PreviewModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view?.url, view?.rowId, view?.sectionSlug, pdfReload]);
 
+  // Theme injection — PDF.js 4.10's hash parser doesn't recognise
+  // `pagecolors`, so the previous URL-hash approach was a no-op.
+  // Inject a stylesheet into the iframe's contentDocument that
+  // filters the .page elements: sepia tints the canvas through a
+  // sepia filter; dark uses invert + hue-rotate so the colours stay
+  // approximately correct rather than collapsing to a negative.
+  // Hot-swaps without an iframe remount, so annotation state isn't
+  // wiped when the user toggles theme.
+  useEffect(() => {
+    if (!view || !isPdf(view.url)) return;
+    const iframe = pdfIframeRef.current;
+    if (!iframe) return;
+    const apply = () => {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      const filter = pdfTheme === 'dark'
+        ? 'invert(0.92) hue-rotate(180deg)'
+        : pdfTheme === 'sepia'
+          ? 'sepia(0.55) brightness(0.96) contrast(0.95)'
+          : '';
+      const wrapBg = pdfTheme === 'dark'
+        ? '#1f1f1f'
+        : pdfTheme === 'sepia'
+          ? '#f4ecd8'
+          : '';
+      const css = `
+        #viewerContainer { background: ${wrapBg || ''} !important; }
+        .pdfViewer .page { filter: ${filter}; }
+      `;
+      let style = doc.getElementById('minerva-theme-style') as HTMLStyleElement | null;
+      if (!style) {
+        style = doc.createElement('style');
+        style.id = 'minerva-theme-style';
+        doc.head.appendChild(style);
+      }
+      style.textContent = css;
+    };
+    iframe.addEventListener('load', apply);
+    apply();
+    return () => iframe.removeEventListener('load', apply);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfTheme, pdfReload, view?.rowId]);
+
+  // Track which PDF page the user is currently on and persist it
+  // per-row so the next open resumes there. PDF.js dispatches
+  // `pagechanging` whenever the visible page changes via scroll,
+  // input, bookmark jump, link, or programmatic .page setter.
+  useEffect(() => {
+    if (!view || !isPdf(view.url) || !view.rowId) return;
+    const iframe = pdfIframeRef.current;
+    if (!iframe) return;
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+    interface PdfApp {
+      initializedPromise?: Promise<void>;
+      eventBus?: {
+        on: (name: string, fn: (e: { pageNumber?: number }) => void) => void;
+        off: (name: string, fn: (e: { pageNumber?: number }) => void) => void;
+      };
+    }
+    const attach = async () => {
+      if (cancelled) return;
+      const w = iframe.contentWindow as (Window & { PDFViewerApplication?: PdfApp }) | null;
+      const app = w?.PDFViewerApplication;
+      if (!app?.initializedPromise || !app.eventBus) return;
+      try { await app.initializedPromise; } catch { return; }
+      if (cancelled) return;
+      const onChange = (e: { pageNumber?: number }) => {
+        const n = e?.pageNumber;
+        if (typeof n === 'number' && view?.rowId) {
+          setPdfPage(n);
+          writePref(`pdf.page.${view.rowId}`, n);
+        }
+      };
+      app.eventBus.on('pagechanging', onChange);
+      detach = () => app.eventBus?.off('pagechanging', onChange);
+    };
+    iframe.addEventListener('load', attach);
+    void attach();
+    return () => {
+      cancelled = true;
+      iframe.removeEventListener('load', attach);
+      if (detach) detach();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view?.url, view?.rowId, pdfReload]);
+
   if (!view) return null;
 
   const yt = ytId(view.url);
@@ -374,7 +476,27 @@ export function PreviewModal({
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
+    <Dialog.Root open={open} onOpenChange={(next) => {
+      if (next) { setOpen(true); return; }
+      // Closing — check for unsaved annotation edits in the PDF.js
+      // viewer. PDF.js tracks edits on `annotationStorage.modifiedIds`;
+      // a non-empty set means the auto-save 4 s debounce hasn't fired
+      // yet (or just fired and is still in flight).
+      interface PdfApp {
+        pdfDocument?: { annotationStorage?: { modifiedIds?: { size?: number } } };
+      }
+      const w = pdfIframeRef.current?.contentWindow as (Window & { PDFViewerApplication?: PdfApp }) | null;
+      const annotDirty = (w?.PDFViewerApplication?.pdfDocument?.annotationStorage?.modifiedIds?.size ?? 0) > 0;
+      if (!annotDirty) { setOpen(false); return; }
+      void (async () => {
+        const ok = await appConfirm('Save annotations before closing?', {
+          body: 'Your highlights or notes haven\'t hit Drive yet. Click OK to save now, or Cancel to keep editing.',
+        });
+        if (!ok) return; // stay open
+        try { await saveAnnotations(); } catch { /* notify.error already fired */ }
+        setOpen(false);
+      })();
+    }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content className="fixed inset-0 z-50 m-0 flex flex-col bg-zinc-100 dark:bg-zinc-950 sm:inset-2 sm:rounded-xl sm:overflow-hidden">
@@ -453,6 +575,48 @@ export function PreviewModal({
                 <RotateCcw className="h-3.5 w-3.5" /> {resettingPdf ? 'Resetting…' : 'Reset'}
               </button>
             )}
+            {pdf && view.data && (
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    type="button"
+                    title="Copy citation"
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <Quote className="h-3.5 w-3.5" /> Cite
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    align="end"
+                    sideOffset={4}
+                    className="z-[60] min-w-[10rem] overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    {CITATION_FORMATS.map((f) => (
+                      <DropdownMenu.Item
+                        key={f.id}
+                        onSelect={() => {
+                          const text = f.render(view.data as Record<string, unknown>);
+                          if (!text.trim()) {
+                            notify.error('No metadata on this row to build a citation. Fill in title, authors, year first.');
+                            return;
+                          }
+                          try {
+                            void navigator.clipboard.writeText(text);
+                            toast.success(`${f.label} citation copied`);
+                          } catch {
+                            notify.error('Clipboard blocked — citation:\n' + text);
+                          }
+                        }}
+                        className="cursor-pointer px-3 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      >
+                        {f.label}
+                      </DropdownMenu.Item>
+                    ))}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            )}
             {pdf && (
               <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
                 {(['light', 'sepia', 'dark'] as const).map((t) => {
@@ -516,19 +680,10 @@ export function PreviewModal({
                * Drive OAuth token — no upstream CORS, no nested
                * query strings. */
               <iframe
-                key={`${pdfTheme}-${pdfReload}`}
+                key={pdfReload}
                 ref={pdfIframeRef}
                 title="PDF"
-                src={(() => {
-                  const file = `/api/pdf/${view.rowId}?v=${pdfReload}`;
-                  const hashParts: string[] = [`page=${pdfPage}`];
-                  if (pdfTheme === 'sepia') {
-                    hashParts.push('pagecolors=foreground=%235b4636,background=%23f4ecd8');
-                  } else if (pdfTheme === 'dark') {
-                    hashParts.push('pagecolors=foreground=%23e6e6e6,background=%231f1f1f');
-                  }
-                  return `/pdfjs/web/viewer.html?file=${encodeURIComponent(file)}#${hashParts.join('&')}`;
-                })()}
+                src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(`/api/pdf/${view.rowId}?v=${pdfReload}`)}#page=${pdfPage}`}
                 className="h-full w-full border-0 bg-zinc-100 dark:bg-zinc-900"
                 referrerPolicy="no-referrer"
               />
@@ -646,7 +801,7 @@ function IframeWithFallback({
   useEffect(() => {
     setLoaded(false);
     setStuck(false);
-    const t = setTimeout(() => { if (!loaded) setStuck(true); }, 6000);
+    const t = setTimeout(() => { if (!loaded) setStuck(true); }, 3000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src]);
@@ -727,7 +882,7 @@ function YouTubeFrame({
   useEffect(() => {
     setLoaded(false);
     setStuck(false);
-    const t = setTimeout(() => { if (!loaded) setStuck(true); }, 6000);
+    const t = setTimeout(() => { if (!loaded) setStuck(true); }, 3000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
