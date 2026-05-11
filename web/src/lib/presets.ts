@@ -87,6 +87,27 @@ export const PRESETS: SectionPreset[] = [
     },
   },
   {
+    slug: 'inbox',
+    title: 'Inbox',
+    icon: 'inbox',
+    preset: 'inbox',
+    defaultSort: 'created:desc',
+    schema: {
+      headers: ['id', 'title', 'url', 'notes', 'created', '_updated'],
+      types: ['text', 'text', 'link', 'markdown', 'datetime', 'datetime'],
+    },
+  },
+  {
+    slug: 'bookmarks',
+    title: 'Bookmarks',
+    icon: 'bookmark',
+    preset: 'bookmarks',
+    schema: {
+      headers: ['id', 'title', 'url', 'tags', 'notes', '_updated'],
+      types: ['text', 'text', 'link', 'multiselect()', 'markdown', 'datetime'],
+    },
+  },
+  {
     slug: 'papers',
     title: 'Papers',
     icon: 'file-text',

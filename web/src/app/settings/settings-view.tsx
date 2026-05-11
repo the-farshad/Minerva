@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Check, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { Plus, Check, Eye, EyeOff, Trash2, ChevronUp, ChevronDown, Pencil } from 'lucide-react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOutAction } from '@/app/actions';
@@ -71,6 +71,56 @@ export function SettingsView({
     }
   }
 
+  async function rename(slug: string) {
+    const cur = own.find((x) => x.slug === slug)?.title || '';
+    const next = prompt('New title:', cur);
+    if (!next || next.trim() === cur) return;
+    const prev = own;
+    setOwn((s) => s.map((x) => (x.slug === slug ? { ...x, title: next.trim() } : x)));
+    try {
+      const r = await fetch(`/api/sections/${encodeURIComponent(slug)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: next.trim() }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      router.refresh();
+    } catch (e) {
+      setOwn(prev);
+      toast.error(`Rename failed: ${(e as Error).message}`);
+    }
+  }
+
+  async function move(slug: string, dir: -1 | 1) {
+    const idx = own.findIndex((x) => x.slug === slug);
+    if (idx < 0) return;
+    const j = idx + dir;
+    if (j < 0 || j >= own.length) return;
+    const swapped = own.slice();
+    [swapped[idx], swapped[j]] = [swapped[j], swapped[idx]];
+    const prev = own;
+    setOwn(swapped);
+    try {
+      // Persist via two PATCHes — set `order` to the new index for both.
+      await Promise.all([
+        fetch(`/api/sections/${encodeURIComponent(swapped[idx].slug)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: idx }),
+        }),
+        fetch(`/api/sections/${encodeURIComponent(swapped[j].slug)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: j }),
+        }),
+      ]);
+      router.refresh();
+    } catch (e) {
+      setOwn(prev);
+      toast.error(`Reorder failed: ${(e as Error).message}`);
+    }
+  }
+
   async function purge(slug: string) {
     if (!confirm(`Delete section "${slug}" and all its rows? This cannot be undone.`)) return;
     const prev = own;
@@ -113,7 +163,31 @@ export function SettingsView({
                   <div className="text-sm font-medium">{s.title}</div>
                   <div className="text-xs text-zinc-500">/{s.slug} · {s.enabled ? 'visible' : 'hidden'}</div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => move(s.slug, -1)}
+                    className="rounded-full border border-zinc-200 p-1 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                    title="Move up"
+                  >
+                    <ChevronUp className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => move(s.slug, 1)}
+                    className="rounded-full border border-zinc-200 p-1 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                    title="Move down"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rename(s.slug)}
+                    className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                    title="Rename"
+                  >
+                    <Pencil className="h-3 w-3" /> Rename
+                  </button>
                   <button
                     type="button"
                     onClick={() => toggleEnabled(s.slug, !s.enabled)}

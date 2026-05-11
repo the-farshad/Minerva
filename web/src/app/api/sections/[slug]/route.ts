@@ -30,10 +30,12 @@ export async function PATCH(
   const body = (await req.json().catch(() => ({}))) as {
     enabled?: boolean;
     title?: string;
+    order?: number;
   };
   const patch: Partial<typeof schema.sections.$inferInsert> = {};
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.title === 'string' && body.title.trim()) patch.title = body.title.trim();
+  if (typeof body.order === 'number' && Number.isFinite(body.order)) patch.order = body.order;
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
   }
