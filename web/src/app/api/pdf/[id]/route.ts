@@ -31,6 +31,21 @@ function pdfDirectUrl(url: string): string {
 }
 
 export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    return await serve(req, ctx);
+  } catch (e) {
+    // Loud server log + JSON error so PDF.js shows something useful
+    // and we can see what blew up in `docker logs minerva-web`.
+    const msg = (e as Error).message || String(e);
+    console.error('[/api/pdf]', msg);
+    return new Response(`PDF route error: ${msg}`, { status: 500 });
+  }
+}
+
+async function serve(
   _req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -49,20 +64,24 @@ export async function GET(
   // 1. Drive copy.
   const drive = offline.match(/drive:([\w-]{20,})/);
   if (drive) {
-    const token = await getGoogleAccessToken(userId);
-    const r = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(drive[1])}?alt=media`,
-      { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' },
-    );
-    if (r.ok) {
-      return new Response(r.body, {
-        headers: {
-          'Content-Type': r.headers.get('Content-Type') || 'application/pdf',
-          'Cache-Control': 'private, max-age=300',
-        },
-      });
+    try {
+      const token = await getGoogleAccessToken(userId);
+      const r = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(drive[1])}?alt=media`,
+        { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' },
+      );
+      if (r.ok) {
+        return new Response(r.body, {
+          headers: {
+            'Content-Type': r.headers.get('Content-Type') || 'application/pdf',
+            'Cache-Control': 'private, max-age=300',
+          },
+        });
+      }
+      console.warn(`[/api/pdf] drive fetch ${drive[1]} → ${r.status}, falling through`);
+    } catch (e) {
+      console.warn(`[/api/pdf] drive auth/fetch threw: ${(e as Error).message}, falling through`);
     }
-    // fall through to the next source on 404 (file deleted etc.)
   }
 
   // 2. Host copy on the helper.
@@ -78,14 +97,16 @@ export async function GET(
         },
       });
     }
+    console.warn(`[/api/pdf] host fetch ${path} → ${r.status}, falling through`);
   }
 
   // 3. Helper /proxy of the live URL.
   const pdfUrl = pdfDirectUrl(String(data.pdf || data.url || ''));
-  if (!pdfUrl) return new Response('No source URL', { status: 404 });
+  if (!pdfUrl) return new Response('No source URL on this row.', { status: 404 });
   const r = await fetch(`${HELPER}/proxy?${encodeURIComponent(pdfUrl)}`, { cache: 'no-store' });
   if (!r.ok) {
     const txt = await r.text().catch(() => '');
+    console.warn(`[/api/pdf] helper proxy ${pdfUrl} → ${r.status}: ${txt.slice(0, 200)}`);
     return new Response(`Upstream ${r.status}: ${txt.slice(0, 200)}`, { status: 502 });
   }
   return new Response(r.body, {
