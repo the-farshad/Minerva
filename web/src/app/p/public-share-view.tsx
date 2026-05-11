@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { decodeShare, type SharePayload } from '@/lib/share';
 import { ShareCard } from '@/components/share-card';
 
@@ -23,7 +24,7 @@ export function PublicShareView() {
       await navigator.clipboard.writeText(location.href);
       toast.success('Link copied.');
     } catch {
-      toast.error('Copy failed.');
+      notify.error('Copy failed.');
     }
   }
 

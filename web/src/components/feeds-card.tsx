@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { Copy, RefreshCw, Rss, Calendar } from 'lucide-react';
 import { appConfirm } from './confirm';
 
@@ -21,7 +22,7 @@ export function FeedsCard() {
       if (!r.ok) throw new Error(String(r.status));
       setFeeds(await r.json());
     } catch (e) {
-      toast.error('Could not load feeds: ' + (e as Error).message);
+      notify.error('Could not load feeds: ' + (e as Error).message);
     }
   }
   async function rotate() {
@@ -35,14 +36,14 @@ export function FeedsCard() {
       setFeeds(await r.json());
       toast.success('Token rotated.');
     } catch (e) {
-      toast.error('Rotate failed: ' + (e as Error).message);
+      notify.error('Rotate failed: ' + (e as Error).message);
     } finally {
       setBusy(false);
     }
   }
   async function copy(s: string) {
     try { await navigator.clipboard.writeText(s); toast.success('Copied.'); }
-    catch { toast.error('Copy failed.'); }
+    catch { notify.error('Copy failed.'); }
   }
 
   return (

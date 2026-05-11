@@ -4,6 +4,7 @@ import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { Link as LinkIcon, X } from 'lucide-react';
 
 type Section = { slug: string; schema: { headers: string[]; types: string[] }; preset?: string | null };
@@ -58,7 +59,7 @@ export function AddByUrl({
       if (!r.ok) throw new Error(`Lookup failed: ${r.status}`);
       setPreview((await r.json()) as LookupResult);
     } catch (e) {
-      toast.error((e as Error).message);
+      notify.error((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -153,7 +154,7 @@ export function AddByUrl({
       setUrl('');
       setPreview(null);
     },
-    onError: (e: Error) => toast.error(`Add failed: ${e.message}`),
+    onError: (e: Error) => notify.error(`Add failed: ${e.message}`),
   });
 
   return (

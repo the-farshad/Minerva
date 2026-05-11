@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 /** Markdown notes sidebar for the preview modal. Persists into the
  * row's `notes` column via the existing PATCH /rows/[id]. Debounced
@@ -40,7 +41,7 @@ export function NotesPane({
       setTimeout(() => setSaving('idle'), 1200);
     } catch (e) {
       setSaving('error');
-      toast.error('Notes save failed: ' + (e as Error).message);
+      notify.error('Notes save failed: ' + (e as Error).message);
     }
   }
 

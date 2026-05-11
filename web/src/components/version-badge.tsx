@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { VERSION, BUILD_SHA, buildTimeShort } from '@/lib/version';
 
 /** Small chip in the Nav. Click → copy the version string to
@@ -20,7 +21,7 @@ export function VersionBadge() {
       setTimeout(() => setFlash(false), 1200);
       toast.success(`Copied: ${text}`);
     } catch {
-      toast.error('Copy failed — your browser blocked clipboard access.');
+      notify.error('Copy failed — your browser blocked clipboard access.');
     }
   }
 

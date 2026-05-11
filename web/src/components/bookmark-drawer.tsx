@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { Bookmark, Plus, X, Pencil } from 'lucide-react';
 
 type B = {
@@ -50,14 +51,14 @@ export function BookmarkDrawer({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, kind, ref, label: '', note: '' }),
     });
-    if (!r.ok) { toast.error('Bookmark failed'); return; }
+    if (!r.ok) { notify.error('Bookmark failed'); return; }
     const b = (await r.json()) as B;
     setItems((arr) => [...arr, b].sort((a, b) => a.ref - b.ref));
     setEditing(b);
   }
   async function remove(id: string) {
     const r = await fetch('/api/bookmarks/' + id, { method: 'DELETE' });
-    if (!r.ok) { toast.error('Delete failed'); return; }
+    if (!r.ok) { notify.error('Delete failed'); return; }
     setItems((arr) => arr.filter((x) => x.id !== id));
   }
   async function save(b: B) {
@@ -66,7 +67,7 @@ export function BookmarkDrawer({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label: b.label, note: b.note }),
     });
-    if (!r.ok) { toast.error('Save failed'); return; }
+    if (!r.ok) { notify.error('Save failed'); return; }
     setItems((arr) => arr.map((x) => (x.id === b.id ? b : x)));
     setEditing(null);
   }

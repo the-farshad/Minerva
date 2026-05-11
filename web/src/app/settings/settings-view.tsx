@@ -2,6 +2,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { Plus, Check, Eye, EyeOff, Trash2, ChevronUp, ChevronDown, Pencil } from 'lucide-react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -55,7 +56,7 @@ export function SettingsView({
       qc.invalidateQueries({ queryKey: ['sections'] });
       router.refresh();
     },
-    onError: (e: Error) => toast.error(`Add failed: ${e.message}`),
+    onError: (e: Error) => notify.error(`Add failed: ${e.message}`),
   });
 
   async function toggleEnabled(slug: string, enabled: boolean) {
@@ -71,7 +72,7 @@ export function SettingsView({
       router.refresh();
     } catch (e) {
       setOwn(prev);
-      toast.error(`Update failed: ${(e as Error).message}`);
+      notify.error(`Update failed: ${(e as Error).message}`);
     }
   }
 
@@ -91,7 +92,7 @@ export function SettingsView({
       router.refresh();
     } catch (e) {
       setOwn(prev);
-      toast.error(`Rename failed: ${(e as Error).message}`);
+      notify.error(`Rename failed: ${(e as Error).message}`);
     }
   }
 
@@ -121,7 +122,7 @@ export function SettingsView({
       router.refresh();
     } catch (e) {
       setOwn(prev);
-      toast.error(`Reorder failed: ${(e as Error).message}`);
+      notify.error(`Reorder failed: ${(e as Error).message}`);
     }
   }
 
@@ -137,7 +138,7 @@ export function SettingsView({
       router.refresh();
     } catch (e) {
       setOwn(prev);
-      toast.error(`Delete failed: ${(e as Error).message}`);
+      notify.error(`Delete failed: ${(e as Error).message}`);
     }
   }
 

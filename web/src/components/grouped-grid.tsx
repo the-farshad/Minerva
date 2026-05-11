@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
 import { appPickMany } from './multi-picker';
@@ -258,7 +259,7 @@ export function GroupedGrid({
                             toast.success(`Deleted ${j.deleted ?? groupRows.length} items.`);
                             location.reload();
                           } catch (e) {
-                            toast.error('Delete failed: ' + (e as Error).message);
+                            notify.error('Delete failed: ' + (e as Error).message);
                           }
                         }}
                         className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-zinc-700 dark:text-red-400 dark:hover:bg-red-950"
@@ -363,7 +364,7 @@ export function GroupedGrid({
                             if (!resp.ok) throw new Error(j.error || `save-offline: ${resp.status}`);
                             toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
                           } catch (err) {
-                            toast.error((err as Error).message);
+                            notify.error((err as Error).message);
                           }
                         }}
                         title="Download offline copy"

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { FolderPlus, X } from 'lucide-react';
 import { localMirror } from '@/lib/local-mirror';
 
@@ -27,7 +28,7 @@ export function LocalMirrorCard() {
       }
     } catch (e) {
       if ((e as Error).name === 'AbortError') return;
-      toast.error('Pick failed: ' + (e as Error).message);
+      notify.error('Pick failed: ' + (e as Error).message);
     }
   }
   async function clear() {

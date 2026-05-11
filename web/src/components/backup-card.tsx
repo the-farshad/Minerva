@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { Download, Upload, Archive } from 'lucide-react';
 import { appConfirm } from './confirm';
 
@@ -24,7 +25,7 @@ export function BackupCard() {
       toast.success(`Restored · ${j.sectionsCreated} new sections, ${j.rowsInserted} rows.`);
       setTimeout(() => location.reload(), 800);
     } catch (e) {
-      toast.error('Restore failed: ' + (e as Error).message);
+      notify.error('Restore failed: ' + (e as Error).message);
     } finally {
       setBusy(false);
     }

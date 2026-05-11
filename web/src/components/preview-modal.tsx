@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X, ExternalLink, Download, Save, FileCheck2, Info } from 'lucide-react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { BookmarkDrawer } from './bookmark-drawer';
 import { NotesPane } from './notes-pane';
 import { readPref, writePref } from '@/lib/prefs';
@@ -152,7 +153,7 @@ export function PreviewModal({
     const w = iframe?.contentWindow as (Window & { PDFViewerApplication?: PdfViewerApp }) | null;
     const app = w?.PDFViewerApplication;
     if (!app?.pdfDocument?.saveDocument) {
-      toast.error('PDF viewer not ready yet — wait a beat and retry.');
+      notify.error('PDF viewer not ready yet — wait a beat and retry.');
       return;
     }
     setSavingAnnot(true);
@@ -181,7 +182,7 @@ export function PreviewModal({
       }
       toast.success('Annotations saved.');
     } catch (e) {
-      toast.error((e as Error).message);
+      notify.error((e as Error).message);
     } finally {
       setSavingAnnot(false);
     }
@@ -208,7 +209,7 @@ export function PreviewModal({
         mirrorToLocal(kind, j.fileId, j.filename, view.sectionSlug, view.rowId);
       }
     } catch (e) {
-      toast.error((e as Error).message);
+      notify.error((e as Error).message);
     } finally {
       setDownloading(false);
     }

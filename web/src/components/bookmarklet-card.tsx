@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Bookmark, Copy } from 'lucide-react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 export function BookmarkletCard() {
   const [endpoint, setEndpoint] = useState<string | null>(null);
@@ -25,7 +26,7 @@ export function BookmarkletCard() {
   async function copy() {
     if (!snippet) return;
     try { await navigator.clipboard.writeText(snippet); toast.success('Bookmarklet copied.'); }
-    catch { toast.error('Copy failed — drag the link to your bookmarks bar instead.'); }
+    catch { notify.error('Copy failed — drag the link to your bookmarks bar instead.'); }
   }
 
   return (

@@ -6,6 +6,7 @@ import { naturalCompare, cn } from '@/lib/utils';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { PreviewModal } from '@/components/preview-modal';
 import { InlineCell, parseType } from '@/components/inline-cell';
 import { AddByUrl } from '@/components/add-by-url';
@@ -87,7 +88,7 @@ export function SectionView({
   async function deleteRow(rowId: string) {
     if (!(await appConfirm('Delete this row?', { dangerLabel: 'Delete' }))) return;
     const r = await fetch(`/api/sections/${section.slug}/rows/${rowId}`, { method: 'DELETE' });
-    if (!r.ok) { toast.error(`Delete failed: ${r.status}`); return; }
+    if (!r.ok) { notify.error(`Delete failed: ${r.status}`); return; }
     setRows((rs) => rs.filter((x) => x.id !== rowId));
     qc.invalidateQueries({ queryKey: ['rows', section.slug] });
   }
@@ -163,7 +164,7 @@ export function SectionView({
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ data: titleField ? { [titleField]: title } : { title } }),
                 });
-                if (!r.ok) { toast.error(`Add failed: ${r.status}`); return; }
+                if (!r.ok) { notify.error(`Add failed: ${r.status}`); return; }
                 const row = (await r.json()) as Row;
                 setRows((rs) => [...rs, row]);
                 qc.invalidateQueries({ queryKey: ['rows', section.slug] });
@@ -182,7 +183,7 @@ export function SectionView({
                   action: { label: 'Open', onClick: () => window.open(j.webViewLink, '_blank') },
                 });
               } catch (e) {
-                toast.error((e as Error).message);
+                notify.error((e as Error).message);
               }
             }}
             className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800"
@@ -211,7 +212,7 @@ export function SectionView({
                 toast.success(`Imported · ${j.inserted} new, ${j.updated} updated.`);
                 location.reload();
               } catch (e) {
-                toast.error((e as Error).message);
+                notify.error((e as Error).message);
               }
             }}
             className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800"
@@ -337,7 +338,7 @@ function UploadPaperButton({
       const got = j.extracted?.title ? ` · title: "${j.extracted.title}"` : '';
       toast.success('Uploaded.' + got);
     } catch (e) {
-      toast.error('Upload failed: ' + (e as Error).message);
+      notify.error('Upload failed: ' + (e as Error).message);
     } finally {
       setBusy(false);
     }

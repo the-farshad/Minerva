@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { Copy, ExternalLink } from 'lucide-react';
 import { shareUrl, type SharePayload } from '@/lib/share';
 import { ShareCard } from '@/components/share-card';
@@ -30,7 +31,7 @@ export function ShareComposer() {
       await navigator.clipboard.writeText(url);
       toast.success('Link copied.');
     } catch {
-      toast.error('Copy failed — select the URL manually.');
+      notify.error('Copy failed — select the URL manually.');
     }
   }
 

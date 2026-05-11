@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { Send, Check } from 'lucide-react';
 
 type State = { chatId: string; enabled: boolean; hasToken: boolean; tokenSuffix: string };
@@ -37,7 +38,7 @@ export function TelegramCard() {
       await load();
       toast.success('Saved.');
     } catch (e) {
-      toast.error('Save failed: ' + (e as Error).message);
+      notify.error('Save failed: ' + (e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -51,7 +52,7 @@ export function TelegramCard() {
       if (!r.ok) throw new Error(j.error || String(r.status));
       toast.success('Test message sent.');
     } catch (e) {
-      toast.error((e as Error).message);
+      notify.error((e as Error).message);
     } finally {
       setBusy(false);
     }
