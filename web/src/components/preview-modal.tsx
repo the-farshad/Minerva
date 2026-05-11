@@ -363,13 +363,17 @@ export function PreviewModal({
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
             {pdf && view.rowId ? (
-              /* /api/pdf/<rowId> resolves to drive / host / live URL
-               * server-side, so there's no nested ?query inside the
-               * PDF.js viewer's ?file= parameter — fewer ways for a
-               * URL to be mangled. */
+              /* Bare PDF URL — the browser's built-in PDF viewer
+               * displays it. We previously routed through the
+               * bundled PDF.js viewer for highlight/sticky-note
+               * annotation tools, but that viewer was silently
+               * failing to mount in the user's browser. The native
+               * viewer is bullet-proof; annotation save still
+               * works from the bundled viewer when explicitly
+               * opened via "Open in new tab". */
               <IframeWithFallback
                 title="PDF"
-                src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(`/api/pdf/${view.rowId}`)}#page=${pdfPage}`}
+                src={`/api/pdf/${view.rowId}#page=${pdfPage}`}
                 fallbackHref={view.url}
                 iframeRef={pdfIframeRef}
               />
