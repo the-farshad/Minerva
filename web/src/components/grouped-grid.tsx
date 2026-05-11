@@ -355,7 +355,7 @@ export function GroupedGrid({
                           }
                         }}
                         title="Download offline copy"
-                        className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-blue-600 px-2 py-0.5 text-[10px] text-white opacity-0 transition group-hover:opacity-100 hover:bg-blue-500"
+                        className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2 py-0.5 text-[10px] text-white opacity-0 transition group-hover:opacity-100 dark:bg-white dark:text-zinc-900"
                       >
                         <Save className="h-2.5 w-2.5" /> Save offline
                       </button>

@@ -130,7 +130,7 @@ export function SectionView({
                 className={cn(
                   'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
                   mode === m
-                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200'
+                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
                     : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300',
                 )}
                 title={`${label} view`}
@@ -335,7 +335,7 @@ function QuickAdd({
       <button
         type="submit"
         disabled={busy || !value.trim()}
-        className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900 disabled:opacity-50"
         title={titleField ? `Create with ${titleField} set` : 'Create row'}
       >
         <Plus className="h-3.5 w-3.5" /> Add

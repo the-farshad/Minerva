@@ -244,7 +244,7 @@ export function SettingsView({
                     type="button"
                     onClick={() => addPreset.mutate(p.slug)}
                     disabled={addPreset.isPending}
-                    className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900 disabled:opacity-50"
                   >
                     <Plus className="h-3 w-3" /> Add
                   </button>

@@ -126,7 +126,7 @@ export function AiCard() {
         <button
           type="button"
           onClick={save}
-          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500"
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
         >
           Save
         </button>

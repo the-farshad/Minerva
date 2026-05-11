@@ -119,7 +119,7 @@ export function MultiChipEditor({
             <button
               type="button"
               onClick={() => save()}
-              className="rounded-full bg-blue-600 px-2.5 py-1 text-xs text-white hover:bg-blue-500"
+              className="rounded-full bg-zinc-900 px-2.5 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
               title="Done"
             >
               Done

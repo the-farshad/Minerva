@@ -161,7 +161,7 @@ export function AddByUrl({
       <Dialog.Trigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500"
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
         >
           <LinkIcon className="h-3.5 w-3.5" /> Add by URL
         </button>
@@ -199,7 +199,7 @@ export function AddByUrl({
               type="button"
               onClick={() => create.mutate()}
               disabled={!preview || create.isPending}
-              className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900 disabled:opacity-50"
             >
               {create.isPending
                 ? 'Adding…'
