@@ -8,7 +8,11 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #ffffff;
+  /* Light defaults — `html.dark` flips them. The OS preference is
+   * NOT consulted at the CSS layer; the inline boot script in
+   * layout.tsx adds the `dark` class up-front for "system" mode so
+   * everything stays consistent. */
+  --background: #fbfbfa;
   --foreground: #171717;
 }
 
@@ -19,14 +23,10 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* Default OS-dark variables — the dark class is what triggers
- * Tailwind dark utilities via the custom-variant above. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* Only the explicit `dark` class on <html> sets the dark variables.
+ * No media query — Tailwind's `dark:` variant is class-based above,
+ * and the inline boot script in layout.tsx mirrors prefers-color-scheme
+ * onto the class for "system" mode before first paint. */
 html.dark { --background: #0b0d10; --foreground: #ededed; }
 
 /* User-pickable themes — applied via <html data-theme="..."> */

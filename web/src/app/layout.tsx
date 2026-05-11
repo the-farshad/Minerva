@@ -25,6 +25,32 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${ubuntu.variable} ${roboto.variable} ${vazir.variable} h-full antialiased`}>
+      <head>
+        {/* Set theme + font on <html> BEFORE first paint so the
+          * chosen theme doesn't flash dark-on-light or vice-versa.
+          * Reads the same `minerva.v2.theme` / `minerva.v2.font`
+          * localStorage keys ThemeBoot does. */}
+        <script
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function () {
+                try {
+                  var ls = function (k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+                  var theme = ls('minerva.v2.theme') || 'system';
+                  var font  = ls('minerva.v2.font');
+                  var h = document.documentElement;
+                  if (theme !== 'system') h.setAttribute('data-theme', theme);
+                  var wantDark = theme === 'dark' || theme === 'vt323' ||
+                    (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                  h.classList.toggle('dark', wantDark);
+                  if (font) h.setAttribute('data-font', font);
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className="min-h-full bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
         <Providers>{children}</Providers>
       </body>

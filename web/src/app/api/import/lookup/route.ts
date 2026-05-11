@@ -34,8 +34,8 @@ export async function POST(req: NextRequest) {
   // present in the URL — `?list=...&v=...`).
   const lm = raw.match(YT_LIST_RE);
   if (lm) {
-    const items = await youtubePlaylist(lm[1]);
-    return NextResponse.json({ kind: 'playlist', playlistId: lm[1], items });
+    const { name, items } = await youtubePlaylist(lm[1]);
+    return NextResponse.json({ kind: 'playlist', playlistId: lm[1], playlistName: name, items });
   }
   // YouTube single video
   const ym = raw.match(YT_RE);
@@ -164,11 +164,23 @@ async function youtubePlaylist(listId: string) {
   const helper = (process.env.HELPER_BASE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
   const target = `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`;
   const r = await fetch(`${helper}/proxy?${encodeURIComponent(target)}`, { cache: 'no-store' });
-  if (!r.ok) return [];
+  if (!r.ok) return { name: '', items: [] as Array<{ url: string; title: string; channel: string; thumbnail: string; playlist?: string }> };
   const html = await r.text();
-  // YouTube's playlist HTML embeds an ytInitialData blob with the
-  // video list. Pull every (videoId, title) pair we can find.
-  const items: { url: string; title: string; channel: string; thumbnail: string }[] = [];
+
+  // Playlist name — usually present as the page's <title> and inside
+  // ytInitialData under `microformat.microformatDataRenderer.title`.
+  // We try a few fallbacks to be tolerant of YouTube HTML drift.
+  let name = '';
+  const m1 = html.match(/<meta name="title" content="([^"]+)"/);
+  const m2 = html.match(/"microformatDataRenderer":\{[^}]*?"title":"([^"]+)"/);
+  const m3 = html.match(/<title>([^<]+?) - YouTube<\/title>/);
+  name = (m1?.[1] || m2?.[1] || m3?.[1] || '').replace(/\\u0026/g, '&').replace(/\\"/g, '"').trim();
+
+  // Owner / channel name applied to every item in the playlist.
+  const ownerMatch = html.match(/"ownerText":\{"runs":\[\{"text":"([^"]+)"/);
+  const owner = ownerMatch ? ownerMatch[1].replace(/\\u0026/g, '&') : '';
+
+  const items: { url: string; title: string; channel: string; thumbnail: string; playlist?: string }[] = [];
   const seen = new Set<string>();
   const re = /"playlistVideoRenderer":\s*\{[^}]*?"videoId":"([\w-]{11})"[\s\S]*?"title":\{"runs":\[\{"text":"([^"]+)"/g;
   let m: RegExpExecArray | null;
@@ -179,10 +191,11 @@ async function youtubePlaylist(listId: string) {
     items.push({
       url: `https://www.youtube.com/watch?v=${videoId}`,
       title: title.replace(/\\u0026/g, '&').replace(/\\"/g, '"'),
-      channel: '',
+      channel: owner,
       thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+      playlist: name || listId,
     });
     if (items.length >= 200) break;
   }
-  return items;
+  return { name, items };
 }

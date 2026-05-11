@@ -24,6 +24,20 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ slug: string; id: string }> },
 ) {
+  try {
+    return await saveOffline(req, ctx);
+  } catch (e) {
+    // Wrap any unhandled error in JSON so the client doesn't choke
+    // on a "JSON.parse: unexpected character at line 1" trying to
+    // parse Next's HTML 500 page.
+    return NextResponse.json({ error: (e as Error).message || 'save-offline crashed' }, { status: 500 });
+  }
+}
+
+async function saveOffline(
+  req: NextRequest,
+  ctx: { params: Promise<{ slug: string; id: string }> },
+) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const userId = (session.user as { id: string }).id;

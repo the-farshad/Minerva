@@ -36,7 +36,7 @@ export function AddByUrl({
   const [url, setUrl] = useState('');
   type LookupItem = Record<string, string>;
   type LookupSingle = LookupItem & { kind?: string };
-  type LookupPlaylist = { kind: 'playlist'; playlistId: string; items: LookupItem[] };
+  type LookupPlaylist = { kind: 'playlist'; playlistId: string; playlistName?: string; items: LookupItem[] };
   type LookupResult = LookupSingle | LookupPlaylist;
   function isPlaylist(p: LookupResult): p is LookupPlaylist {
     return p && (p as LookupPlaylist).kind === 'playlist'
@@ -69,14 +69,28 @@ export function AddByUrl({
       if (!preview) throw new Error('Nothing to add yet');
       const allowed = new Set(section.schema.headers);
 
-      // Playlist branch: fan out into N rows, one per video.
+      // Look up existing URLs in this section so re-adding a video,
+      // playlist, or paper doesn't pile up duplicate rows.
+      const existing = await fetch(`/api/sections/${section.slug}/rows`).then((r) => r.json()).catch(() => ({ rows: [] }));
+      const existingUrls = new Set<string>(
+        (existing.rows || [])
+          .map((er: { data: Record<string, unknown> }) => String(er.data.url || ''))
+          .filter(Boolean),
+      );
+
+      // Playlist branch: fan out into N rows, one per video. Use the
+      // scraped playlist NAME (not the bare id) so the column is
+      // readable. Dedup by URL: a re-add only inserts new videos.
       if (isPlaylist(preview)) {
         const created: { id: string; data: Record<string, unknown>; updatedAt: string }[] = [];
+        let skipped = 0;
+        const playlistLabel = preview.playlistName || preview.playlistId;
         for (const item of preview.items) {
-          const data: Record<string, unknown> = { playlist: '' };
-          if (allowed.has('playlist')) data.playlist = preview.playlistId;
+          if (existingUrls.has(item.url)) { skipped++; continue; }
+          const data: Record<string, unknown> = {};
+          if (allowed.has('playlist')) data.playlist = playlistLabel;
           for (const [k, v] of Object.entries(item)) {
-            if (v == null || v === '') continue;
+            if (v == null || v === '' || k === 'playlist') continue;
             if (allowed.has(k)) data[k] = v;
           }
           const r = await fetch(`/api/sections/${section.slug}/rows`, {
@@ -87,7 +101,7 @@ export function AddByUrl({
           if (!r.ok) throw new Error(`Add row failed: ${r.status}`);
           created.push(await r.json());
         }
-        return { many: created };
+        return { many: created, skipped, playlistLabel };
       }
 
       // Single row branch.
@@ -97,20 +111,42 @@ export function AddByUrl({
         if (allowed.has(k)) data[k] = v;
       });
       if (Object.keys(data).length === 0) data.url = url.trim();
+      const targetUrl = String(data.url || url.trim());
+      if (targetUrl && existingUrls.has(targetUrl)) {
+        return { duplicate: true, one: null };
+      }
       const r = await fetch(`/api/sections/${section.slug}/rows`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data }),
       });
       if (!r.ok) throw new Error(`add: ${r.status}`);
-      return { one: (await r.json()) as { id: string; data: Record<string, unknown>; updatedAt: string } };
+      const created = (await r.json()) as { id: string; data: Record<string, unknown>; updatedAt: string };
+
+      // Auto-mirror papers to the user's Drive on add so the preview
+      // opens straight onto the annotated viewer rather than a
+      // "Mirroring…" placeholder.
+      if (section.preset === 'papers' && created?.id) {
+        fetch(`/api/sections/${section.slug}/rows/${created.id}/save-offline`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'paper' }),
+        }).catch(() => undefined);
+      }
+      return { one: created };
     },
     onSuccess: (out) => {
-      if ('many' in out && out.many) {
-        out.many.forEach(onAdded);
-        toast.success(`Added ${out.many.length} videos.`);
-      } else if ('one' in out && out.one) {
-        onAdded(out.one);
+      const o = out as { many?: { id: string; data: Record<string, unknown>; updatedAt: string }[]; skipped?: number; playlistLabel?: string; duplicate?: boolean; one?: { id: string; data: Record<string, unknown>; updatedAt: string } | null };
+      if (o.many && o.many.length > 0) {
+        o.many.forEach(onAdded);
+        const sk = o.skipped || 0;
+        toast.success(`Added ${o.many.length} new videos${sk ? ` · skipped ${sk} duplicate${sk === 1 ? '' : 's'}` : ''}${o.playlistLabel ? ` to "${o.playlistLabel}"` : ''}.`);
+      } else if (o.many && o.many.length === 0 && (o.skipped || 0) > 0) {
+        toast.info(`Already imported — ${o.skipped} duplicate${o.skipped === 1 ? '' : 's'} skipped.`);
+      } else if (o.duplicate) {
+        toast.info('Already in this section — not added again.');
+      } else if (o.one) {
+        onAdded(o.one);
         toast.success('Added.');
       }
       setOpen(false);
