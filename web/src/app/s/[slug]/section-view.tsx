@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { naturalCompare, cn } from '@/lib/utils';
-import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet } from 'lucide-react';
+import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PreviewModal } from '@/components/preview-modal';
@@ -164,6 +164,31 @@ export function SectionView({
             title="One-way export to a new Google Sheet"
           >
             <FileSpreadsheet className="h-3.5 w-3.5" /> Sheets
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const input = prompt('Paste a Google Sheet URL or id. Existing rows merge by `id` column when present, else append.');
+              if (!input) return;
+              toast.info('Importing from Sheet…');
+              try {
+                const r = await fetch(`/api/sections/${section.slug}/import-sheet`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sheetIdOrUrl: input, mode: 'merge' }),
+                });
+                const j = await r.json();
+                if (!r.ok) throw new Error(j.error || String(r.status));
+                toast.success(`Imported · ${j.inserted} new, ${j.updated} updated.`);
+                location.reload();
+              } catch (e) {
+                toast.error((e as Error).message);
+              }
+            }}
+            className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800"
+            title="Pull rows from a Google Sheet (merge by id, append otherwise)"
+          >
+            <Upload className="h-3.5 w-3.5" /> Import
           </button>
         </div>
       </header>
