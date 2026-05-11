@@ -52,17 +52,26 @@ export async function POST(
         .returning({ id: schema.rows.id });
       deleted = res.length;
     } else if (field && typeof value === 'string') {
-      // JSONB equality on data->>'<field>'. The field name is a
-      // bare identifier so a literal `data ->> 'playlist'` is safe,
-      // but parameterise the value to avoid injection.
+      // Match either an exact value (single-valued columns like
+      // `playlist`) OR the value as one of the comma-separated
+      // entries inside a multiselect column (`category` on papers).
+      // The grouped grid splits multiselect cells on `,` and keys
+      // the group by the FIRST token, so exact-equality would miss
+      // every row that has more than one category.
       if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)) {
         return NextResponse.json({ error: 'Invalid field' }, { status: 400 });
       }
+      // Regex-escape the value before splicing it into the pattern.
+      const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = `(^|,\\s*)${escaped}(\\s*,|\\s*$)`;
       const res = await db.execute(
         sql`UPDATE rows SET deleted = true, "updatedAt" = NOW()
             WHERE "userId" = ${userId}
               AND "sectionId" = ${sec.id}
-              AND (data ->> ${field}) = ${value}
+              AND (
+                (data ->> ${field}) = ${value}
+                OR (data ->> ${field}) ~ ${pattern}
+              )
           RETURNING id`,
       );
       deleted = Array.isArray(res) ? res.length : ((res as unknown as { length: number }).length ?? 0);
