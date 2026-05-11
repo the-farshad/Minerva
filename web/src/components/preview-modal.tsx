@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, ExternalLink, Download, Save, FileCheck2 } from 'lucide-react';
+import { X, ExternalLink, Download, Save, FileCheck2, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookmarkDrawer } from './bookmark-drawer';
 import { NotesPane } from './notes-pane';
@@ -23,6 +23,8 @@ type PreviewItem = {
   sectionSlug?: string;
   /** Current `notes` value for the row, for the side pane. */
   notes?: string;
+  /** Full row.data for the "More info" pane. */
+  data?: Record<string, unknown>;
 };
 
 const YT_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/;
@@ -60,6 +62,7 @@ export function PreviewModal({
   const ytTimeRef = useRef<number>(0);
   const [pdfPage, setPdfPage] = useState(1);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   // Local mirror of the item so async writes (auto-mirror, manual
   // download) can flip the modal to a freshly-uploaded Drive blob
   // without the parent re-rendering.
@@ -296,6 +299,16 @@ export function PreviewModal({
                 <FileCheck2 className="h-3.5 w-3.5" /> {savingAnnot ? 'Saving…' : 'Save annotations'}
               </button>
             )}
+            {view.data && Object.keys(view.data).length > 0 && (
+              <button
+                type="button"
+                onClick={() => setInfoOpen((v) => !v)}
+                title="More info"
+                className={`rounded-full p-1.5 ${infoOpen ? 'bg-zinc-200 dark:bg-zinc-800' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+              >
+                <Info className="h-4 w-4" />
+              </button>
+            )}
             {view.sectionSlug && view.rowId && (
               <button
                 type="button"
@@ -353,6 +366,26 @@ export function PreviewModal({
               />
             )}
             </div>
+            {infoOpen && view.data && (
+              <aside className="flex h-full w-72 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="border-b border-zinc-200 px-3 py-2 text-xs font-semibold dark:border-zinc-800">Info</div>
+                <dl className="flex-1 space-y-2 overflow-auto p-3 text-xs">
+                  {Object.entries(view.data)
+                    .filter(([k, v]) =>
+                      v != null && v !== '' &&
+                      !k.startsWith('_') &&
+                      !['offline', 'notes', 'thumbnail'].includes(k))
+                    .map(([k, v]) => (
+                      <div key={k} className="grid grid-cols-[5.5rem_1fr] gap-2">
+                        <dt className="text-zinc-500">{k}</dt>
+                        <dd className="break-words font-medium text-zinc-700 dark:text-zinc-200">
+                          {String(v).slice(0, 600)}
+                        </dd>
+                      </div>
+                    ))}
+                </dl>
+              </aside>
+            )}
             {notesOpen && view.sectionSlug && view.rowId && (
               <NotesPane
                 sectionSlug={view.sectionSlug}
