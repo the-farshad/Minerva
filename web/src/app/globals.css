@@ -23,6 +23,20 @@
 html[data-theme="light"] { color-scheme: light; --background: #fbfbfa; --foreground: #171717; }
 html[data-theme="dark"]  { color-scheme: dark;  --background: #0b0d10; --foreground: #ededed; }
 
+/* Light forced — beat the OS dark preference so dark-utility classes
+ * (dark:bg-zinc-900 etc.) don't paint over the chosen light scheme. */
+html[data-theme="light"] body { background: #fbfbfa; color: #171717; }
+html[data-theme="light"] .dark\:bg-zinc-900,
+html[data-theme="light"] .dark\:bg-zinc-950,
+html[data-theme="light"] .dark\:bg-zinc-800 { background-color: #ffffff !important; }
+html[data-theme="light"] .dark\:bg-zinc-900\/50,
+html[data-theme="light"] .dark\:bg-zinc-950\/70 { background-color: #ffffffcc !important; }
+html[data-theme="light"] .dark\:text-zinc-100,
+html[data-theme="light"] .dark\:text-zinc-200 { color: #171717 !important; }
+html[data-theme="light"] .dark\:text-zinc-400 { color: #71717a !important; }
+html[data-theme="light"] .dark\:border-zinc-700,
+html[data-theme="light"] .dark\:border-zinc-800 { border-color: #e4e4e7 !important; }
+
 /* Sepia — light scheme with paper-toned backgrounds and warm text.
  * Tailwind utility classes are overridden so the inner UI honours
  * the theme instead of leaking dark cards through. */
@@ -85,9 +99,12 @@ html[data-theme="vt323"] .dark\:border-zinc-700,
 html[data-theme="vt323"] .dark\:border-zinc-800 { border-color: #2a4d2a !important; }
 
 /* Font picker — applied via <html data-font="..."> */
-html[data-font="serif"] body, html[data-font="serif"] body * { font-family: ui-serif, Georgia, "Times New Roman", serif !important; }
-html[data-font="mono"]  body, html[data-font="mono"]  body * { font-family: ui-monospace, SFMono-Regular, "Cascadia Code", monospace !important; }
-html[data-font="vt323"] body, html[data-font="vt323"] body * { font-family: "VT323", ui-monospace, monospace !important; letter-spacing: 0.01em; }
+html[data-font="serif"]   body, html[data-font="serif"]   body * { font-family: ui-serif, Georgia, "Times New Roman", serif !important; }
+html[data-font="mono"]    body, html[data-font="mono"]    body * { font-family: ui-monospace, SFMono-Regular, "Cascadia Code", monospace !important; }
+html[data-font="vt323"]   body, html[data-font="vt323"]   body * { font-family: "VT323", ui-monospace, monospace !important; letter-spacing: 0.01em; }
+html[data-font="ubuntu"]  body, html[data-font="ubuntu"]  body * { font-family: var(--font-ubuntu), "Ubuntu", system-ui, sans-serif !important; }
+html[data-font="roboto"]  body, html[data-font="roboto"]  body * { font-family: var(--font-roboto), "Roboto", system-ui, sans-serif !important; }
+html[data-font="vazir"]   body, html[data-font="vazir"]   body * { font-family: var(--font-vazir), "Vazirmatn", system-ui, sans-serif !important; }
 
 body {
   background: var(--background);

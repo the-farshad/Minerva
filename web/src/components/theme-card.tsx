@@ -5,7 +5,7 @@ import { Sun, Moon, BookOpen, Terminal, Type } from 'lucide-react';
 import { readPref, writePref } from '@/lib/prefs';
 
 type Theme = 'system' | 'light' | 'dark' | 'sepia' | 'vt323';
-type Font = 'system' | 'serif' | 'mono' | 'vt323';
+type Font = 'system' | 'serif' | 'mono' | 'vt323' | 'ubuntu' | 'roboto' | 'vazir';
 
 const THEMES: { v: Theme; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { v: 'system', label: 'System', Icon: Sun },
@@ -17,6 +17,9 @@ const THEMES: { v: Theme; label: string; Icon: React.ComponentType<{ className?:
 
 const FONTS: { v: Font; label: string }[] = [
   { v: 'system', label: 'System (Inter)' },
+  { v: 'ubuntu', label: 'Ubuntu' },
+  { v: 'roboto', label: 'Roboto' },
+  { v: 'vazir',  label: 'Vazir' },
   { v: 'serif',  label: 'Serif' },
   { v: 'mono',   label: 'Monospace' },
   { v: 'vt323',  label: 'VT323' },
