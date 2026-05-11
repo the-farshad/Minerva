@@ -467,6 +467,7 @@ function IframeWithFallback({
 }) {
   const [loaded, setLoaded] = useState(false);
   const [stuck, setStuck] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
   useEffect(() => {
     setLoaded(false);
     setStuck(false);
@@ -476,6 +477,26 @@ function IframeWithFallback({
   }, [src]);
   return (
     <div className="relative h-full w-full">
+      <button
+        type="button"
+        onClick={() => setShowDebug((v) => !v)}
+        className="absolute right-2 top-2 z-10 rounded-full bg-zinc-900/70 px-2 py-0.5 font-mono text-[10px] text-white backdrop-blur"
+        title="Click to toggle iframe URL — useful when it's not loading"
+      >
+        {showDebug ? '×' : 'src'}
+      </button>
+      {showDebug && (
+        <div
+          onClick={async (e) => {
+            e.stopPropagation();
+            try { await navigator.clipboard.writeText(src); } catch { /* tolerate */ }
+          }}
+          className="absolute left-2 right-12 top-2 z-10 cursor-copy break-all rounded bg-zinc-900/70 px-2 py-1 font-mono text-[10px] text-white backdrop-blur"
+          title="Click to copy"
+        >
+          {src}
+        </div>
+      )}
       <iframe
         ref={iframeRef as React.RefObject<HTMLIFrameElement>}
         src={src}
@@ -521,6 +542,7 @@ function YouTubeFrame({
 }) {
   const [loaded, setLoaded] = useState(false);
   const [stuck, setStuck] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
   useEffect(() => {
     setLoaded(false);
     setStuck(false);
@@ -529,11 +551,31 @@ function YouTubeFrame({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const ytSrc = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=1&enablejsapi=1&start=${start}&origin=${encodeURIComponent(origin)}`;
   return (
     <div className="relative h-full w-full">
+      <button
+        type="button"
+        onClick={() => setShowDebug((v) => !v)}
+        className="absolute right-2 top-2 z-10 rounded-full bg-zinc-900/70 px-2 py-0.5 font-mono text-[10px] text-white backdrop-blur"
+        title="Click to toggle iframe URL"
+      >
+        {showDebug ? '×' : 'src'}
+      </button>
+      {showDebug && (
+        <div
+          onClick={async (e) => {
+            e.stopPropagation();
+            try { await navigator.clipboard.writeText(ytSrc); } catch { /* tolerate */ }
+          }}
+          className="absolute left-2 right-12 top-2 z-10 cursor-copy break-all rounded bg-zinc-900/70 px-2 py-1 font-mono text-[10px] text-white backdrop-blur"
+        >
+          {ytSrc}
+        </div>
+      )}
       <iframe
         ref={iframeRef as React.RefObject<HTMLIFrameElement>}
-        src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=1&enablejsapi=1&start=${start}&origin=${encodeURIComponent(origin)}`}
+        src={ytSrc}
         className="h-full w-full"
         title="YouTube"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
