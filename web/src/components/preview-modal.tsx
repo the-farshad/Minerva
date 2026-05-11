@@ -8,6 +8,7 @@ import { BookmarkDrawer } from './bookmark-drawer';
 import { NotesPane } from './notes-pane';
 import { readPref, writePref } from '@/lib/prefs';
 import { StickyNote } from 'lucide-react';
+import { localMirror } from '@/lib/local-mirror';
 
 type PreviewItem = {
   url: string;
@@ -103,6 +104,32 @@ export function PreviewModal({
     ? `/api/helper/file/serve?path=${encodeURIComponent(view.hostPath)}`
     : null;
 
+  async function mirrorToLocal(
+    kind: 'video' | 'paper',
+    fileId: string,
+    filename: string,
+    sectionSlug: string,
+    rowId: string,
+  ) {
+    if (!localMirror.supported()) return;
+    const handle = await localMirror.handle();
+    if (!handle) return;
+    try {
+      const r = await fetch(`/api/drive/file?id=${encodeURIComponent(fileId)}`);
+      if (!r.ok) return;
+      const blob = await r.blob();
+      const folder = kind === 'video' ? 'videos' : 'papers';
+      const marker = await localMirror.save(folder, filename, blob);
+      if (!marker) return;
+      await fetch(`/api/sections/${sectionSlug}/rows/${rowId}/mark-offline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ marker }),
+      });
+      toast.success('Also mirrored to local folder.');
+    } catch { /* tolerate */ }
+  }
+
   async function saveOffline(kind: 'video' | 'paper') {
     if (!view || !view.sectionSlug || !view.rowId) return;
     setDownloading(true);
@@ -120,6 +147,9 @@ export function PreviewModal({
       if (!r.ok) throw new Error(j.error || `save-offline: ${r.status}`);
       toast.success(j.skipped ? 'Already offline.' : 'Saved to Drive.');
       setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
+      if (!j.skipped && j.fileId && j.filename && view.sectionSlug && view.rowId) {
+        mirrorToLocal(kind, j.fileId, j.filename, view.sectionSlug, view.rowId);
+      }
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -151,6 +181,9 @@ export function PreviewModal({
         if (!r.ok) return;
         const j = await r.json().catch(() => ({}));
         if (j.fileId) setView((prev) => (prev ? { ...prev, driveFileId: j.fileId } : prev));
+        if (!j.skipped && j.fileId && j.filename && v.sectionSlug && v.rowId) {
+          mirrorToLocal('paper', j.fileId, j.filename, v.sectionSlug, v.rowId);
+        }
       } catch { /* tolerate */ }
     })();
     return () => { cancelled = true; };
