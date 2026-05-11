@@ -329,23 +329,22 @@ export function PreviewModal({
           </header>
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
-            {pdf ? (
-              /* Always load the PDF immediately, regardless of whether
-               * the user has a Drive copy yet. Priority for the inner
-               * `file=` URL:
-               *   1. host:<path>   — local copy via helper /file/serve
-               *   2. drive:<id>    — auth-gated proxy to /api/drive/file
-               *   3. helper /proxy → fetches the public PDF URL with
-               *      CORS stripped (so arxiv loads inside an iframe).
-               * The background auto-mirror still uploads to Drive so
-               * annotations persist, but the user doesn't wait for it.
-               */
+            {pdf && view.rowId ? (
+              /* /api/pdf/<rowId> resolves to drive / host / live URL
+               * server-side, so there's no nested ?query inside the
+               * PDF.js viewer's ?file= parameter — fewer ways for a
+               * URL to be mangled. */
+              <IframeWithFallback
+                title="PDF"
+                src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(`/api/pdf/${view.rowId}`)}#page=${pdfPage}`}
+                fallbackHref={view.url}
+                iframeRef={pdfIframeRef}
+              />
+            ) : pdf ? (
               <IframeWithFallback
                 title="PDF"
                 src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(
-                  hostSrc
-                    ?? (view.driveFileId ? `/api/drive/file?id=${view.driveFileId}` : null)
-                    ?? `/api/helper/proxy?${encodeURIComponent(pdfDirectUrl(view.url))}`,
+                  hostSrc ?? (view.driveFileId ? `/api/drive/file?id=${view.driveFileId}` : view.url),
                 )}#page=${pdfPage}`}
                 fallbackHref={view.url}
                 iframeRef={pdfIframeRef}
@@ -500,7 +499,7 @@ function YouTubeFrame({
     <div className="relative h-full w-full">
       <iframe
         ref={iframeRef as React.RefObject<HTMLIFrameElement>}
-        src={`https://www.youtube.com/embed/${encodeURIComponent(videoId)}?autoplay=1&enablejsapi=1&start=${start}&origin=${encodeURIComponent(origin)}`}
+        src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=1&enablejsapi=1&start=${start}&origin=${encodeURIComponent(origin)}`}
         className="h-full w-full"
         title="YouTube"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
