@@ -36,7 +36,12 @@ on:
 # running, queue the new one but cancel any earlier queued runs.
 concurrency:
   group: deploy-droplet
-  cancel-in-progress: false
+  # Cancel an in-flight deploy when a newer push arrives, so the
+  # droplet doesn't land on the older SHA after the newer one was
+  # already in the workflow queue. The trade-off (a half-finished
+  # build is thrown away) is fine for this app — the build is
+  # idempotent and re-runs cheaply.
+  cancel-in-progress: true
 
 jobs:
   deploy:

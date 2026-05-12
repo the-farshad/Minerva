@@ -67,6 +67,7 @@ export function PreviewModal({
   item,
   onClose,
   onNotesSaved,
+  onRowDataChanged,
 }: {
   item: PreviewItem | null;
   onClose: () => void;
@@ -75,6 +76,13 @@ export function PreviewModal({
    * the modal shows the just-saved value instead of the pre-edit
    * one. */
   onNotesSaved?: (rowId: string, notes: string) => void;
+  /** Called whenever the modal mutates row.data — refresh-metadata,
+   * InfoPane Save, PDF extract caching, etc. — so the parent's rows
+   * state stays in sync with the server. Without this the section's
+   * list view shows stale titles after an ISBN refresh and reader
+   * mode re-extracts on every open even though the cached markdown
+   * was just saved. */
+  onRowDataChanged?: (rowId: string, data: Record<string, unknown>) => void;
 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(!!item), [item]);
@@ -569,6 +577,7 @@ export function PreviewModal({
                         title: String(j.data!.title || prev.title || ''),
                         data: j.data,
                       } : prev));
+                      onRowDataChanged?.(view.rowId, j.data);
                     }
                     toast.success(`Metadata refreshed via ${j.source}.`);
                   } catch (e) {
@@ -749,6 +758,10 @@ export function PreviewModal({
                 extractUrl={`/api/pdf/${view.rowId}`}
                 cached={typeof view.data?.extracted === 'string' ? (view.data.extracted as string) : null}
                 theme={pdfTheme}
+                onExtracted={(md) => {
+                  setView((prev) => (prev ? { ...prev, data: { ...(prev.data || {}), extracted: md } } : prev));
+                  if (view.rowId && view.data) onRowDataChanged?.(view.rowId, { ...view.data, extracted: md });
+                }}
               />
             ) : pdf && view.rowId ? (
               /* Bundled Mozilla PDF.js viewer (same-origin under
@@ -813,7 +826,10 @@ export function PreviewModal({
                 sectionSlug={view.sectionSlug}
                 sectionPreset={typeof view.data?._sectionPreset === 'string' ? view.data._sectionPreset : (pdf ? 'papers' : yt ? 'youtube' : null)}
                 data={view.data}
-                onSaved={(next) => setView((prev) => (prev ? { ...prev, data: next, title: String(next.title || prev.title || '') } : prev))}
+                onSaved={(next) => {
+                  setView((prev) => (prev ? { ...prev, data: next, title: String(next.title || prev.title || '') } : prev));
+                  if (view.rowId) onRowDataChanged?.(view.rowId, next);
+                }}
               />
             )}
             {notesOpen && view.sectionSlug && view.rowId && (

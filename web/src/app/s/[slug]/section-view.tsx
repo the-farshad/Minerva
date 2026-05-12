@@ -259,6 +259,11 @@ export function SectionView({
             x.id === rowId ? { ...x, data: { ...x.data, notes } } : x
           )));
         }}
+        onRowDataChanged={(rowId, data) => {
+          setRows((rs) => rs.map((x) => (
+            x.id === rowId ? { ...x, data, updatedAt: new Date().toISOString() } : x
+          )));
+        }}
       />
     </main>
   );

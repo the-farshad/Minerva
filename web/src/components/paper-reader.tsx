@@ -37,7 +37,7 @@ const SIZES = {
 type SizeKey = keyof typeof SIZES;
 
 export function PaperReader({
-  rowId, sectionSlug, extractUrl, cached, theme,
+  rowId, sectionSlug, extractUrl, cached, theme, onExtracted,
 }: {
   rowId: string;
   sectionSlug: string;
@@ -47,6 +47,10 @@ export function PaperReader({
   /** Previously-saved markdown from row.data.extracted, if any. */
   cached: string | null;
   theme: 'light' | 'sepia' | 'dark';
+  /** Notify the parent that fresh extracted markdown landed on the
+   * server. Lets the section-view rows cache pick it up so a reopen
+   * during the same session skips the 10-30 s loader pass. */
+  onExtracted?: (markdown: string) => void;
 }) {
   const [text, setText] = useState<string | null>(cached);
   const [loading, setLoading] = useState(false);
@@ -89,6 +93,7 @@ export function PaperReader({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ data: { extracted: md } }),
         });
+        onExtracted?.(md);
       } catch { /* tolerate */ }
     } catch (e) {
       const msg = (e as Error).message;

@@ -31,11 +31,31 @@ export async function PATCH(
     enabled?: boolean;
     title?: string;
     order?: number;
+    /** Replace the `multiselect(...)` option list for a column on
+     * the section schema. The Categories dialog uses this to add
+     * / remove category values without forcing the user to drop
+     * the section. */
+    setMultiselect?: { column: string; options: string[] };
   };
   const patch: Partial<typeof schema.sections.$inferInsert> = {};
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
   if (typeof body.title === 'string' && body.title.trim()) patch.title = body.title.trim();
   if (typeof body.order === 'number' && Number.isFinite(body.order)) patch.order = body.order;
+  if (body.setMultiselect && typeof body.setMultiselect.column === 'string') {
+    const sch = (sec.schema as { headers: string[]; types: string[] }) || { headers: [], types: [] };
+    const idx = sch.headers.indexOf(body.setMultiselect.column);
+    if (idx < 0) {
+      return NextResponse.json({ error: `Section has no column "${body.setMultiselect.column}".` }, { status: 400 });
+    }
+    const cleaned = Array.from(new Set(
+      (body.setMultiselect.options || [])
+        .map((s) => String(s).trim())
+        .filter(Boolean),
+    ));
+    const nextTypes = sch.types.slice();
+    nextTypes[idx] = `multiselect(${cleaned.join(', ')})`;
+    patch.schema = { headers: sch.headers, types: nextTypes } as typeof schema.sections.$inferInsert.schema;
+  }
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
   }

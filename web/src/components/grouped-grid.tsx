@@ -10,6 +10,7 @@ import { readNdjsonResult } from '@/lib/ndjson';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
 import { CITATION_FORMATS } from '@/lib/citations';
+import { CategoryBar } from './category-bar';
 import { appPickMany } from './multi-picker';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
@@ -104,6 +105,16 @@ export function GroupedGrid({
   const [groupOrder, setGroupOrder] = useState<Record<string, string[]>>({});
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [selectedCats, setSelectedCats] = useState<Set<string>>(new Set());
+  // The schema's `multiselect(...)` options for this column — updated
+  // in-place when the user clicks Add/Remove in the CategoryBar.
+  const [catOptions, setCatOptions] = useState<string[]>(() => {
+    if (!groupCol || groupCol !== 'category') return [];
+    const idx = section.schema.headers.indexOf('category');
+    const raw = idx >= 0 ? String(section.schema.types?.[idx] || '') : '';
+    const m = raw.match(/^multiselect\(([^)]*)\)/);
+    return m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+  });
 
   // Restore prefs.
   useEffect(() => {
@@ -111,16 +122,37 @@ export function GroupedGrid({
     setGroupSort(readPref(`groupsort.${section.slug}`, {}));
     setGroupOrder(readPref(`grouporder.${section.slug}`, {}));
     setCollapsed(new Set(readPref<string[]>(`collapsed.${section.slug}`, [])));
+    setSelectedCats(new Set(readPref<string[]>(`catfilter.${section.slug}`, [])));
   }, [section.slug]);
+
+  // All category values actually used across rows — pulled out
+  // separately so the CategoryBar can show user-defined values that
+  // aren't yet in the schema.
+  const usedCats = useMemo(() => {
+    if (groupCol !== 'category') return [] as string[];
+    const set = new Set<string>();
+    for (const r of rows) {
+      const raw = String(r.data.category || '');
+      for (const v of raw.split(',').map((s) => s.trim()).filter(Boolean)) set.add(v);
+    }
+    return Array.from(set);
+  }, [rows, groupCol]);
 
   const groups = useMemo(() => {
     const byKey = new Map<string, Row[]>();
     const order: string[] = [];
     for (const r of rows) {
-      const raw = groupCol ? String(r.data[groupCol] || '').split(',')[0].trim() : '';
-      const key = raw || '(uncategorised)';
-      if (!byKey.has(key)) { byKey.set(key, []); order.push(key); }
-      byKey.get(key)!.push(r);
+      const raw = groupCol ? String(r.data[groupCol] || '').trim() : '';
+      // Multi-category: a row tagged "method, review" shows up in
+      // BOTH the "method" and "review" groups. Empty / missing →
+      // "(uncategorised)".
+      const keys = raw
+        ? raw.split(',').map((s) => s.trim()).filter(Boolean)
+        : ['(uncategorised)'];
+      for (const key of (keys.length ? keys : ['(uncategorised)'])) {
+        if (!byKey.has(key)) { byKey.set(key, []); order.push(key); }
+        byKey.get(key)!.push(r);
+      }
     }
     if (sectionSort !== 'default') {
       order.sort((a, b) => {
@@ -131,8 +163,11 @@ export function GroupedGrid({
         return 0;
       });
     }
-    return order.map((k) => ({ key: k, rows: byKey.get(k)! }));
-  }, [rows, groupCol, sectionSort]);
+    const filtered = selectedCats.size === 0
+      ? order
+      : order.filter((k) => selectedCats.has(k));
+    return filtered.map((k) => ({ key: k, rows: byKey.get(k)! }));
+  }, [rows, groupCol, sectionSort, selectedCats]);
 
   function toggleCollapsed(k: string) {
     setCollapsed((prev) => {
@@ -164,6 +199,20 @@ export function GroupedGrid({
 
   return (
     <div className="space-y-6">
+      {groupCol === 'category' && (
+        <CategoryBar
+          sectionSlug={section.slug}
+          column="category"
+          schemaOptions={catOptions}
+          rowValues={usedCats}
+          selected={selectedCats}
+          onSelectedChange={(next) => {
+            setSelectedCats(next);
+            writePref(`catfilter.${section.slug}`, [...next]);
+          }}
+          onSchemaChanged={(nextList) => setCatOptions(nextList)}
+        />
+      )}
       {groupCol && (
         <header className="flex items-center gap-3 text-xs">
           <span className="text-zinc-500">Sort {groupCol}s:</span>

@@ -23,6 +23,13 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
+# Newer pushes cancel any older publish still running, so we don't
+# race a slow build that would otherwise overwrite the newer image
+# tag landing first.
+concurrency:
+  group: web-publish
+  cancel-in-progress: true
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
