@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote, RefreshCw, FileText } from 'lucide-react';
+import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote, RefreshCw, FileText, BookOpen } from 'lucide-react';
 import { appConfirm } from './confirm';
 import { CITATION_FORMATS } from '@/lib/citations';
+import { PaperReader } from './paper-reader';
+import { InfoPane } from './info-pane';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { BookmarkDrawer } from './bookmark-drawer';
@@ -103,6 +105,7 @@ export function PreviewModal({
   const [pdfTheme, setPdfTheme] = useState<'light' | 'sepia' | 'dark'>('light');
   const [pdfReload, setPdfReload] = useState(0);
   const [resettingPdf, setResettingPdf] = useState(false);
+  const [readerMode, setReaderMode] = useState(false);
   useEffect(() => {
     const saved = readPref<string>('paper.theme', 'light');
     if (saved === 'sepia' || saved === 'dark' || saved === 'light') setPdfTheme(saved);
@@ -680,6 +683,16 @@ export function PreviewModal({
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
             )}
+            {pdf && view.rowId && (
+              <button
+                type="button"
+                onClick={() => setReaderMode((r) => !r)}
+                title={readerMode ? 'Back to the PDF.js canvas view' : 'Reader mode — reflowed text with chosen font and size'}
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${readerMode ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+              >
+                <BookOpen className="h-3.5 w-3.5" /> Reader
+              </button>
+            )}
             {pdf && (
               <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
                 {(['light', 'sepia', 'dark'] as const).map((t) => {
@@ -731,7 +744,15 @@ export function PreviewModal({
           </header>
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
-            {pdf && view.rowId ? (
+            {pdf && view.rowId && readerMode && view.sectionSlug ? (
+              <PaperReader
+                rowId={view.rowId}
+                sectionSlug={view.sectionSlug}
+                extractUrl={`/api/pdf/${view.rowId}`}
+                cached={typeof view.data?.extracted === 'string' ? (view.data.extracted as string) : null}
+                theme={pdfTheme}
+              />
+            ) : pdf && view.rowId ? (
               /* Bundled Mozilla PDF.js viewer (same-origin under
                * /pdfjs/) — exposes PDFViewerApplication on the
                * iframe's contentWindow so the in-viewer annotation
@@ -788,25 +809,13 @@ export function PreviewModal({
               />
             )}
             </div>
-            {infoOpen && view.data && (
-              <aside className="flex h-full w-72 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-                <div className="border-b border-zinc-200 px-3 py-2 text-xs font-semibold dark:border-zinc-800">Info</div>
-                <dl className="flex-1 space-y-2 overflow-auto p-3 text-xs">
-                  {Object.entries(view.data)
-                    .filter(([k, v]) =>
-                      v != null && v !== '' &&
-                      !k.startsWith('_') &&
-                      !['offline', 'notes', 'thumbnail'].includes(k))
-                    .map(([k, v]) => (
-                      <div key={k} className="grid grid-cols-[5.5rem_1fr] gap-2">
-                        <dt className="text-zinc-500">{k}</dt>
-                        <dd className="break-words font-medium text-zinc-700 dark:text-zinc-200">
-                          {String(v).slice(0, 600)}
-                        </dd>
-                      </div>
-                    ))}
-                </dl>
-              </aside>
+            {infoOpen && view.data && view.rowId && view.sectionSlug && (
+              <InfoPane
+                rowId={view.rowId}
+                sectionSlug={view.sectionSlug}
+                data={view.data}
+                onSaved={(next) => setView((prev) => (prev ? { ...prev, data: next, title: String(next.title || prev.title || '') } : prev))}
+              />
             )}
             {notesOpen && view.sectionSlug && view.rowId && (
               <NotesPane

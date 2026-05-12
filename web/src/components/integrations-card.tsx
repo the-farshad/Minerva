@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Check, KeyRound, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, KeyRound, Trash2, Upload, Cookie } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 
@@ -17,6 +17,9 @@ export function IntegrationsCard() {
   const [ytKeyPresent, setYtKeyPresent] = useState<boolean | null>(null);
   const [ytInput, setYtInput] = useState('');
   const [saving, setSaving] = useState(false);
+  const [cookiesStat, setCookiesStat] = useState<{ size?: number; mtime?: number; exists?: boolean } | null>(null);
+  const [uploadingCookies, setUploadingCookies] = useState(false);
+  const cookiesFileRef = useRef<HTMLInputElement>(null);
 
   async function load() {
     try {
@@ -27,8 +30,36 @@ export function IntegrationsCard() {
     } catch {
       setYtKeyPresent(false);
     }
+    try {
+      const r = await fetch('/api/helper/cookies');
+      if (r.ok) setCookiesStat(await r.json());
+    } catch { /* tolerate */ }
   }
   useEffect(() => { void load(); }, []);
+
+  async function uploadCookies(text: string) {
+    if (!text.trim().startsWith('# Netscape HTTP Cookie File')) {
+      notify.error('That doesn\'t look like a Netscape cookies file (the first line must be `# Netscape HTTP Cookie File`).');
+      return;
+    }
+    setUploadingCookies(true);
+    try {
+      const r = await fetch('/api/helper/cookies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: text,
+      });
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string; size?: number; mtime?: number };
+      if (!r.ok || j.ok === false) throw new Error(j.error || `cookies upload: ${r.status}`);
+      setCookiesStat({ exists: true, size: j.size, mtime: j.mtime });
+      toast.success(`Cookies refreshed (${j.size?.toLocaleString()} B).`);
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setUploadingCookies(false);
+      if (cookiesFileRef.current) cookiesFileRef.current.value = '';
+    }
+  }
 
   async function save(value: string | null) {
     setSaving(true);
@@ -105,6 +136,54 @@ export function IntegrationsCard() {
                   <Trash2 className="h-3 w-3" /> Clear
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-start gap-3 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+          <Cookie className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              YouTube cookies (yt-dlp)
+              {cookiesStat?.exists && (
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                  {cookiesStat.size?.toLocaleString()} B · updated {cookiesStat.mtime ? new Date(cookiesStat.mtime * 1000).toISOString().slice(0, 16).replace('T', ' ') : '?'}
+                </span>
+              )}
+              {cookiesStat?.exists === false && (
+                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                  Not uploaded
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Used by yt-dlp when YouTube hits a video with &quot;Sign in to confirm you&rsquo;re not a bot.&quot;
+              Export from a logged-in browser using a Netscape-format extension (e.g.{' '}
+              <span className="font-mono">Get cookies.txt LOCALLY</span>) and upload the resulting
+              file here. If yt-dlp still refuses a video, the helper now falls back to public
+              Piped instances, so cookies aren&rsquo;t always needed.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                ref={cookiesFileRef}
+                type="file"
+                accept=".txt,text/plain"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const text = await f.text();
+                  await uploadCookies(text);
+                }}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => cookiesFileRef.current?.click()}
+                disabled={uploadingCookies}
+                className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1.5 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+              >
+                <Upload className="h-3 w-3" /> {uploadingCookies ? 'Uploading…' : 'Upload cookies.txt'}
+              </button>
             </div>
           </div>
         </div>

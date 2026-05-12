@@ -85,11 +85,16 @@ export function GroupedGrid({
   rows,
   onOpen,
   onDelete,
+  onRowUpdated,
 }: {
   section: Section;
   rows: Row[];
   onOpen: (r: Row) => void;
   onDelete: (rowId: string) => Promise<void>;
+  /** Called when a group-level bulk action mutates a row (e.g.
+   * bulk metadata refresh) so the parent's cache replaces it
+   * in-place instead of waiting for a full refetch. */
+  onRowUpdated?: (row: Row) => void;
 }) {
   const groupCol = GROUP_COL(section.schema.headers);
   const titleField = TITLE_FIELD(section.schema.headers);
@@ -210,6 +215,36 @@ export function GroupedGrid({
                   <GroupNotes sectionSlug={section.slug} groupKey={key} />
                   {(section.preset === 'youtube' || section.preset === 'papers') && (
                     <>
+                      {(section.preset === 'youtube' || section.preset === 'papers') && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            toast.info(`Refreshing metadata for ${groupRows.length} items…`);
+                            let done = 0, failed = 0, skipped = 0;
+                            await Promise.all(groupRows.map(async (gr) => {
+                              try {
+                                const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/refresh-metadata`, { method: 'POST' });
+                                if (resp.status === 409) { skipped++; return; }
+                                const j = (await resp.json().catch(() => ({}))) as { data?: Record<string, unknown>; error?: string };
+                                if (!resp.ok) throw new Error(j.error || `refresh-metadata: ${resp.status}`);
+                                if (j.data && onRowUpdated) {
+                                  onRowUpdated({ id: gr.id, data: j.data, updatedAt: new Date().toISOString() });
+                                }
+                                done++;
+                              } catch { failed++; }
+                            }));
+                            const parts: string[] = [];
+                            if (done) parts.push(`refreshed ${done}`);
+                            if (skipped) parts.push(`${skipped} skipped (no source)`);
+                            if (failed) parts.push(`${failed} failed`);
+                            toast.success(parts.join(' · ') || 'Nothing to refresh.');
+                          }}
+                          className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                          title={`Refresh metadata for every item in "${key}" via YouTube / arxiv / CrossRef`}
+                        >
+                          Refresh metadata
+                        </button>
+                      )}
                       {section.preset === 'papers' && (
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>

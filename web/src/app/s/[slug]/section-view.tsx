@@ -247,7 +247,7 @@ export function SectionView({
       ) : (() => {
         const eff = (availableModes as readonly string[]).includes(mode) ? mode : 'grid';
         if (eff === 'list')     return <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />;
-        if (eff === 'grid')     return <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} />;
+        if (eff === 'grid')     return <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onRowUpdated={(row) => setRows((rs) => rs.map((x) => (x.id === row.id ? row : x)))} />;
         if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} />;
         return <CalendarView section={section} rows={sorted} onOpen={openPreview} />;
       })()}

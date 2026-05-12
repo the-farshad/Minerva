@@ -682,6 +682,69 @@ def pdf_extract():
             pass
 
 
+# ---------- Cookies upload ------------------------------------------------
+#
+# Overwrites the Netscape-format cookies.txt the yt-dlp downloader uses
+# so the user can refresh their YouTube session without SSH'ing into
+# the droplet. Path resolution mirrors the read-side logic in the
+# /download route (MINERVA_COOKIES_FILE → /srv/cookies.txt → ~/.minerva/
+# cookies.txt). Body is the raw text of the cookies file; we validate
+# the magic header and reject anything that doesn't look right rather
+# than silently corrupting the file.
+
+@app.route("/cookies", methods=["POST", "OPTIONS", "GET"])
+def cookies_upload():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    target = (
+        os.environ.get("MINERVA_COOKIES_FILE")
+        or "/srv/cookies.txt"
+    )
+    if request.method == "GET":
+        try:
+            st = os.stat(target)
+            return (jsonify({
+                "ok": True,
+                "path": target,
+                "size": st.st_size,
+                "mtime": int(st.st_mtime),
+                "exists": True,
+            }), 200, _cors_dict())
+        except FileNotFoundError:
+            return (jsonify({"ok": True, "path": target, "exists": False}), 200, _cors_dict())
+        except Exception as exc:  # noqa: BLE001
+            return (jsonify({"ok": False, "error": str(exc)}), 500, _cors_dict())
+    # POST: read body as text. Accept either raw text or
+    # multipart/form-data with a `file` field for convenience.
+    text = ""
+    if request.files and "file" in request.files:
+        text = request.files["file"].read().decode("utf-8", "replace")
+    else:
+        text = (request.get_data(cache=False) or b"").decode("utf-8", "replace")
+    first_line = text.split("\n", 1)[0].strip()
+    if not first_line.startswith("# Netscape HTTP Cookie File"):
+        return (jsonify({
+            "ok": False,
+            "error": "Body does not start with `# Netscape HTTP Cookie File`. "
+                     "Export cookies from a logged-in browser using a Netscape-format "
+                     "extension (e.g. Get cookies.txt LOCALLY) and paste the resulting "
+                     "file verbatim."
+        }), 400, _cors_dict())
+    if len(text) < 64:
+        return (jsonify({"ok": False, "error": "Cookies file is suspiciously small (<64 B)."}), 400, _cors_dict())
+    try:
+        # Atomic-ish write: write to a sibling then rename so the
+        # yt-dlp side never sees a half-written file.
+        tmp_path = target + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp_path, target)
+        st = os.stat(target)
+        return (jsonify({"ok": True, "path": target, "size": st.st_size, "mtime": int(st.st_mtime)}), 200, _cors_dict())
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": f"write failed: {exc}"}), 500, _cors_dict())
+
+
 # ---------- CORS proxy -----------------------------------------------------
 
 @app.route("/proxy", methods=["GET", "POST", "OPTIONS"])
