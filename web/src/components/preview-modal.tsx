@@ -32,6 +32,9 @@ type PreviewItem = {
    * auto-mirror that writes an offline marker back to the row. */
   rowId?: string;
   sectionSlug?: string;
+  /** Section preset — drives mode-specific rendering. Notes rows
+   * skip the iframe entirely and put NotesPane in the main area. */
+  sectionPreset?: string | null;
   /** Current `notes` value for the row, for the side pane. */
   notes?: string;
   /** Full row.data for the "More info" pane. */
@@ -854,7 +857,24 @@ export function PreviewModal({
           </header>
           <div className="flex flex-1 overflow-hidden">
             <div className="relative flex-1 bg-zinc-200 dark:bg-zinc-900">
-            {pdf && view.rowId && readerMode && view.sectionSlug ? (
+            {view.sectionPreset === 'notes' && view.rowId && view.sectionSlug ? (
+              /* Notes preset — there's no media to play / render,
+               * just the row's markdown content. Drop the NotesPane
+               * straight into the main area so the experience feels
+               * like a dedicated note editor instead of an empty
+               * iframe shell with a sidebar. The row's `content`
+               * field IS the body; we feed it as `initial`. */
+              <NotesPane
+                sectionSlug={view.sectionSlug}
+                rowId={view.rowId}
+                initial={typeof view.data?.content === 'string' ? (view.data.content as string) : (view.notes || '')}
+                contentField="content"
+                onSaved={(next) => {
+                  setView((prev) => (prev ? { ...prev, data: { ...(prev.data || {}), content: next } } : prev));
+                  if (view.rowId && view.data) onRowDataChanged?.(view.rowId, { ...view.data, content: next });
+                }}
+              />
+            ) : pdf && view.rowId && readerMode && view.sectionSlug ? (
               <PaperReader
                 rowId={view.rowId}
                 sectionSlug={view.sectionSlug}

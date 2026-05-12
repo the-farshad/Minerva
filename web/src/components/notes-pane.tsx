@@ -18,6 +18,7 @@ export function NotesPane({
   rowId,
   initial,
   onSaved,
+  contentField = 'notes',
 }: {
   sectionSlug: string;
   rowId: string;
@@ -28,6 +29,11 @@ export function NotesPane({
    * re-render trickles the stale value back down via `initial`,
    * wiping the textarea mid-edit. */
   onSaved?: (next: string) => void;
+  /** Which `row.data` key the PATCH writes to. Defaults to `notes`
+   * (the sidebar use-case on papers/videos); the Notes preset
+   * passes `content` so the dedicated editor writes to the row's
+   * primary markdown body instead of the secondary notes column. */
+  contentField?: string;
 }) {
   const [value, setValue] = useState(initial);
   const [saving, setSaving] = useState<'idle' | 'pending' | 'saved' | 'error'>('idle');
@@ -179,7 +185,7 @@ export function NotesPane({
       const r = await fetch(`/api/sections/${sectionSlug}/rows/${rowId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { notes: next } }),
+        body: JSON.stringify({ data: { [contentField]: next } }),
       });
       if (!r.ok) throw new Error(String(r.status));
       setSaving('saved');

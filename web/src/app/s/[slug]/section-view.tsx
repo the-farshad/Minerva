@@ -42,7 +42,7 @@ export function SectionView({
     ? (['list', 'grid'] as const)
     : (['list', 'grid', 'kanban', 'calendar'] as const);
   const [mode, setMode] = useState<'list' | 'grid' | 'kanban' | 'calendar'>('grid');
-  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; originalFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; notes?: string; data?: Record<string, unknown> } | null>(null);
+  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; originalFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; sectionPreset?: string | null; notes?: string; data?: Record<string, unknown> } | null>(null);
   const qc = useQueryClient();
 
   const search = useSearchParams();
@@ -59,7 +59,10 @@ export function SectionView({
 
   function openPreview(r: Row) {
     const url = String(r.data.url || '');
-    if (!url) return;
+    // Notes rows have no `url` — they ARE the content. Allow open
+    // regardless; the modal's notes-preset branch renders the
+    // markdown editor without needing an iframe target.
+    if (!url && section.preset !== 'notes') return;
     const offline = String(r.data.offline || '');
     const drive = offline.match(/drive:([\w-]{20,})/);
     const host = offline.split(' · ').map((s) => s.trim()).find((s) => s.startsWith('host:'));
@@ -71,6 +74,7 @@ export function SectionView({
       hostPath: host ? host.slice(5).trim() : undefined,
       rowId: r.id,
       sectionSlug: section.slug,
+      sectionPreset: section.preset,
       notes: String(r.data.notes || ''),
       data: r.data,
     });
