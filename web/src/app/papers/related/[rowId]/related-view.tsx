@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download, Calendar as CalIcon, FileText, BookOpen, ChevronDown, X } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download, Calendar as CalIcon, FileText, BookOpen, ChevronDown, X, List, GitBranch } from 'lucide-react';
+import { RelatedGraph } from './related-graph';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 
@@ -15,21 +16,6 @@ interface Paper {
   abstract?: string;
   openAccessPdf?: { url?: string };
   venue?: string;
-}
-
-/** Translate the seed paper's ref into the connectedpapers.com
- *  main-view URL. They accept DOI directly and arXiv IDs via the
- *  same /main/<id>/Lookup path. Returns null when we have nothing
- *  to send them. */
-function connectedPapersUrl(ref: string | null): string | null {
-  if (!ref) return null;
-  // ARXIV:2401.12345 → main/arxiv:2401.12345/Lookup
-  const arxivMatch = ref.match(/^ARXIV:(.+)$/i);
-  if (arxivMatch) return `https://www.connectedpapers.com/main/arxiv:${encodeURIComponent(arxivMatch[1])}/Lookup`;
-  // DOI:10.x/y → main/<doi>/Lookup
-  const doiMatch = ref.match(/^DOI:(.+)$/i);
-  if (doiMatch) return `https://www.connectedpapers.com/main/${encodeURIComponent(doiMatch[1])}/Lookup`;
-  return null;
 }
 
 /** Pick the best external URL for a paper — prefer the openAccess
@@ -62,6 +48,7 @@ export function RelatedView({
   const [adding, setAdding] = useState<Set<string>>(new Set());
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [view, setView] = useState<'list' | 'graph'>('list');
   // Filters apply on top of the search query. All client-side so
   // they're instant — the result set is small enough (≤ 50 from
   // either backend) that no server round-trip is needed.
@@ -208,30 +195,6 @@ export function RelatedView({
         </div>
       </header>
 
-      {/* Big CTA opening the Connected Papers 2D graph in a new
-        * tab. They send X-Frame-Options:SAMEORIGIN AND a CSP
-        * frame-ancestors:'self' so iframe-embedding is
-        * impossible no matter how much we want it. The button
-        * is a graceful substitute — still one click, still
-        * lands on the visualisation. */}
-      {connectedPapersUrl(seedRef) && (
-        <a
-          href={connectedPapersUrl(seedRef)!}
-          target="_blank"
-          rel="noopener"
-          className="mb-6 flex items-center gap-3 rounded-xl border border-zinc-200 bg-gradient-to-r from-blue-50 to-violet-50 px-4 py-3 transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:from-blue-950/40 dark:to-violet-950/40 dark:hover:border-zinc-700"
-        >
-          <Network className="h-8 w-8 shrink-0 text-blue-600 dark:text-blue-400" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold">Open Connected Papers graph</div>
-            <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-400">
-              View this paper's 2-D similarity graph on connectedpapers.com. Their site blocks
-              iframe embedding, so the visualisation opens in a new tab.
-            </div>
-          </div>
-          <ExternalLink className="h-4 w-4 shrink-0 text-zinc-400" />
-        </a>
-      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[12rem]">
@@ -254,6 +217,32 @@ export function RelatedView({
             ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Adding…</>
             : <><Download className="h-3.5 w-3.5" /> Add all {filtered.length ? `(${filtered.length})` : ''}</>}
         </button>
+        <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={() => setView('list')}
+            title="List view"
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+              view === 'list'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            <List className="h-3.5 w-3.5" /> List
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('graph')}
+            title="Force-directed graph view"
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+              view === 'graph'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            <GitBranch className="h-3.5 w-3.5" /> Graph
+          </button>
+        </div>
       </div>
 
       {/* Filter strip — chip-style pills that visibly carry their
@@ -395,7 +384,19 @@ export function RelatedView({
         </p>
       )}
 
-      <ul className="mt-2 space-y-2">
+      {view === 'graph' && papers && (
+        <RelatedGraph
+          seedTitle={seedTitle}
+          seedYear={seedYear}
+          seedAuthors={seedAuthors}
+          papers={filtered}
+          added={added}
+          adding={adding}
+          onAdd={addOne}
+        />
+      )}
+
+      <ul className={`mt-2 space-y-2 ${view === 'graph' ? 'hidden' : ''}`}>
         {filtered.map((p) => {
           const key = paperKey(p);
           const url = paperUrl(p);

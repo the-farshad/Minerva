@@ -18,6 +18,12 @@ export type RelatedPaper = {
   abstract?: string;
   openAccessPdf?: { url?: string };
   venue?: string;
+  /** Bare OpenAlex Work IDs this paper cites (e.g. ["W123", …]).
+   *  Used to compute bibliographic-coupling edges between
+   *  papers in the graph view. OpenAlex provides this for free;
+   *  Semantic Scholar would need a per-paper /references call so
+   *  the graph view degrades to hub-and-spoke when this is empty. */
+  referencedWorks?: string[];
 };
 
 export type RelatedResult =

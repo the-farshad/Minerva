@@ -59,6 +59,7 @@ type OAWork = {
   host_venue?: { display_name?: string | null } | null;
   primary_location?: { source?: { display_name?: string | null } | null } | null;
   related_works?: string[];
+  referenced_works?: string[];
 };
 
 function workToPaper(w: OAWork): RelatedPaper {
@@ -71,6 +72,9 @@ function workToPaper(w: OAWork): RelatedPaper {
   // it as externalIds.ArXiv when we can spot it.
   const arxivMatch = doi?.match(/^10\.48550\/arXiv\.(.+)$/i);
   const venue = w.primary_location?.source?.display_name || w.host_venue?.display_name || undefined;
+  // Strip the URL prefix off referenced work IDs so the client
+  // can compute set intersections with cheap string equality.
+  const refs = (w.referenced_works || []).map((u) => u.replace(/^https:\/\/openalex\.org\//, ''));
   return {
     paperId: (w.id || '').replace(/^https:\/\/openalex\.org\//, ''),
     externalIds: {
@@ -85,6 +89,7 @@ function workToPaper(w: OAWork): RelatedPaper {
     abstract: reconstructAbstract(w.abstract_inverted_index),
     openAccessPdf: w.open_access?.oa_url ? { url: w.open_access.oa_url } : undefined,
     venue,
+    referencedWorks: refs.length ? refs : undefined,
   };
 }
 
@@ -154,7 +159,7 @@ export async function fetchRelatedFromOpenAlex(opts: {
   // (≤ ~10) that one-per-id is cheaper than fighting the filter
   // syntax. Failed lookups (404, network) drop silently so a
   // single deindexed work doesn't sink the whole page.
-  const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,host_venue,primary_location';
+  const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,host_venue,primary_location,referenced_works';
   const lookups = related.map(async (u) => {
     const wid = u.replace(/^https:\/\/openalex\.org\//, '');
     try {
