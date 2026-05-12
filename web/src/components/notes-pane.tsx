@@ -203,7 +203,14 @@ export function NotesPane({
     }
   }
 
-  const paneWidth = fullWidth ? 'w-full flex-1' : (mode === 'split' ? 'w-[36rem]' : 'w-80');
+  // Mobile: take the whole modal so the textarea isn't squeezed
+  // into a 320px sidebar that obscures the iframe behind it.
+  // Desktop: keep the sidebar behaviour (320 / 576px depending on
+  // mode). `fullWidth` short-circuits everything for the Notes-
+  // preset use-case where the pane IS the editor.
+  const paneWidth = fullWidth
+    ? 'w-full flex-1'
+    : (mode === 'split' ? 'w-full sm:w-[36rem]' : 'w-full sm:w-80');
   const effType: NoteType = noteType ?? 'md';
   const showEditor = effType !== 'sketch' && (mode === 'edit' || mode === 'split' || effType === 'text');
   const showPreview = effType === 'md' && (mode === 'preview' || mode === 'split');

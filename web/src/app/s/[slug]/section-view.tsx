@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { naturalCompare, cn } from '@/lib/utils';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useServerEvents } from '@/hooks/use-server-events';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { PreviewModal } from '@/components/preview-modal';
@@ -58,6 +59,24 @@ export function SectionView({
   const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; originalFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; sectionPreset?: string | null; notes?: string; data?: Record<string, unknown> } | null>(null);
   const qc = useQueryClient();
   const router = useRouter();
+
+  // Server-pushed updates patch the local rows array directly so
+  // open modals, mid-edit drafts and scroll position aren't lost
+  // to a router.refresh(). Other-tab / other-device mutations
+  // propagate through this same path within ~1 RTT.
+  useServerEvents((event) => {
+    if (event.kind === 'row.created' && event.sectionSlug === section.slug) {
+      setRows((rs) => rs.some((x) => x.id === event.rowId)
+        ? rs
+        : [{ id: event.rowId, data: event.data, updatedAt: new Date().toISOString() }, ...rs]);
+    } else if (event.kind === 'row.updated' && event.sectionSlug === section.slug) {
+      setRows((rs) => rs.map((r) => r.id === event.rowId
+        ? { id: r.id, data: event.data, updatedAt: new Date().toISOString() }
+        : r));
+    } else if (event.kind === 'row.deleted' && event.sectionSlug === section.slug) {
+      setRows((rs) => rs.filter((r) => r.id !== event.rowId));
+    }
+  });
 
   const search = useSearchParams();
   // When a search hit deep-links into this section with `?row=<id>`,
@@ -555,13 +574,25 @@ function Table({
 }) {
   const headers = section.schema.headers.filter((h) => !h.startsWith('_') && h !== 'id');
   const types = headers.map((_, i) => parseType(section.schema.types?.[section.schema.headers.indexOf(headers[i])] || 'text'));
+  // Pick which columns to hide on narrow screens — title (or name)
+  // always wins, then the second column shows from sm:, the rest
+  // from md:. Without this every column scrolled horizontally
+  // simultaneously, which on a phone reads as a one-column row of
+  // truncated cells. The full table is still reachable via
+  // horizontal scroll for users who want every column.
+  const colVisibility = (idx: number, name: string): string =>
+    name === 'title' || name === 'name' || idx === 0
+      ? ''
+      : idx === 1
+        ? 'hidden sm:table-cell'
+        : 'hidden md:table-cell';
   return (
     <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
       <table className="min-w-full text-sm">
         <thead className="bg-zinc-100 text-left text-xs uppercase tracking-wider text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
           <tr>
-            {headers.map((h) => (
-              <th key={h} className="px-3 py-2 font-medium">{h}</th>
+            {headers.map((h, i) => (
+              <th key={h} className={`px-3 py-2 font-medium ${colVisibility(i, h)}`}>{h}</th>
             ))}
             <th className="w-10 px-2 py-2"></th>
           </tr>
@@ -570,7 +601,7 @@ function Table({
           {rows.map((r) => (
             <tr key={r.id} className="border-t border-zinc-100 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900">
               {headers.map((h, i) => (
-                <td key={h} className="px-2 py-1 align-top">
+                <td key={h} className={`px-2 py-1 align-top ${colVisibility(i, h)}`}>
                   {h === 'url' ? (
                     <div className="flex items-center gap-1">
                       <button

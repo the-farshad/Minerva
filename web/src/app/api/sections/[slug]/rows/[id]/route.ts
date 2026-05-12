@@ -3,6 +3,7 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { deleteDriveFile } from '@/lib/drive';
+import { bus } from '@/lib/event-bus';
 
 async function loadSectionAndRow(userId: string, slug: string, id: string) {
   const section = await db.query.sections.findFirst({
@@ -36,6 +37,12 @@ export async function PATCH(
     .set({ data: merged, updatedAt: new Date() })
     .where(eq(schema.rows.id, id))
     .returning();
+  bus.emit(userId, {
+    kind: 'row.updated',
+    sectionSlug: slug,
+    rowId: updated.id,
+    data: updated.data as Record<string, unknown>,
+  });
   return NextResponse.json({
     id: updated.id,
     data: updated.data,
@@ -65,5 +72,6 @@ export async function DELETE(
   await db.update(schema.rows)
     .set({ deleted: true, updatedAt: new Date() })
     .where(eq(schema.rows.id, id));
+  bus.emit(userId, { kind: 'row.deleted', sectionSlug: slug, rowId: id });
   return NextResponse.json({ ok: true, driveDeleted: driveIds.length });
 }

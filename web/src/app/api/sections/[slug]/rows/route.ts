@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and, asc } from 'drizzle-orm';
+import { bus } from '@/lib/event-bus';
 
 async function loadSection(userId: string, slug: string) {
   return db.query.sections.findFirst({
@@ -58,6 +59,12 @@ export async function POST(
     sectionId: sec.id,
     data,
   }).returning();
+  bus.emit(userId, {
+    kind: 'row.created',
+    sectionSlug: slug,
+    rowId: inserted.id,
+    data: inserted.data as Record<string, unknown>,
+  });
   return NextResponse.json({
     id: inserted.id,
     data: inserted.data,
