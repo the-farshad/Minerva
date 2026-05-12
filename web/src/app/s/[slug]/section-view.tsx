@@ -481,6 +481,7 @@ export function SectionView({
           {section.preset === 'notes' ? (
             <AddNote
               section={section}
+              rows={rows}
               onAdded={(row) => setRows((rs) => rs.some((x) => x.id === row.id) ? rs : [row, ...rs])}
             />
           ) : (

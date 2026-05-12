@@ -87,23 +87,46 @@ export function SketchModal({
     const ro = new ResizeObserver(() => sync());
     ro.observe(wrap);
     window.addEventListener('resize', sync);
+    let blobUrl: string | null = null;
     if (seed) {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => { bgImageRef.current = img; redraw(); force((n) => n + 1); };
-      img.onerror = () => {
-        // Seed image failed to load (CORS, 404, etc.) — leave a
-        // blank canvas instead of stranding the user with a stuck
-        // loading state. They can still draw fresh strokes and
-        // save them as a new sketch.
-        bgImageRef.current = null;
-        force((n) => n + 1);
+      // Drive URLs (/api/drive/file?id=...) sometimes 302 to
+      // googleusercontent.com which doesn't honour our Origin
+      // header on a cross-origin Image load — the canvas then
+      // becomes "tainted" and toBlob() returns null on Save, so
+      // the next Save silently fails. Fetch the bytes through
+      // our same-origin /api proxy and hand the image element a
+      // Blob URL: the canvas stays clean and export works.
+      const useBlobLoad = seed.startsWith('/');
+      const loadVia = async () => {
+        if (useBlobLoad) {
+          const r = await fetch(seed);
+          if (!r.ok) throw new Error(`seed: ${r.status}`);
+          const blob = await r.blob();
+          return URL.createObjectURL(blob);
+        }
+        return seed;
       };
-      img.src = seed;
+      (async () => {
+        try {
+          const src = await loadVia();
+          if (useBlobLoad) blobUrl = src;
+          const img = new Image();
+          img.onload = () => { bgImageRef.current = img; redraw(); force((n) => n + 1); };
+          img.onerror = () => {
+            bgImageRef.current = null;
+            force((n) => n + 1);
+          };
+          img.src = src;
+        } catch {
+          bgImageRef.current = null;
+          force((n) => n + 1);
+        }
+      })();
     }
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', sync);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed]);
@@ -152,15 +175,47 @@ export function SketchModal({
       ctx.restore();
       return;
     }
-    for (let i = 1; i < s.points.length; i++) {
-      const a = s.points[i - 1];
-      const b = s.points[i];
+    if (s.points.length === 2) {
+      const [a, b] = s.points;
+      ctx.lineWidth = (a.w + b.w) / 2;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
-      ctx.lineWidth = (a.w + b.w) / 2;
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    // Quadratic-curve smoothing through midpoints — the same
+    // technique iOS Notes uses for clean pen ink. Each
+    // pair of consecutive samples becomes a Bezier segment with
+    // the original sample as the control point, so the strokes
+    // read as smooth curves rather than jagged polyline.
+    // Width is interpolated per-segment to preserve pen pressure
+    // variation without exploding the path count.
+    const pts = s.points;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const prev = pts[i - 1];
+      const cur = pts[i];
+      const next = pts[i + 1];
+      const startX = (prev.x + cur.x) / 2;
+      const startY = (prev.y + cur.y) / 2;
+      const endX = (cur.x + next.x) / 2;
+      const endY = (cur.y + next.y) / 2;
+      ctx.lineWidth = (prev.w + cur.w + next.w) / 3;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.quadraticCurveTo(cur.x, cur.y, endX, endY);
       ctx.stroke();
     }
+    // Tail segment from last midpoint to last point so the stroke
+    // ends where the user actually lifted the pen.
+    const second = pts[pts.length - 2];
+    const last = pts[pts.length - 1];
+    ctx.lineWidth = (second.w + last.w) / 2;
+    ctx.beginPath();
+    ctx.moveTo((second.x + last.x) / 2, (second.y + last.y) / 2);
+    ctx.lineTo(last.x, last.y);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -406,7 +461,7 @@ export function SketchModal({
     <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[55] bg-black/60 backdrop-blur-sm" />
-        <Dialog.Content className="fixed inset-2 z-[55] flex flex-col rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+        <Dialog.Content className="fixed inset-0 z-[55] flex flex-col border-0 bg-white shadow-xl dark:bg-zinc-950 sm:inset-2 sm:rounded-xl sm:border sm:border-zinc-200 sm:dark:border-zinc-800">
           <header className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
             <Dialog.Title className="text-sm font-medium">Sketch</Dialog.Title>
             <div className="ml-3 inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
