@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -871,6 +872,16 @@ function CardActions({
               >
                 <Info className="h-3.5 w-3.5" /> Info
               </DropdownMenu.Item>
+              {section.preset === 'papers' && (
+                <DropdownMenu.Item asChild>
+                  <Link
+                    href={`/papers/related/${row.id}`}
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <Network className="h-3.5 w-3.5" /> Related papers
+                  </Link>
+                </DropdownMenu.Item>
+              )}
               {isOffliable && (
                 <DropdownMenu.Item
                   onSelect={(e) => { e.preventDefault(); void saveOffline(); }}

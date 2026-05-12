@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote, RefreshCw, FileText, BookOpen } from 'lucide-react';
+import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote, RefreshCw, FileText, BookOpen, Network } from 'lucide-react';
 import { appConfirm } from './confirm';
 import { CITATION_FORMATS } from '@/lib/citations';
 import { PaperReader } from './paper-reader';
@@ -621,6 +621,15 @@ export function PreviewModal({
             >
               <ExternalLink className="h-4 w-4" />
             </a>
+            {view.sectionPreset === 'papers' && view.rowId && (
+              <a
+                href={`/papers/related/${view.rowId}`}
+                title="Find related papers"
+                className="rounded-full p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <Network className="h-4 w-4" />
+              </a>
+            )}
             {hostSrc && (
               <a
                 href={hostSrc}
