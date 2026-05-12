@@ -77,6 +77,12 @@ export function NotesPane({
     if (!list.length) return;
     setUploading(true);
     try {
+      // For a single file, splice at the textarea caret (the natural
+      // place a user expects an attachment to land). For multiple
+      // files in one drop, the splice closure would capture stale
+      // `value` between iterations and only the LAST upload would
+      // survive — so we accumulate snippets locally and apply once.
+      const snippets: string[] = [];
       for (const file of list) {
         const fd = new FormData();
         fd.append('file', file, file.name);
@@ -87,8 +93,20 @@ export function NotesPane({
         if (!r.ok || !j.fileId) throw new Error(j.error || `upload: ${r.status}`);
         const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
         const isImage = /^image\//i.test(file.type);
-        const snippet = isImage ? `![${file.name}](${url})\n` : `[${file.name}](${url})\n`;
-        spliceAtCaret(snippet);
+        snippets.push(isImage ? `![${file.name}](${url})\n` : `[${file.name}](${url})\n`);
+      }
+      if (list.length === 1) {
+        spliceAtCaret(snippets[0]);
+      } else {
+        // Append the batch in order. Use the functional update form
+        // implicitly via schedule(value+block) — value here is the
+        // current state at the END of the synchronous handler, which
+        // is stable because no React render has interleaved with the
+        // awaits above (the textarea has been blurred by the file
+        // picker / drop, so onChange can't have fired).
+        const block = snippets.join('');
+        const next = !value || value.endsWith('\n') ? value + block : value + '\n' + block;
+        schedule(next);
       }
       toast.success(list.length === 1 ? 'File attached.' : `${list.length} files attached.`);
     } catch (e) {
