@@ -18,7 +18,11 @@ import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { getServerPref } from '@/lib/server-prefs';
 
-const YT_VIDEO_RE = /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/;
+// Scope to actual YouTube hostnames — the previous bare `v=...{11}`
+// pattern matched ANY URL with a `v=` query param (e.g. a publisher
+// download link carrying `?v=abcdef...`), making Refresh wrongly
+// dispatch to the YouTube branch on papers.
+const YT_VIDEO_RE = /(?:youtube\.com\/(?:watch\?(?:[^&]*&)*v=|shorts\/|embed\/|live\/)|youtu\.be\/|youtube-nocookie\.com\/embed\/)([A-Za-z0-9_-]{11})/i;
 const YT_PLAYLIST_RE = /[?&]list=([A-Za-z0-9_-]+)/;
 const ARXIV_RE = /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]+(?:v\d+)?|[a-z\-]+\/\d+)/i;
 const DOI_RE = /^10\.[0-9]{4,9}\/\S+$/;
