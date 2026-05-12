@@ -81,11 +81,19 @@ jobs:
              git pull --rebase
              cd docs
              # Pull any newer minerva-web image that web-publish
-             # just pushed to Docker Hub. No-op when the SHA is
-             # already local (web-publish didn't run for this
-             # commit, e.g. an assets-only push).
+             # just pushed to Docker Hub. Capture the local image
+             # digest before+after so we can tell whether we
+             # actually need to recreate the container.
+             before=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
              docker compose pull minerva-web || true
+             after=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
              docker compose build minerva-services
+             if [ \"\$before\" != \"\$after\" ]; then
+               echo \"web image changed: \$before -> \$after — force-recreating\"
+               docker compose up -d --force-recreate --no-deps minerva-web
+             fi
+             # Bring up everything else (services / postgres / etc.)
+             # in idempotent mode — no-op when nothing changed.
              docker compose up -d
              sleep 6
              curl -sS http://127.0.0.1:8765/health | head -c 200"
