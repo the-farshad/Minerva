@@ -131,6 +131,28 @@ export function SketchModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed]);
 
+  // iPad Safari occasionally drops the first PointerDown for
+  // Apple Pencil unless a native non-passive touchstart listener
+  // on the same element calls preventDefault. React's synthetic
+  // onPointerDown listener registers as passive by default which
+  // is too late to suppress the default touch handling. Wire a
+  // direct addEventListener with passive:false alongside the
+  // React handler — they coexist fine; the React one still
+  // updates state, the native one just blocks the browser from
+  // intercepting the gesture.
+  useEffect(() => {
+    if (!open) return;
+    const c = canvasRef.current;
+    if (!c) return;
+    const block = (e: TouchEvent) => { e.preventDefault(); };
+    c.addEventListener('touchstart', block, { passive: false });
+    c.addEventListener('touchmove', block, { passive: false });
+    return () => {
+      c.removeEventListener('touchstart', block);
+      c.removeEventListener('touchmove', block);
+    };
+  }, [open]);
+
   function redraw() {
     const c = canvasRef.current;
     if (!c) return;
@@ -583,8 +605,20 @@ export function SketchModal({
               // prematurely commit the in-progress stroke when
               // the pen briefly crosses the toolbar / drifts to
               // the edge.
-              className="block h-full w-full touch-none"
-              style={{ cursor: tool === 'eraser' ? 'cell' : 'crosshair' }}
+              className="block h-full w-full"
+              style={{
+                cursor: tool === 'eraser' ? 'cell' : 'crosshair',
+                // Inline touch-action wins over any cascade —
+                // iPad Safari needs `none` to deliver continuous
+                // pointer events instead of scrolling the page
+                // out from under the stroke.
+                touchAction: 'none',
+                // Belt-and-suspenders against the Pencil callout
+                // bubble that iPad sometimes pops when the user
+                // long-presses on a canvas thinking it's text.
+                WebkitUserSelect: 'none',
+                WebkitTouchCallout: 'none',
+              }}
             />
           </div>
         </Dialog.Content>
