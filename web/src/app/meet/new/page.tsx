@@ -19,6 +19,7 @@ export default function NewPollPage() {
   const [fromHour, setFromHour] = useState(9);
   const [toHour, setToHour] = useState(17);
   const [slotMin, setSlotMin] = useState(30);
+  const [location, setLocation] = useState('');
   const [saving, setSaving] = useState(false);
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -40,6 +41,7 @@ export default function NewPollPage() {
           title,
           days,
           slots: { fromHour, toHour, slotMin, tz },
+          location,
         }),
       });
       const j = (await r2.json().catch(() => ({}))) as { token?: string; error?: string };
@@ -143,6 +145,18 @@ export default function NewPollPage() {
       <p className="mt-3 text-[11px] text-zinc-500">
         Timezone <span className="font-mono">{tz}</span> — participants pick from this grid in your local time.
       </p>
+
+      <label className="mt-5 block">
+        <div className="text-xs text-zinc-500">Location / platform link <span className="text-zinc-400">(optional)</span></div>
+        <input
+          type="text"
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          placeholder="Zoom URL · Google Meet link · physical address · TBD"
+          className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <div className="mt-1 text-[10px] text-zinc-500">Shown verbatim to every participant — paste a URL, address, or whatever they need to plan around.</div>
+      </label>
 
       <div className="mt-6 flex justify-end gap-2">
         <button

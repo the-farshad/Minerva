@@ -25,6 +25,10 @@ export type Poll = {
   days: string[];      // ISO date strings, e.g. "2026-06-12"
   slots: PollSlots;
   closesAt: string | null;
+  /** Free-text — Zoom URL, Meet URL, address, "TBD", … */
+  location: string;
+  /** "<dayIdx>:<slotIdx>" once the organizer locks in a final slot. */
+  finalSlot: string | null;
 };
 
 export type PollResponse = {

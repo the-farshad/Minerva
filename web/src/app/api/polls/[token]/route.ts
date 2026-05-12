@@ -34,6 +34,8 @@ export async function GET(
       days: poll.days,
       slots: poll.slots,
       closesAt: poll.closesAt?.toISOString() ?? null,
+      location: poll.location || '',
+      finalSlot: poll.finalSlot || null,
     },
     responses: responses.map((r) => ({
       id: r.id,
@@ -80,6 +82,59 @@ export async function POST(
     bits: inserted.bits,
     note: inserted.note,
     createdAt: inserted.createdAt.toISOString(),
+  });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ token: string }> },
+) {
+  const session = await auth();
+  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const userId = (session.user as { id: string }).id;
+  const { token } = await ctx.params;
+  const poll = await loadByToken(token);
+  if (!poll) return NextResponse.json({ error: 'Poll not found.' }, { status: 404 });
+  if (poll.userId !== userId) return NextResponse.json({ error: 'Not your poll.' }, { status: 403 });
+
+  const body = (await req.json().catch(() => ({}))) as {
+    location?: string;
+    finalSlot?: string | null;
+    closesAt?: string | null;
+  };
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (typeof body.location === 'string') patch.location = body.location.slice(0, 500);
+  if (body.finalSlot === null || typeof body.finalSlot === 'string') {
+    // Validate "<dayIdx>:<slotIdx>" against the poll's grid so we
+    // can't end up with a final slot that doesn't exist.
+    if (body.finalSlot && body.finalSlot.length > 0) {
+      const m = /^(\d+):(\d+)$/.exec(body.finalSlot);
+      if (!m) return NextResponse.json({ error: 'finalSlot must be "<dayIdx>:<slotIdx>".' }, { status: 400 });
+      const dayIdx = Number(m[1]);
+      const slotIdx = Number(m[2]);
+      const slots = poll.slots as { fromHour: number; toHour: number; slotMin: number };
+      const perDay = Math.floor((slots.toHour - slots.fromHour) * 60 / slots.slotMin);
+      const days = poll.days as string[];
+      if (dayIdx < 0 || dayIdx >= days.length || slotIdx < 0 || slotIdx >= perDay) {
+        return NextResponse.json({ error: 'finalSlot out of range.' }, { status: 400 });
+      }
+    }
+    patch.finalSlot = body.finalSlot;
+  }
+  if (body.closesAt !== undefined) patch.closesAt = body.closesAt ? new Date(body.closesAt) : null;
+
+  const [updated] = await db.update(schema.polls)
+    .set(patch)
+    .where(eq(schema.polls.id, poll.id))
+    .returning();
+  return NextResponse.json({
+    token: updated.token,
+    title: updated.title,
+    days: updated.days,
+    slots: updated.slots,
+    closesAt: updated.closesAt?.toISOString() ?? null,
+    location: updated.location || '',
+    finalSlot: updated.finalSlot || null,
   });
 }
 

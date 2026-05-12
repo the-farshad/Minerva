@@ -18,6 +18,22 @@ export type SectionPreset = {
 
 export const PRESETS: SectionPreset[] = [
   {
+    slug: 'notes',
+    title: 'Notes',
+    icon: 'book-open',
+    preset: 'notes',
+    defaultSort: 'created:desc',
+    schema: {
+      headers: ['id', 'title', 'category', 'tags', 'content', 'attachments', 'created', '_updated'],
+      types: [
+        'text', 'text',
+        'multiselect()',
+        'multiselect()',
+        'markdown', 'longtext', 'datetime', 'datetime',
+      ],
+    },
+  },
+  {
     slug: 'tasks',
     title: 'Tasks',
     icon: 'check-square',

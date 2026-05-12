@@ -160,6 +160,15 @@ export const polls = pgTable('polls', {
   slots: jsonb('slots').notNull(),
   /** When responses should stop being accepted (null = open-ended). */
   closesAt: timestamp('closesAt'),
+  /** Where the meeting will happen — Zoom link, Google Meet URL,
+   * physical address, "TBD", whatever. Shown verbatim to
+   * participants so they can plan; not parsed. */
+  location: text('location').default('').notNull(),
+  /** Once the organizer picks a winning slot from the heat-map,
+   * store it as "dayIdx:slotIdx" so the participant view can
+   * highlight the final answer prominently. Null while the poll
+   * is still open for input. */
+  finalSlot: text('finalSlot'),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
   updatedAt: timestamp('updatedAt').defaultNow().notNull(),
 }, (t) => ({

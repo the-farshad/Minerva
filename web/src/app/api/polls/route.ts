@@ -25,6 +25,8 @@ export async function GET() {
       days: p.days,
       slots: p.slots,
       closesAt: p.closesAt?.toISOString() ?? null,
+      location: p.location || '',
+      finalSlot: p.finalSlot || null,
       createdAt: p.createdAt.toISOString(),
     })),
   });
@@ -40,6 +42,7 @@ export async function POST(req: NextRequest) {
     days?: string[];
     slots?: unknown;
     closesAt?: string | null;
+    location?: string;
   };
   const title = String(body.title || '').trim();
   if (!title) return NextResponse.json({ error: 'Title is required.' }, { status: 400 });
@@ -61,9 +64,10 @@ export async function POST(req: NextRequest) {
   }
   const closesAt = body.closesAt ? new Date(body.closesAt) : null;
 
+  const location = String(body.location || '').slice(0, 500);
   const token = newPollToken();
   const [inserted] = await db.insert(schema.polls).values({
-    token, userId, title, days, slots, closesAt,
+    token, userId, title, days, slots, closesAt, location,
   }).returning();
 
   return NextResponse.json({
@@ -72,5 +76,7 @@ export async function POST(req: NextRequest) {
     days: inserted.days,
     slots: inserted.slots,
     closesAt: inserted.closesAt?.toISOString() ?? null,
+    location: inserted.location,
+    finalSlot: inserted.finalSlot,
   });
 }

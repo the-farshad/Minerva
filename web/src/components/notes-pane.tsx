@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Paperclip, Pencil, Download, FilePlus } from 'lucide-react';
+import { Paperclip, Pencil, Download, FilePlus, Printer } from 'lucide-react';
+import { renderMarkdown } from '@/lib/markdown';
 import { appPrompt } from './prompt';
 import { notify } from '@/lib/notify';
 import { NotesPreview } from './notes-preview';
@@ -272,6 +273,51 @@ export function NotesPane({
             className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
             <Download className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!value.trim()) {
+                toast.info('Nothing to print — write something first.');
+                return;
+              }
+              // Open a clean popup window with the rendered markdown
+              // and trigger window.print. The user picks "Save as PDF"
+              // in the browser's print dialog — works on iOS, Mac,
+              // Windows, Linux without any JS dep.
+              const html = renderMarkdown(value);
+              const popup = window.open('', '_blank', 'width=840,height=900');
+              if (!popup) {
+                toast.error('Pop-up blocked — allow pop-ups for Minerva to print notes.');
+                return;
+              }
+              popup.document.write(`<!doctype html>
+<html><head>
+<meta charset="utf-8" />
+<title>Note · ${rowId.slice(0, 8)}</title>
+<style>
+  body { font: 14px/1.6 Georgia, serif; max-width: 720px; margin: 2rem auto; padding: 0 1.5rem; color: #1f1f1f; }
+  h1, h2, h3, h4 { font-family: -apple-system, system-ui, sans-serif; line-height: 1.25; }
+  pre, code { font-family: ui-monospace, "JetBrains Mono", monospace; }
+  pre { background: #f4f4f5; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 12px; }
+  code { background: #f4f4f5; padding: 0 .25rem; border-radius: 3px; }
+  blockquote { border-left: 3px solid #d4d4d8; margin: 1rem 0; padding-left: 1rem; color: #52525b; font-style: italic; }
+  img { max-width: 100%; height: auto; }
+  a { color: #1d4ed8; }
+  hr { border: 0; border-top: 1px solid #e4e4e7; margin: 2rem 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #e4e4e7; padding: .35rem .6rem; text-align: left; }
+  @media print { body { margin: 1rem; } }
+</style>
+</head><body>${html}</body></html>`);
+              popup.document.close();
+              popup.focus();
+              setTimeout(() => popup.print(), 300);
+            }}
+            title="Open the rendered notes in a printable view — pick 'Save as PDF' in the print dialog"
+            className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <Printer className="h-3.5 w-3.5" />
           </button>
           <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
             {(['edit', 'split', 'preview'] as const).map((m) => (

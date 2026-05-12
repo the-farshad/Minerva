@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState, use } from 'react';
-import { Loader2, Copy, Send, Calendar } from 'lucide-react';
+import { Loader2, Copy, Send, Calendar, MapPin, CheckCircle2, Pencil } from 'lucide-react';
+import { appPrompt } from '@/components/prompt';
+import { appConfirm } from '@/components/confirm';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { slotLabel, slotsPerDay, type Poll, type PollResponse, type PollSlots } from '@/lib/poll';
@@ -108,6 +110,54 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
   const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}/meet/${poll.token}` : '';
   const maxYes = consensus.length ? Math.max(...consensus) : 0;
 
+  // Final slot — set by the organizer via the Finalize button. We
+  // parse it to surface a "Confirmed" banner at the top.
+  const finalSlotMatch = poll.finalSlot ? /^(\d+):(\d+)$/.exec(poll.finalSlot) : null;
+  const finalDay = finalSlotMatch ? Number(finalSlotMatch[1]) : -1;
+  const finalSlotIdx = finalSlotMatch ? Number(finalSlotMatch[2]) : -1;
+
+  async function patchPoll(patch: Record<string, unknown>) {
+    try {
+      const r = await fetch(`/api/polls/${encodeURIComponent(token)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(j.error || `patch: ${r.status}`);
+      await load();
+    } catch (e) {
+      notify.error((e as Error).message);
+    }
+  }
+  async function finalize(dayIdx: number, slotIdx: number) {
+    if (!poll) return;
+    const dayLabel = new Date(poll.days[dayIdx]).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const ok = await appConfirm(`Lock in ${dayLabel} at ${slotLabel(slots, slotIdx)}?`, {
+      body: 'Everyone with the share link will see this as the confirmed slot. You can change it later via the same button.',
+    });
+    if (!ok) return;
+    await patchPoll({ finalSlot: `${dayIdx}:${slotIdx}` });
+    toast.success('Slot finalized.');
+  }
+  async function clearFinal() {
+    const ok = await appConfirm('Clear the finalized slot?', { body: 'The poll goes back to gathering responses.' });
+    if (!ok) return;
+    await patchPoll({ finalSlot: null });
+    toast.success('Final slot cleared.');
+  }
+  async function editLocation() {
+    if (!poll) return;
+    const next = await appPrompt('Meeting location', {
+      okLabel: 'Save',
+      initial: poll.location || '',
+      placeholder: 'Zoom URL · Meet link · address · TBD',
+    });
+    if (next == null) return;
+    await patchPoll({ location: next });
+    toast.success('Location updated.');
+  }
+
   return (
     <main className="mx-auto max-w-5xl px-4 py-6">
       <header className="mb-4 flex flex-wrap items-center gap-3">
@@ -122,6 +172,45 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
           <Copy className="h-3.5 w-3.5" /> Copy share link
         </button>
       </header>
+
+      {finalSlotMatch && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <strong>Confirmed:</strong>
+          <span>
+            {new Date(poll.days[finalDay]).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} at {slotLabel(slots, finalSlotIdx)} ({slots.tz})
+          </span>
+          <button
+            type="button"
+            onClick={clearFinal}
+            className="ml-auto rounded-full p-1 text-xs hover:bg-emerald-100 dark:hover:bg-emerald-900"
+            title="Clear (back to gathering responses)"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
+      <div className="mb-4 flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+        <MapPin className="h-4 w-4 shrink-0 text-zinc-500" />
+        {poll.location ? (
+          /^https?:\/\//i.test(poll.location) ? (
+            <a href={poll.location} target="_blank" rel="noopener" className="break-all text-blue-600 underline dark:text-blue-400">{poll.location}</a>
+          ) : (
+            <span className="break-all">{poll.location}</span>
+          )
+        ) : (
+          <span className="text-zinc-500">No location set yet.</span>
+        )}
+        <button
+          type="button"
+          onClick={editLocation}
+          className="ml-auto rounded-full p-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          title="Edit location (organizer only — requires sign-in)"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      </div>
 
       <div className="overflow-x-auto">
         <table className="text-xs">
@@ -148,9 +237,15 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
                     <td key={dayIdx} className="px-0.5 py-0.5">
                       <button
                         type="button"
-                        onClick={() => setCells((arr) => { const c2 = arr.slice(); c2[i] = cellNext(arr[i] as Cell); return c2; })}
-                        className={`w-full rounded ${cellClass(c)} px-2 py-1.5 transition`}
-                        title={`Cell ${slotLabel(slots, slotIdx)} · ${cons} ${cons === 1 ? 'person' : 'people'} available`}
+                        onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey) {
+                            void finalize(dayIdx, slotIdx);
+                          } else {
+                            setCells((arr) => { const c2 = arr.slice(); c2[i] = cellNext(arr[i] as Cell); return c2; });
+                          }
+                        }}
+                        className={`relative w-full rounded ${cellClass(c)} px-2 py-1.5 transition ${finalDay === dayIdx && finalSlotIdx === slotIdx ? 'ring-2 ring-emerald-600' : ''}`}
+                        title={`Cell ${slotLabel(slots, slotIdx)} · ${cons} ${cons === 1 ? 'person' : 'people'} available · ⌘/Ctrl-click to finalize`}
                         style={c === '0' && heat > 0 ? { backgroundColor: `rgba(16, 185, 129, ${0.15 + heat * 0.55})` } : {}}
                       >
                         {c === '1' ? '✓' : c === '?' ? '?' : ''}
@@ -168,7 +263,29 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
         Click a cell to cycle: <span className="inline-block rounded bg-zinc-200 px-1 dark:bg-zinc-800">empty</span>
         {' '}→ <span className="inline-block rounded bg-emerald-500 px-1 text-white">✓</span>
         {' '}→ <span className="inline-block rounded bg-amber-300 px-1 text-amber-900">?</span>. Background heat shows how many others picked each cell.
+        Organizer: <kbd className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">⌘/Ctrl-click</kbd> any cell to lock it in as the final slot.
       </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            if (!consensus.length) return;
+            let bestIdx = 0;
+            let best = consensus[0];
+            for (let i = 1; i < consensus.length; i++) {
+              if (consensus[i] > best) { best = consensus[i]; bestIdx = i; }
+            }
+            if (best <= 0) {
+              notify.error('No responses yet — nothing to pick from.');
+              return;
+            }
+            void finalize(Math.floor(bestIdx / perDay), bestIdx % perDay);
+          }}
+          className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-900"
+        >
+          <CheckCircle2 className="h-3.5 w-3.5" /> Finalize top consensus
+        </button>
+      </div>
 
       <section className="mt-6 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="text-sm font-medium">Submit your availability</h2>
