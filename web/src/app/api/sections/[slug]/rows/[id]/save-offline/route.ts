@@ -130,10 +130,10 @@ async function saveOffline(
     if (!r.ok) {
       const txt = await r.text().catch(() => '');
       let friendly: string;
-      if (/Sign in to confirm you'?re not a bot/i.test(txt)) {
+      if (/Sign in to confirm (?:you[''’’]?re|youre) not a bot/i.test(txt)) {
         friendly = /no cookies file found/i.test(txt)
-          ? "YouTube blocked this download (bot check). The helper has no cookies — mount /srv/cookies.txt on the droplet, or set MINERVA_BROWSER_PROFILE to a logged-in profile."
-          : "YouTube blocked this download (bot check). The mounted cookies look stale OR this video is hard-walled even for signed-in users — re-export youtube.com cookies from a logged-in browser, replace cookies.txt, and retry.";
+          ? "YouTube blocked this download (bot check). The droplet has no cookies — go to Settings → Integrations → YouTube cookies (yt-dlp) and upload a cookies.txt exported from a logged-in browser."
+          : "YouTube blocked this download. yt-dlp tried all five player clients and the Piped fallback instances also refused. Fix: in YOUR browser (signed in to YouTube), use the \"Get cookies.txt LOCALLY\" extension to export youtube.com cookies, then Settings → Integrations → YouTube cookies (yt-dlp) → Upload cookies.txt.";
       } else if (/age[- ]?restrict|age[- ]?confirm/i.test(txt)) {
         friendly = "YouTube says this video is age-restricted. Cookies from a signed-in, age-confirmed account are required.";
       } else if (/Private video|This video is private/i.test(txt)) {
