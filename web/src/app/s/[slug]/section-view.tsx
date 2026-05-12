@@ -38,9 +38,15 @@ export function SectionView({
   // needs a due-date column they don't carry. Everything else gets
   // the full set.
   const isUrlKeyed = section.preset === 'youtube' || section.preset === 'papers';
-  const availableModes = isUrlKeyed
-    ? (['list', 'grid'] as const)
-    : (['list', 'grid', 'kanban', 'calendar'] as const);
+  // Curated per-preset — Tasks is Kanban-only by design, Notes
+  // gets Kanban + Calendar (and the default Grid for browsing
+  // freeform notes), media presets stick to List + Grid because
+  // their rows aren't really board-shaped.
+  const availableModes: readonly ('list' | 'grid' | 'kanban' | 'calendar')[] =
+    section.preset === 'tasks'   ? (['kanban'] as const) :
+    section.preset === 'notes'   ? (['grid', 'kanban', 'calendar'] as const) :
+    isUrlKeyed                   ? (['list', 'grid'] as const) :
+                                   (['list', 'grid', 'kanban', 'calendar'] as const);
   // Preset-aware default view mode. Tasks naturally read as a
   // Kanban board (drag-between-columns by status), so opening a
   // /s/tasks section to the same grey grid every other preset uses
@@ -95,6 +101,23 @@ export function SectionView({
     if (!r.ok) throw new Error(`save: ${r.status}`);
     const next = (await r.json()) as Row;
     setRows((rs) => rs.map((x) => (x.id === rowId ? next : x)));
+  }
+  async function createRow(data: Record<string, unknown>): Promise<Row | null> {
+    try {
+      const r = await fetch(`/api/sections/${section.slug}/rows`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data }),
+      });
+      if (!r.ok) throw new Error(`add: ${r.status}`);
+      const next = (await r.json()) as Row;
+      setRows((rs) => [next, ...rs]);
+      qc.invalidateQueries({ queryKey: ['rows', section.slug] });
+      return next;
+    } catch (e) {
+      notify.error((e as Error).message);
+      return null;
+    }
   }
   async function deleteRow(rowId: string) {
     if (!(await appConfirm('Delete this row?', { dangerLabel: 'Delete' }))) return;
@@ -269,7 +292,7 @@ export function SectionView({
         const eff = (availableModes as readonly string[]).includes(mode) ? mode : 'grid';
         if (eff === 'list')     return <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />;
         if (eff === 'grid')     return <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onRowUpdated={(row) => setRows((rs) => rs.map((x) => (x.id === row.id ? row : x)))} />;
-        if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} />;
+        if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} onCreate={createRow} />;
         return <CalendarView section={section} rows={sorted} onOpen={openPreview} />;
       })()}
       <PreviewModal
