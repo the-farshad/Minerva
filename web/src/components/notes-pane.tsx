@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Paperclip, Pencil, Download } from 'lucide-react';
+import { Paperclip, Pencil, Download, FilePlus } from 'lucide-react';
+import { appPrompt } from './prompt';
 import { notify } from '@/lib/notify';
 import { NotesPreview } from './notes-preview';
 import { SketchModal } from './sketch-modal';
@@ -42,6 +43,11 @@ export function NotesPane({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [uploading, setUploading] = useState(false);
   const [sketchOpen, setSketchOpen] = useState(false);
+  // Counted depth so re-entering a child element doesn't clear
+  // the drag-over highlight (dragenter fires on every nested
+  // node we cross; dragleave fires the same way going out).
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
 
   /** Splice a markdown snippet into the textarea at the caret. */
   function spliceAtCaret(snippet: string) {
@@ -93,10 +99,28 @@ export function NotesPane({
     }
   }
 
-  function onDrop(e: React.DragEvent<HTMLDivElement>) {
-    if (!e.dataTransfer.files.length) return;
+  function onDrop(e: React.DragEvent<HTMLElement>) {
     e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (!e.dataTransfer.files?.length) return;
     void uploadFiles(e.dataTransfer.files);
+  }
+  function onDragEnter(e: React.DragEvent<HTMLElement>) {
+    // Only react to drags that actually carry files — text/HTML
+    // selections from the page itself shouldn't paint the drop
+    // target.
+    const types = e.dataTransfer?.types;
+    if (!types || !Array.from(types).includes('Files')) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    if (!dragging) setDragging(true);
+  }
+  function onDragLeave(e: React.DragEvent<HTMLElement>) {
+    const types = e.dataTransfer?.types;
+    if (!types || !Array.from(types).includes('Files')) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
   }
 
   // Only resync from `initial` when the row itself changes (the
@@ -154,10 +178,17 @@ export function NotesPane({
 
   return (
     <aside
-      className={`flex h-full ${paneWidth} flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950`}
+      className={`relative flex h-full ${paneWidth} flex-col border-l ${dragging ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-zinc-200 dark:border-zinc-800'} bg-white dark:bg-zinc-950`}
       onDragOver={(e) => { e.preventDefault(); }}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-blue-500/5 text-xs font-medium text-blue-700 dark:text-blue-300">
+          Drop to upload + attach
+        </div>
+      )}
       <input
         ref={fileInputRef}
         type="file"
@@ -168,6 +199,22 @@ export function NotesPane({
       <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 text-xs dark:border-zinc-800">
         <strong>Notes</strong>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              const title = await appPrompt('New note section', {
+                okLabel: 'Insert',
+                placeholder: 'e.g. Today’s read',
+              });
+              const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+              const heading = title?.trim() ? `${stamp} — ${title.trim()}` : stamp;
+              spliceAtCaret(`\n## ${heading}\n\n`);
+            }}
+            title="Insert a dated section heading — quick way to start a new note in this row"
+            className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <FilePlus className="h-3.5 w-3.5" />
+          </button>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}

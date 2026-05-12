@@ -685,6 +685,34 @@ def pdf_extract():
             pass
 
 
+# ---------- Disk-space monitor --------------------------------------------
+#
+# The droplet has bitten us twice now with `no space left on device` aborts
+# mid-pull. Surface usage via a GET so the Settings page can paint a bar
+# and warn the user before the next deploy nukes itself. We report the
+# usage of `/` from the helper container, which sits on top of the same
+# overlayfs the host writes everything else to — close enough for an early-
+# warning UI. Numbers are in bytes; percent is integer 0-100 rounded down.
+
+@app.route("/disk", methods=["GET", "OPTIONS"])
+def disk_usage():
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_dict())
+    try:
+        u = shutil.disk_usage("/")
+        percent = int(100 * u.used / u.total) if u.total else 0
+        return (jsonify({
+            "ok": True,
+            "path": "/",
+            "total": u.total,
+            "used": u.used,
+            "free": u.free,
+            "percent": percent,
+        }), 200, _cors_dict())
+    except Exception as exc:  # noqa: BLE001
+        return (jsonify({"ok": False, "error": str(exc)}), 500, _cors_dict())
+
+
 # ---------- Cookies upload ------------------------------------------------
 #
 # Overwrites the Netscape-format cookies.txt the yt-dlp downloader uses

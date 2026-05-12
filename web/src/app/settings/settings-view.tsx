@@ -15,6 +15,7 @@ import { BookmarkletCard } from '@/components/bookmarklet-card';
 import { TelegramCard } from '@/components/telegram-card';
 import { BackupCard } from '@/components/backup-card';
 import { IntegrationsCard } from '@/components/integrations-card';
+import { SystemCard } from '@/components/system-card';
 import { appConfirm } from '@/components/confirm';
 import { appPrompt } from '@/components/prompt';
 import { SectionIcon } from '@/components/section-icon';
@@ -276,6 +277,8 @@ export function SettingsView({
       </section>
 
       <IntegrationsCard />
+
+      <SystemCard />
 
       <section className="mt-12">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Sign out</h2>
