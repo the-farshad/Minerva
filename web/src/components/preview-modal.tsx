@@ -92,10 +92,20 @@ export function PreviewModal({
   const ytIframeRef = useRef<HTMLIFrameElement>(null);
   const ytTimeRef = useRef<number>(0);
   // Initial page is the last page we saw for THIS row — persisted
-  // per-row via writePref under `pdf.page.<rowId>`. The pagechanging
-  // listener (set up further down) keeps this in sync as the user
-  // scrolls; on modal reopen the iframe's `#page=<n>` opens straight
-  // to where they left off.
+  // per-row via writePref under `pdf.page.<rowId>`. We hold it in a
+  // ref locked to the rowId because the iframe's #page=<n> hash is
+  // read ONLY at mount time; updating pdfPage state via useEffect
+  // after the iframe has rendered doesn't trigger a re-navigation,
+  // so the previous version always opened at page 1. The pagechanging
+  // listener (set up further down) keeps pdfPage in sync as the user
+  // scrolls so BookmarkDrawer / writePref stay current.
+  const lockedRowId = useRef<string | null>(null);
+  const initialPdfPageRef = useRef(1);
+  if (item?.rowId && lockedRowId.current !== item.rowId) {
+    lockedRowId.current = item.rowId;
+    const saved = readPref<number>(`pdf.page.${item.rowId}`, 0);
+    initialPdfPageRef.current = saved > 0 ? saved : 1;
+  }
   const [pdfPage, setPdfPage] = useState(1);
   useEffect(() => {
     if (item?.rowId) {
@@ -803,10 +813,10 @@ export function PreviewModal({
                * Drive OAuth token — no upstream CORS, no nested
                * query strings. */
               <iframe
-                key={pdfReload}
+                key={`${view.rowId}-${pdfReload}`}
                 ref={pdfIframeRef}
                 title="PDF"
-                src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(`/api/pdf/${view.rowId}?v=${pdfReload}`)}#page=${pdfPage}`}
+                src={`/pdfjs/web/viewer.html?file=${encodeURIComponent(`/api/pdf/${view.rowId}?v=${pdfReload}`)}#page=${initialPdfPageRef.current}`}
                 className="h-full w-full border-0 bg-zinc-100 dark:bg-zinc-900"
                 referrerPolicy="no-referrer"
               />

@@ -1,11 +1,13 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Plus, X, Filter } from 'lucide-react';
+import { Plus, X, Filter, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
 import { notify } from '@/lib/notify';
+
+type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
 
 /**
  * Chip bar for the section's category column. Combines the
@@ -20,9 +22,11 @@ export function CategoryBar({
   column,
   schemaOptions,
   rowValues,
+  rows,
   selected,
   onSelectedChange,
   onSchemaChanged,
+  onRowsRewritten,
 }: {
   sectionSlug: string;
   /** Schema column we're managing — usually 'category'. */
@@ -31,12 +35,18 @@ export function CategoryBar({
   schemaOptions: string[];
   /** Values currently in use across rows (deduped). */
   rowValues: string[];
+  /** Live rows so the remove confirm can show how many will be
+   * stripped vs orphan-deleted. */
+  rows: Row[];
   /** Currently-active filter set. */
   selected: Set<string>;
   onSelectedChange: (next: Set<string>) => void;
   /** Called with the new option list after a PATCH. Parent passes
    * the result down on the next render — schema lives server-side. */
   onSchemaChanged: (next: string[]) => void;
+  /** Called after a rewrite-tag so the parent can refetch / drop
+   * deleted rows from local state. */
+  onRowsRewritten?: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   // Union of schema options and used values, sorted for stability.
@@ -85,13 +95,82 @@ export function CategoryBar({
     }
     await saveOptions([...schemaOptions, name]);
   }
+
+  /** Count how a given value is distributed across rows: how many
+   * are multi-tagged (would just get this value stripped) vs how
+   * many would orphan (only this value, candidates for deletion). */
+  function tagBreakdown(cat: string): { multi: number; orphan: number } {
+    let multi = 0;
+    let orphan = 0;
+    for (const r of rows) {
+      const list = String(r.data[column] || '')
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      if (!list.includes(cat)) continue;
+      if (list.length > 1) multi += 1; else orphan += 1;
+    }
+    return { multi, orphan };
+  }
+
+  async function renameCat(cat: string) {
+    const next = await appPrompt(`Rename "${cat}"`, {
+      okLabel: 'Rename',
+      initial: cat,
+    });
+    const to = (next || '').trim();
+    if (!to || to === cat) return;
+    setAdding(true);
+    try {
+      const r = await fetch(`/api/sections/${sectionSlug}/rewrite-tag`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column, from: cat, to }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { rewrote?: number; error?: string };
+      if (!r.ok) throw new Error(j.error || `rewrite-tag: ${r.status}`);
+      // Update the local schema list in step with the server-side rewrite.
+      const nextOpts = schemaOptions.filter((c) => c !== cat);
+      if (!nextOpts.includes(to)) nextOpts.push(to);
+      onSchemaChanged(nextOpts);
+      onRowsRewritten?.();
+      toast.success(`Renamed "${cat}" → "${to}" on ${j.rewrote ?? 0} row${j.rewrote === 1 ? '' : 's'}.`);
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setAdding(false);
+    }
+  }
+
   async function removeCat(cat: string) {
+    const { multi, orphan } = tagBreakdown(cat);
+    const bodyLines: string[] = [];
+    if (multi > 0) bodyLines.push(`${multi} row${multi === 1 ? '' : 's'} also have other categories — those keep their other tags.`);
+    if (orphan > 0) bodyLines.push(`${orphan} row${orphan === 1 ? '' : 's'} have ONLY "${cat}" — those will be deleted entirely.`);
+    if (bodyLines.length === 0) bodyLines.push('No rows are currently tagged with this category — only the picker entry goes away.');
     const ok = await appConfirm(`Remove the "${cat}" category?`, {
-      body: 'Rows tagged with this category keep their tag — only the picker option goes away.',
-      dangerLabel: 'Remove',
+      body: bodyLines.join('\n'),
+      dangerLabel: orphan > 0 ? `Remove + delete ${orphan}` : 'Remove',
     });
     if (!ok) return;
-    await saveOptions(schemaOptions.filter((c) => c !== cat));
+    setAdding(true);
+    try {
+      const r = await fetch(`/api/sections/${sectionSlug}/rewrite-tag`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column, from: cat, to: null, deleteOrphaned: true }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { rewrote?: number; deleted?: number; error?: string };
+      if (!r.ok) throw new Error(j.error || `rewrite-tag: ${r.status}`);
+      onSchemaChanged(schemaOptions.filter((c) => c !== cat));
+      onRowsRewritten?.();
+      const bits: string[] = [];
+      if (j.rewrote) bits.push(`stripped from ${j.rewrote}`);
+      if (j.deleted) bits.push(`deleted ${j.deleted}`);
+      toast.success(`Removed "${cat}" — ${bits.join(' · ') || 'nothing to do'}.`);
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setAdding(false);
+    }
   }
 
   if (all.length === 0) {
@@ -132,16 +211,22 @@ export function CategoryBar({
             >
               {cat}
             </button>
-            {isSchemaDefined && (
-              <button
-                type="button"
-                onClick={() => removeCat(cat)}
-                title={`Remove "${cat}" from the picker`}
-                className="opacity-0 transition group-hover:opacity-70 hover:!opacity-100"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => renameCat(cat)}
+              title={`Rename "${cat}"`}
+              className="opacity-0 transition group-hover:opacity-70 hover:!opacity-100"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => removeCat(cat)}
+              title={`Remove "${cat}" everywhere`}
+              className="opacity-0 transition group-hover:opacity-70 hover:!opacity-100"
+            >
+              <X className="h-3 w-3" />
+            </button>
           </span>
         );
       })}

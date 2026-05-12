@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -205,12 +205,19 @@ export function GroupedGrid({
           column="category"
           schemaOptions={catOptions}
           rowValues={usedCats}
+          rows={rows}
           selected={selectedCats}
           onSelectedChange={(next) => {
             setSelectedCats(next);
             writePref(`catfilter.${section.slug}`, [...next]);
           }}
           onSchemaChanged={(nextList) => setCatOptions(nextList)}
+          onRowsRewritten={() => {
+            // The server rewrote rows in place — easiest sync is a
+            // full reload of the section page so the local cache
+            // picks up the deletes and the renamed values.
+            if (typeof window !== 'undefined') window.location.reload();
+          }}
         />
       )}
       {groupCol && (
@@ -238,15 +245,44 @@ export function GroupedGrid({
         return (
           <section key={key}>
             <header className="mb-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => toggleCollapsed(key)}
-                className="inline-flex items-center gap-1 text-sm font-medium"
-              >
-                {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                {groupCol ? key : section.title}
-                <span className="text-xs font-normal text-zinc-500">· {groupRows.length}</span>
-              </button>
+              <div className="group inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => toggleCollapsed(key)}
+                  className="inline-flex items-center gap-1 text-sm font-medium"
+                >
+                  {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {groupCol ? key : section.title}
+                  <span className="text-xs font-normal text-zinc-500">· {groupRows.length}</span>
+                </button>
+                {groupCol && key !== '(uncategorised)' && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const next = await appPrompt(`Rename "${key}"`, { okLabel: 'Rename', initial: key });
+                      const to = (next || '').trim();
+                      if (!to || to === key) return;
+                      try {
+                        const r = await fetch(`/api/sections/${section.slug}/rewrite-tag`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ column: groupCol, from: key, to }),
+                        });
+                        const j = (await r.json().catch(() => ({}))) as { rewrote?: number; error?: string };
+                        if (!r.ok) throw new Error(j.error || `rewrite-tag: ${r.status}`);
+                        toast.success(`Renamed "${key}" → "${to}" on ${j.rewrote ?? 0} row${j.rewrote === 1 ? '' : 's'}.`);
+                        if (typeof window !== 'undefined') window.location.reload();
+                      } catch (e) {
+                        notify.error((e as Error).message);
+                      }
+                    }}
+                    title={`Rename "${key}" (updates every row in this group)`}
+                    className="opacity-0 transition group-hover:opacity-70 hover:!opacity-100"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
               {groupCol && (
                 <>
                   <select
