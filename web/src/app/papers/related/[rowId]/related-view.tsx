@@ -43,7 +43,10 @@ export function RelatedView({
   seedYear: string;
 }) {
   const [papers, setPapers] = useState<Paper[] | null>(null);
+  const [provider, setProvider] = useState<string>('openalex');
+  const [resolvedVia, setResolvedVia] = useState<string>('');
   const [err, setErr] = useState<string | null>(null);
+  const [switchingProvider, setSwitchingProvider] = useState(false);
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState<Set<string>>(new Set());
   const [added, setAdded] = useState<Set<string>>(new Set());
@@ -67,6 +70,37 @@ export function RelatedView({
 
   /** Human-readable summary of the current year filter — used as
    *  the chip label so the active state is obvious at a glance. */
+  /** Persist a different related-papers backend to the user's
+   *  server prefs and trigger a re-fetch. Used by the empty-
+   *  state nudge when one backend yields nothing useful. */
+  async function switchProviderAndRefetch(next: 'openalex' | 'semanticscholar') {
+    setSwitchingProvider(true);
+    try {
+      const r = await fetch('/api/userprefs/server', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'related_papers_provider', value: next }),
+      });
+      if (!r.ok) throw new Error(`save: ${r.status}`);
+      setProvider(next);
+      setPapers(null);
+      setErr(null);
+      const params = new URLSearchParams({ limit: '40' });
+      if (seedRef) params.set('ref', seedRef);
+      if (seedTitle) params.set('title', seedTitle);
+      const r2 = await fetch(`/api/related-papers?${params.toString()}`);
+      const j = (await r2.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string };
+      if (j.provider) setProvider(j.provider);
+      if (j.resolvedVia) setResolvedVia(j.resolvedVia);
+      if (!r2.ok) throw new Error(j.error || `Recommendations: ${r2.status}`);
+      setPapers(j.papers || []);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setSwitchingProvider(false);
+    }
+  }
+
   function yearLabel(): string {
     const from = yearFrom ? Number(yearFrom) : null;
     const to = yearTo ? Number(yearTo) : null;
@@ -101,8 +135,10 @@ export function RelatedView({
         if (seedRef) params.set('ref', seedRef);
         if (seedTitle) params.set('title', seedTitle);
         const r = await fetch(`/api/related-papers?${params.toString()}`);
-        const j = (await r.json()) as { papers?: Paper[]; error?: string };
+        const j = (await r.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string };
         if (cancelled) return;
+        if (j.provider) setProvider(j.provider);
+        if (j.resolvedVia) setResolvedVia(j.resolvedVia);
         if (!r.ok) throw new Error(j.error || `Recommendations: ${r.status}`);
         setPapers(j.papers || []);
       } catch (e) {
@@ -225,7 +261,14 @@ export function RelatedView({
       <header className="mb-4 flex items-start gap-3">
         <Network className="mt-1 h-5 w-5 shrink-0 text-zinc-500" />
         <div className="flex-1">
-          <div className="text-xs uppercase tracking-wide text-zinc-500">Related papers</div>
+          <div className="flex items-center gap-2">
+            <div className="text-xs uppercase tracking-wide text-zinc-500">Related papers</div>
+            {papers && (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" title={`Resolved via ${resolvedVia || 'ref'}`}>
+                {provider === 'semanticscholar' ? 'Semantic Scholar' : 'OpenAlex'}
+              </span>
+            )}
+          </div>
           <h1 className="mt-0.5 text-lg font-semibold leading-tight">{seedTitle}</h1>
           {(seedAuthors || seedYear) && (
             <p className="mt-0.5 text-xs text-zinc-500">
@@ -491,11 +534,32 @@ export function RelatedView({
       )}
 
       {!err && papers && filtered.length === 0 && (
-        <p className="rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          {papers.length === 0
-            ? 'No related papers came back for this seed. Semantic Scholar may not index it yet.'
-            : `No matches for "${q}".`}
-        </p>
+        <div className="rounded-xl border border-dashed border-zinc-300 px-6 py-10 text-center dark:border-zinc-700">
+          {papers.length === 0 ? (
+            <>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                {provider === 'semanticscholar'
+                  ? 'Semantic Scholar returned no recommendations for this paper. They build their similarity index opportunistically — well-cited classics sometimes have an empty list.'
+                  : 'OpenAlex returned no related works for this paper.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => void switchProviderAndRefetch(provider === 'semanticscholar' ? 'openalex' : 'semanticscholar')}
+                disabled={switchingProvider}
+                className="mt-4 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1.5 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+              >
+                {switchingProvider
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Retrying…</>
+                  : <>Try {provider === 'semanticscholar' ? 'OpenAlex' : 'Semantic Scholar'} instead</>}
+              </button>
+              <p className="mt-3 text-[10px] text-zinc-500">
+                This sets your <span className="font-medium">Related-papers source</span> in Settings.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-zinc-500">No matches for &ldquo;{q}&rdquo;.</p>
+          )}
+        </div>
       )}
 
       {view === 'graph' && papers && (
