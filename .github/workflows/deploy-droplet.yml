@@ -96,4 +96,12 @@ jobs:
              # in idempotent mode — no-op when nothing changed.
              docker compose up -d
              sleep 6
-             curl -sS http://127.0.0.1:8765/health | head -c 200"
+             curl -sS http://127.0.0.1:8765/health | head -c 200
+             # Reclaim disk by dropping dangling images + build
+             # cache. The 24 GB droplet otherwise hits 88% after
+             # ~3 deploys because every web-publish brings down
+             # a fresh ~1.5 GB image and Compose never evicts
+             # the previous one. Quiet on failure (e.g. another
+             # process holds an image ref).
+             docker image prune -af --filter 'until=12h' 2>&1 | tail -1 || true
+             docker builder prune -af 2>&1 | tail -1 || true"
