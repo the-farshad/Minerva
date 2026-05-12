@@ -206,33 +206,31 @@ export function RelatedView({
             </p>
           )}
         </div>
-        {connectedPapersUrl(seedRef) && (
-          <a
-            href={connectedPapersUrl(seedRef)!}
-            target="_blank"
-            rel="noopener"
-            className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            title="Open the same paper on connectedpapers.com"
-          >
-            <ExternalLink className="h-3.5 w-3.5" /> Open in Connected Papers
-          </a>
-        )}
       </header>
 
-      {/* Connected Papers graph visualisation. Their /main/<id>/
-        * route is iframe-friendly; this gives the user the same
-        * 2D graph they recognise from connectedpapers.com without
-        * leaving Minerva. Falls back gracefully when we can't
-        * resolve an arXiv ID / DOI to pass to them. */}
+      {/* Big CTA opening the Connected Papers 2D graph in a new
+        * tab. They send X-Frame-Options:SAMEORIGIN AND a CSP
+        * frame-ancestors:'self' so iframe-embedding is
+        * impossible no matter how much we want it. The button
+        * is a graceful substitute — still one click, still
+        * lands on the visualisation. */}
       {connectedPapersUrl(seedRef) && (
-        <div className="mb-6 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
-          <iframe
-            src={connectedPapersUrl(seedRef)!}
-            title="Connected Papers graph"
-            className="h-[60vh] w-full bg-white dark:bg-zinc-950"
-            referrerPolicy="no-referrer"
-          />
-        </div>
+        <a
+          href={connectedPapersUrl(seedRef)!}
+          target="_blank"
+          rel="noopener"
+          className="mb-6 flex items-center gap-3 rounded-xl border border-zinc-200 bg-gradient-to-r from-blue-50 to-violet-50 px-4 py-3 transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:from-blue-950/40 dark:to-violet-950/40 dark:hover:border-zinc-700"
+        >
+          <Network className="h-8 w-8 shrink-0 text-blue-600 dark:text-blue-400" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold">Open Connected Papers graph</div>
+            <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+              View this paper's 2-D similarity graph on connectedpapers.com. Their site blocks
+              iframe embedding, so the visualisation opens in a new tab.
+            </div>
+          </div>
+          <ExternalLink className="h-4 w-4 shrink-0 text-zinc-400" />
+        </a>
       )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">

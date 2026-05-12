@@ -148,13 +148,24 @@ export async function fetchRelatedFromOpenAlex(opts: {
   // Batch-fetch details for the related work IDs. OpenAlex
   // accepts up to ~50 IDs in a single filter so we usually fit
   // in one round-trip.
-  const ids = related.map((u) => u.replace(/^https:\/\/openalex\.org\//, '')).join('|');
+  // Parallel single-work lookups. OpenAlex's list-filter for IDs
+  // is finicky (pipe-OR returns only the first match in
+  // practice), and the related_works array is small enough
+  // (≤ ~10) that one-per-id is cheaper than fighting the filter
+  // syntax. Failed lookups (404, network) drop silently so a
+  // single deindexed work doesn't sink the whole page.
   const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,host_venue,primary_location';
-  const r = await fetch(politeUrl(`/works?filter=openalex_id:${ids}&per_page=${related.length}&select=${fields}`, opts.email));
-  if (!r.ok) {
-    return { ok: false, status: r.status, error: `OpenAlex: ${r.status}` };
-  }
-  const j = (await r.json()) as { results?: OAWork[] };
-  const papers = (j.results || []).map(workToPaper);
+  const lookups = related.map(async (u) => {
+    const wid = u.replace(/^https:\/\/openalex\.org\//, '');
+    try {
+      const r = await fetch(politeUrl(`/works/${encodeURIComponent(wid)}?select=${fields}`, opts.email));
+      if (!r.ok) return null;
+      return (await r.json()) as OAWork;
+    } catch {
+      return null;
+    }
+  });
+  const works = (await Promise.all(lookups)).filter((w): w is OAWork => w != null);
+  const papers = works.map(workToPaper);
   return { ok: true, papers, resolvedVia: opts.ref ? 'ref' : 'title' };
 }
