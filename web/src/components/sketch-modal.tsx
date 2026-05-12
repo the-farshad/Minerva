@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Trash2, Eraser, Pen, Save as SaveIcon, Loader2, Undo2 } from 'lucide-react';
+import { X, Trash2, Eraser, Pen, Save as SaveIcon, Loader2, Undo2, FileDown } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
+import { jsPDF } from 'jspdf';
 
 /**
  * Pen-pressure-aware sketching canvas backed by Pointer Events.
@@ -218,6 +220,156 @@ export function SketchModal({
     force((n) => n + 1);
   }
 
+  /** Trigger a browser download for a blob. Used by SVG / PDF
+   *  export so users get a file on disk, not just a Drive URL. */
+  function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /** Average the per-point widths inside a stroke and emit one
+   *  SVG polyline / PDF path. Width-varying strokes would need
+   *  per-segment elements (or `<path>` with stroke-width gradient
+   *  via SVG 2 — not implementable cross-browser); the averaged
+   *  width is close enough for ink that lives on a 2D page and
+   *  matches the canvas render at typical zoom levels. */
+  function strokeAvgWidth(s: Stroke): number {
+    if (s.points.length === 0) return 2;
+    let sum = 0;
+    for (const p of s.points) sum += p.w;
+    return sum / s.points.length;
+  }
+
+  function canvasSizeCss(): { w: number; h: number } {
+    const c = canvasRef.current;
+    if (!c) return { w: 800, h: 600 };
+    return {
+      w: c.clientWidth || c.width / (window.devicePixelRatio || 1),
+      h: c.clientHeight || c.height / (window.devicePixelRatio || 1),
+    };
+  }
+
+  /** Build an SVG snapshot of the current sketch. Seed image (if
+   *  any) goes in as a base64 data URL behind the strokes so the
+   *  exported file stays self-contained. */
+  async function buildSvg(): Promise<string> {
+    const { w, h } = canvasSizeCss();
+    const parts: string[] = [];
+    parts.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`);
+    // White paper background for legibility outside dark UIs.
+    parts.push(`<rect width="${w}" height="${h}" fill="#ffffff"/>`);
+    // Seed image as base64. The image was loaded via HTMLImageElement
+    // earlier; convert it to a data URL via an offscreen canvas so
+    // the result embeds without re-fetching.
+    const bg = bgImageRef.current;
+    if (bg) {
+      try {
+        const off = document.createElement('canvas');
+        off.width = bg.naturalWidth;
+        off.height = bg.naturalHeight;
+        const octx = off.getContext('2d');
+        if (octx) {
+          octx.drawImage(bg, 0, 0);
+          const dataUrl = off.toDataURL('image/png');
+          const iw = bg.naturalWidth;
+          const ih = bg.naturalHeight;
+          const r = Math.min(w / iw, h / ih);
+          const dw = iw * r;
+          const dh = ih * r;
+          parts.push(`<image href="${dataUrl}" x="${(w - dw) / 2}" y="${(h - dh) / 2}" width="${dw}" height="${dh}"/>`);
+        }
+      } catch { /* tainted canvas or out of memory — skip the bg */ }
+    }
+    for (const s of strokesRef.current) {
+      if (s.points.length === 0) continue;
+      const width = strokeAvgWidth(s);
+      const color = s.eraser ? '#ffffff' : s.color;
+      if (s.points.length === 1) {
+        const p = s.points[0];
+        parts.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="${(width / 2).toFixed(2)}" fill="${color}"/>`);
+        continue;
+      }
+      const d = s.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
+      parts.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`);
+    }
+    parts.push('</svg>');
+    return parts.join('');
+  }
+
+  async function exportSvg() {
+    if (strokesRef.current.length === 0 && !bgImageRef.current) {
+      notify.error('Sketch is empty — draw something first.');
+      return;
+    }
+    const svg = await buildSvg();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `sketch-${stamp}.svg`);
+    toast.success('SVG downloaded.');
+  }
+
+  async function exportPdf() {
+    if (strokesRef.current.length === 0 && !bgImageRef.current) {
+      notify.error('Sketch is empty — draw something first.');
+      return;
+    }
+    const { w, h } = canvasSizeCss();
+    // jsPDF expects user units; default unit is 'pt'. We feed it CSS
+    // pixels directly (since the canvas units are CSS px) and let
+    // the orientation match the natural canvas aspect.
+    const orientation = w >= h ? 'l' : 'p';
+    const pdf = new jsPDF({ orientation, unit: 'px', format: [w, h], hotfixes: ['px_scaling'] });
+    // Background image first so strokes land on top.
+    const bg = bgImageRef.current;
+    if (bg) {
+      try {
+        const off = document.createElement('canvas');
+        off.width = bg.naturalWidth;
+        off.height = bg.naturalHeight;
+        const octx = off.getContext('2d');
+        if (octx) {
+          octx.drawImage(bg, 0, 0);
+          const dataUrl = off.toDataURL('image/png');
+          const iw = bg.naturalWidth;
+          const ih = bg.naturalHeight;
+          const r = Math.min(w / iw, h / ih);
+          const dw = iw * r;
+          const dh = ih * r;
+          pdf.addImage(dataUrl, 'PNG', (w - dw) / 2, (h - dh) / 2, dw, dh);
+        }
+      } catch { /* skip bg if tainted */ }
+    }
+    pdf.setLineCap('round');
+    pdf.setLineJoin('round');
+    for (const s of strokesRef.current) {
+      if (s.points.length === 0) continue;
+      const width = strokeAvgWidth(s);
+      const color = s.eraser ? '#ffffff' : s.color;
+      pdf.setDrawColor(color);
+      pdf.setLineWidth(width);
+      if (s.points.length === 1) {
+        const p = s.points[0];
+        pdf.setFillColor(color);
+        pdf.circle(p.x, p.y, width / 2, 'F');
+        continue;
+      }
+      // Multi-point: stitch consecutive segments with lines().
+      const lines: [number, number][] = [];
+      for (let i = 1; i < s.points.length; i++) {
+        lines.push([s.points[i].x - s.points[i - 1].x, s.points[i].y - s.points[i - 1].y]);
+      }
+      pdf.lines(lines, s.points[0].x, s.points[0].y, [1, 1], 'S');
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    pdf.save(`sketch-${stamp}.pdf`);
+    toast.success('PDF downloaded.');
+  }
+
   async function save() {
     const c = canvasRef.current;
     if (!c) return;
@@ -306,6 +458,40 @@ export function SketchModal({
               >
                 <Trash2 className="h-3.5 w-3.5" /> Clear
               </button>
+              {/* Download exports — SVG (true vector) and PDF (vector
+                * via jsPDF). Both land on the user's machine; the
+                * primary Save still goes to Drive as a PNG. */}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    type="button"
+                    disabled={uploading || (strokesRef.current.length === 0 && !bgImageRef.current)}
+                    title="Download a vector copy"
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+                  >
+                    <FileDown className="h-3.5 w-3.5" /> Export
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    align="end" sideOffset={4}
+                    className="z-[60] min-w-[8rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    <DropdownMenu.Item
+                      onSelect={(e) => { e.preventDefault(); void exportSvg(); }}
+                      className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      SVG (vector)
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      onSelect={(e) => { e.preventDefault(); void exportPdf(); }}
+                      className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      PDF (vector)
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
               <button
                 type="button"
                 onClick={save}
