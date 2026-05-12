@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -106,6 +106,12 @@ export function GroupedGrid({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [selectedCats, setSelectedCats] = useState<Set<string>>(new Set());
+  // Shared <input type=file> for the per-group "Upload videos"
+  // buttons. The target playlist comes from `uploadTarget` which
+  // the button sets right before triggering the file picker.
+  const videoFileRef = useRef<HTMLInputElement>(null);
+  const uploadTarget = useRef<string | null>(null);
+  const [uploadingTo, setUploadingTo] = useState<string | null>(null);
   // The schema's `multiselect(...)` options for this column — updated
   // in-place when the user clicks Add/Remove in the CategoryBar.
   const [catOptions, setCatOptions] = useState<string[]>(() => {
@@ -199,6 +205,49 @@ export function GroupedGrid({
 
   return (
     <div className="space-y-6">
+      {section.preset === 'youtube' && (
+        <input
+          ref={videoFileRef}
+          type="file"
+          accept="video/*,.mp4,.mkv,.mov,.webm"
+          multiple
+          className="hidden"
+          onChange={async (e) => {
+            const files = Array.from(e.target.files || []);
+            if (!files.length) return;
+            const target = uploadTarget.current;
+            const playlist = target && target !== '(uncategorised)' && groupCol === 'playlist' ? target : '';
+            setUploadingTo(target);
+            toast.info(`Uploading ${files.length} video${files.length === 1 ? '' : 's'}${playlist ? ` to "${playlist}"` : ''}…`);
+            let done = 0, failed = 0;
+            for (const file of files) {
+              try {
+                const fd = new FormData();
+                fd.append('file', file, file.name);
+                if (playlist) fd.append('playlist', playlist);
+                const r = await fetch(`/api/sections/${section.slug}/upload-video`, { method: 'POST', body: fd });
+                const j = (await r.json().catch(() => ({}))) as { error?: string; id?: string; data?: Record<string, unknown>; updatedAt?: string };
+                if (!r.ok) throw new Error(j.error || `upload-video: ${r.status}`);
+                if (j.id && j.data && j.updatedAt && onRowUpdated) {
+                  onRowUpdated({ id: j.id, data: j.data, updatedAt: j.updatedAt });
+                }
+                done++;
+              } catch (err) {
+                failed++;
+                notify.error(`${file.name}: ${(err as Error).message}`);
+              }
+            }
+            toast.success(`Uploaded ${done}${failed ? ` · ${failed} failed` : ''}.`);
+            setUploadingTo(null);
+            uploadTarget.current = null;
+            if (videoFileRef.current) videoFileRef.current.value = '';
+            // The freshly-uploaded rows aren't in the parent's
+            // cache for the "new" branch (only attach has
+            // onRowUpdated path); reload to surface them.
+            if (typeof window !== 'undefined') window.location.reload();
+          }}
+        />
+      )}
       {groupCol === 'category' && (
         <CategoryBar
           sectionSlug={section.slug}
@@ -300,6 +349,22 @@ export function GroupedGrid({
                   <GroupNotes sectionSlug={section.slug} groupKey={key} />
                   {(section.preset === 'youtube' || section.preset === 'papers') && (
                     <>
+                      {section.preset === 'youtube' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            uploadTarget.current = key;
+                            videoFileRef.current?.click();
+                          }}
+                          disabled={uploadingTo === key}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                          title={key !== '(uncategorised)' && groupCol === 'playlist'
+                            ? `Upload local MP4s to the "${key}" playlist`
+                            : 'Upload local MP4s'}
+                        >
+                          <Upload className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       {(section.preset === 'youtube' || section.preset === 'papers') && (
                         <button
                           type="button"
@@ -608,8 +673,40 @@ function CardActions({
     }
   }
 
+  const localUploadRef = useRef<HTMLInputElement>(null);
+  async function uploadLocal(file: File) {
+    toast.info(`Uploading ${file.name}…`);
+    try {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      fd.append('rowId', row.id);
+      const r = await fetch(`/api/sections/${section.slug}/upload-video`, { method: 'POST', body: fd });
+      const j = (await r.json().catch(() => ({}))) as { error?: string; id?: string; data?: Record<string, unknown>; updatedAt?: string };
+      if (!r.ok) throw new Error(j.error || `upload-video: ${r.status}`);
+      toast.success('Local copy attached to this row.');
+      if (j.id && j.data && j.updatedAt && onRowUpdated) {
+        onRowUpdated({ id: j.id, data: j.data, updatedAt: j.updatedAt });
+      }
+    } catch (err) {
+      notify.error((err as Error).message);
+    } finally {
+      if (localUploadRef.current) localUploadRef.current.value = '';
+    }
+  }
+
   return (
     <>
+      <input
+        ref={localUploadRef}
+        type="file"
+        accept="video/*,.mp4,.mkv,.mov,.webm"
+        className="hidden"
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void uploadLocal(f);
+        }}
+      />
       <div
         className="absolute right-1 top-1 flex items-center gap-1"
         onClick={(e) => e.stopPropagation()}
@@ -644,6 +741,14 @@ function CardActions({
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
                 >
                   <Save className="h-3.5 w-3.5" /> Save offline
+                </DropdownMenu.Item>
+              )}
+              {kind === 'video' && (
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); localUploadRef.current?.click(); }}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <Upload className="h-3.5 w-3.5" /> Upload local MP4
                 </DropdownMenu.Item>
               )}
               {isCategorisable && (
