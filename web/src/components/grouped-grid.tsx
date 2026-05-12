@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -239,10 +239,10 @@ export function GroupedGrid({
                             if (failed) parts.push(`${failed} failed`);
                             toast.success(parts.join(' · ') || 'Nothing to refresh.');
                           }}
-                          className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                           title={`Refresh metadata for every item in "${key}" via YouTube / arxiv / CrossRef`}
                         >
-                          Refresh metadata
+                          <RefreshCw className="h-3.5 w-3.5" />
                         </button>
                       )}
                       {section.preset === 'papers' && (
@@ -250,10 +250,10 @@ export function GroupedGrid({
                           <DropdownMenu.Trigger asChild>
                             <button
                               type="button"
-                              className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                               title={`Copy citations for every paper in "${key}"`}
                             >
-                              Copy citations
+                              <Quote className="h-3.5 w-3.5" />
                             </button>
                           </DropdownMenu.Trigger>
                           <DropdownMenu.Portal>
@@ -315,10 +315,10 @@ export function GroupedGrid({
                           }));
                           toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}.`);
                         }}
-                        className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                         title={`Save every item in "${key}" offline`}
                       >
-                        Save all offline
+                        <Download className="h-3.5 w-3.5" />
                       </button>
                       <button
                         type="button"
@@ -347,10 +347,10 @@ export function GroupedGrid({
                             notify.error('Delete failed: ' + (e as Error).message);
                           }
                         }}
-                        className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-zinc-700 dark:text-red-400 dark:hover:bg-red-950"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
                         title={`Delete every item in "${key}"`}
                       >
-                        Delete all
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
                       <button
                         type="button"
@@ -377,10 +377,10 @@ export function GroupedGrid({
                           toast.success(`Set category on ${groupRows.length} items.`);
                           location.reload();
                         }}
-                        className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                         title={`Set category for every item in "${key}"`}
                       >
-                        Set category
+                        <Tags className="h-3.5 w-3.5" />
                       </button>
                     </>
                   )}
