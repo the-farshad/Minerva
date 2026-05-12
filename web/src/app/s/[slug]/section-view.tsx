@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { naturalCompare, cn } from '@/lib/utils';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -56,6 +56,7 @@ export function SectionView({
   );
   const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; originalFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; sectionPreset?: string | null; notes?: string; data?: Record<string, unknown> } | null>(null);
   const qc = useQueryClient();
+  const router = useRouter();
 
   const search = useSearchParams();
   // When a search hit deep-links into this section with `?row=<id>`,
@@ -271,7 +272,8 @@ export function SectionView({
                 const j = await r.json();
                 if (!r.ok) throw new Error(j.error || String(r.status));
                 toast.success(`Imported · ${j.inserted} new, ${j.updated} updated.`);
-                location.reload();
+                qc.invalidateQueries({ queryKey: ['rows', section.slug] });
+                router.refresh();
               } catch (e) {
                 notify.error((e as Error).message);
               }

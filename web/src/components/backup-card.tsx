@@ -1,12 +1,14 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { Download, Upload, Archive } from 'lucide-react';
 import { appConfirm } from './confirm';
 
 export function BackupCard() {
+  const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
 
@@ -23,7 +25,7 @@ export function BackupCard() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || String(r.status));
       toast.success(`Restored · ${j.sectionsCreated} new sections, ${j.rowsInserted} rows.`);
-      setTimeout(() => location.reload(), 800);
+      setTimeout(() => router.refresh(), 800);
     } catch (e) {
       notify.error('Restore failed: ' + (e as Error).message);
     } finally {

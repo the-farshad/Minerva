@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -98,6 +99,7 @@ export function GroupedGrid({
    * in-place instead of waiting for a full refetch. */
   onRowUpdated?: (row: Row) => void;
 }) {
+  const router = useRouter();
   const groupCol = GROUP_COL(section.schema.headers);
   const titleField = TITLE_FIELD(section.schema.headers);
 
@@ -245,7 +247,7 @@ export function GroupedGrid({
             // The freshly-uploaded rows aren't in the parent's
             // cache for the "new" branch (only attach has
             // onRowUpdated path); reload to surface them.
-            if (typeof window !== 'undefined') window.location.reload();
+            router.refresh();
           }}
         />
       )}
@@ -266,7 +268,7 @@ export function GroupedGrid({
             // The server rewrote rows in place — easiest sync is a
             // full reload of the section page so the local cache
             // picks up the deletes and the renamed values.
-            if (typeof window !== 'undefined') window.location.reload();
+            router.refresh();
           }}
         />
       )}
@@ -328,7 +330,7 @@ export function GroupedGrid({
                         const j = (await r.json().catch(() => ({}))) as { rewrote?: number; error?: string };
                         if (!r.ok) throw new Error(j.error || `rewrite-tag: ${r.status}`);
                         toast.success(`Renamed "${key}" → "${to}" on ${j.rewrote ?? 0} row${j.rewrote === 1 ? '' : 's'}.`);
-                        if (typeof window !== 'undefined') window.location.reload();
+                        router.refresh();
                       } catch (e) {
                         notify.error((e as Error).message);
                       }
@@ -515,7 +517,7 @@ export function GroupedGrid({
                             const j = await resp.json().catch(() => ({}));
                             if (!resp.ok) throw new Error(j.error || String(resp.status));
                             toast.success(`Deleted ${j.deleted ?? groupRows.length} items.`);
-                            location.reload();
+                            router.refresh();
                           } catch (e) {
                             notify.error('Delete failed: ' + (e as Error).message);
                           }
@@ -548,7 +550,7 @@ export function GroupedGrid({
                             }).catch(() => undefined),
                           ));
                           toast.success(`Set category on ${groupRows.length} items.`);
-                          location.reload();
+                          router.refresh();
                         }}
                         className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                         title={`Set category for every item in "${key}"`}
