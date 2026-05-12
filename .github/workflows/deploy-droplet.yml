@@ -30,6 +30,17 @@ on:
       - 'docs/docker-compose.yml'
       - 'docs/minerva-services.py'
       - '.github/workflows/deploy-droplet.yml'
+  # web-only commits don't match the path filter above (they live
+  # under `web/**`), so they used to leave the droplet on a stale
+  # image after the web-publish workflow finished pushing the new
+  # one to Docker Hub. Chain this deploy after a successful
+  # web-publish so any `web/**` push also pulls + restarts the
+  # container. The job script handles both cases — the pull is a
+  # no-op when the image SHA already matches.
+  workflow_run:
+    workflows: ['Publish minerva-web image']
+    types: [completed]
+    branches: [main]
   workflow_dispatch: {}
 
 # Only one deploy at a time; if a new push lands while one is
@@ -46,6 +57,11 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # When triggered by web-publish completion, only run if that
+    # build actually succeeded. workflow_run fires on every
+    # conclusion (success, failure, cancelled), and pulling a
+    # half-built image would land an inconsistent SHA.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Set up SSH
         run: |
@@ -64,6 +80,11 @@ jobs:
              cd /opt/minerva
              git pull --rebase
              cd docs
+             # Pull any newer minerva-web image that web-publish
+             # just pushed to Docker Hub. No-op when the SHA is
+             # already local (web-publish didn't run for this
+             # commit, e.g. an assets-only push).
+             docker compose pull minerva-web || true
              docker compose build minerva-services
              docker compose up -d
              sleep 6
