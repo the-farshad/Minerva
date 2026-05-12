@@ -395,9 +395,12 @@ export function PreviewModal({
     const iframe = pdfIframeRef.current;
     if (!iframe) return;
     let cancelled = false;
-    let detach: (() => void) | null = null;
+    let detachChange: (() => void) | null = null;
+    let detachLoaded: (() => void) | null = null;
     interface PdfApp {
       initializedPromise?: Promise<void>;
+      page?: number;
+      pdfDocument?: { numPages?: number };
       eventBus?: {
         on: (name: string, fn: (e: { pageNumber?: number }) => void) => void;
         off: (name: string, fn: (e: { pageNumber?: number }) => void) => void;
@@ -410,6 +413,29 @@ export function PreviewModal({
       if (!app?.initializedPromise || !app.eventBus) return;
       try { await app.initializedPromise; } catch { return; }
       if (cancelled) return;
+
+      // Belt-and-suspenders initial seek: the URL hash `#page=N` is
+      // unreliable across PDF.js minor versions (the hash parser
+      // fires after pagesloaded, but internal rewrites can clobber
+      // it). Call the API setter ourselves once pagesloaded fires
+      // — that's documented and stable.
+      const applyInitial = () => {
+        if (cancelled) return;
+        const target = initialPdfPageRef.current;
+        const total = app.pdfDocument?.numPages ?? 0;
+        if (target > 1 && total > 0 && target <= total && app.page !== target) {
+          try { app.page = target; } catch { /* viewer not quite ready */ }
+        }
+      };
+      const onPagesLoaded = () => { applyInitial(); };
+      app.eventBus.on('pagesloaded', onPagesLoaded);
+      detachLoaded = () => app.eventBus?.off('pagesloaded', onPagesLoaded);
+      // If pagesloaded already fired (race with our subscribe),
+      // app.pdfDocument is already set — apply immediately too.
+      applyInitial();
+
+      // Page-tracking listener — fires on every visible-page change
+      // and persists it under the row-keyed prefs slot.
       const onChange = (e: { pageNumber?: number }) => {
         const n = e?.pageNumber;
         if (typeof n === 'number' && view?.rowId) {
@@ -418,14 +444,15 @@ export function PreviewModal({
         }
       };
       app.eventBus.on('pagechanging', onChange);
-      detach = () => app.eventBus?.off('pagechanging', onChange);
+      detachChange = () => app.eventBus?.off('pagechanging', onChange);
     };
     iframe.addEventListener('load', attach);
     void attach();
     return () => {
       cancelled = true;
       iframe.removeEventListener('load', attach);
-      if (detach) detach();
+      if (detachChange) detachChange();
+      if (detachLoaded) detachLoaded();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view?.url, view?.rowId, pdfReload]);
@@ -1100,6 +1127,22 @@ function YouTubeFrame({
           if (!w) return;
           w.postMessage(JSON.stringify({ event: 'listening' }), '*');
           w.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }), '*');
+          // Belt-and-suspenders seek: the `start=<sec>` query param
+          // is the documented mechanism, but on slow networks or
+          // when YouTube returns ads before the main video, the
+          // initial seek sometimes lands at 0 anyway. A short
+          // delay after the handshake gives the player a moment
+          // to settle, then we force the position with seekTo —
+          // costs nothing when start was already honoured, fixes
+          // the edge cases when it wasn't.
+          if (start > 5) {
+            setTimeout(() => {
+              try {
+                w.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [start, true] }), '*');
+                w.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+              } catch { /* tolerate */ }
+            }, 800);
+          }
         }}
       />
       {stuck && !loaded && (
