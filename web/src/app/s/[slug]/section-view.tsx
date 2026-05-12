@@ -219,17 +219,7 @@ export function SectionView({
     return out;
   }, [rows, titleField]);
 
-  // Meetings preset is a thin wrapper over the polls table — it
-  // doesn't share the row schema at all. Forward to the polls
-  // index page inline so /s/meets behaves like a real "meeting
-  // polls" surface rather than an empty rows grid. We also fall
-  // back to slug-based detection because sections created before
-  // the `meetings` preset existed have preset=NULL in PG — without
-  // this fallback, /s/meets renders an empty rows grid forever.
-  const effectivePreset = section.preset || (section.slug === 'meets' ? 'meetings' : null);
-  if (effectivePreset === 'meetings') {
-    return <MeetingsSectionView title={section.title} />;
-  }
+  const effectivePreset = section.preset;
 
   // ---- Drag-and-drop file uploads --------------------------------
   // For Papers, dropped PDFs become rows via /upload-paper. For
@@ -492,35 +482,6 @@ export function SectionView({
   );
 }
 
-/** Section-shaped wrapper that renders the user's meeting polls
- * inline at /s/meets. Reuses the standalone /meet page's data
- * fetcher; presented inside the section's normal padding so the
- * Nav + section title chrome still surrounds it. */
-function MeetingsSectionView({ title }: { title: string }) {
-  return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-8">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        <a
-          href="/meet/new"
-          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
-        >
-          + New poll
-        </a>
-      </header>
-      <p className="mb-4 text-xs text-zinc-500">
-        Meeting polls live at <a href="/meet" className="underline">/meet</a> — they
-        aren&rsquo;t row-shaped sections. Open <a href="/meet" className="underline">/meet</a> for
-        the full organizer view (delete + copy share-link + edit per poll).
-      </p>
-      <iframe
-        src="/meet"
-        title="Meeting polls"
-        className="h-[70vh] w-full rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
-      />
-    </main>
-  );
-}
 
 function Table({
   section, rows, onOpen, onPatch, onDelete,

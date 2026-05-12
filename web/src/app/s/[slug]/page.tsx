@@ -22,6 +22,14 @@ export default async function SectionPage({
   const section = allSections.find((s) => s.slug === slug);
   if (!section) notFound();
 
+  // Polls live at /meet directly — the old `meets` section was a
+  // thin iframe wrapper around the same data. Redirect any legacy
+  // section that still claims that slug / preset so users land on
+  // the canonical surface in one hop.
+  if (section.slug === 'meets' || section.preset === 'meetings') {
+    redirect('/meet');
+  }
+
   const rows = await db.query.rows.findMany({
     where: and(
       eq(schema.rows.userId, userId),
