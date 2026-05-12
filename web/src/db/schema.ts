@@ -142,6 +142,44 @@ export const bookmarks = pgTable('bookmarks', {
   byUser: index('bookmarks_user_url_idx').on(t.userId, t.url),
 }));
 
+/** Meeting-poll definitions — organizer creates a poll with a list
+ * of days and time slots; the public token (`/meet/<token>`) lets
+ * participants submit availability without an account. The legacy
+ * SPA encoded the whole poll into a URL token; this server-backed
+ * version stores it properly so URLs stay short, responses don't
+ * race, and the organizer can revoke or extend a poll later. */
+export const polls = pgTable('polls', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  /** Short public slug used in the share URL. */
+  token: text('token').notNull().unique(),
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  /** ISO date strings for the candidate days. */
+  days: jsonb('days').notNull(),
+  /** Compact JSON: { fromHour, toHour, slotMin, tz }. */
+  slots: jsonb('slots').notNull(),
+  /** When responses should stop being accepted (null = open-ended). */
+  closesAt: timestamp('closesAt'),
+  createdAt: timestamp('createdAt').defaultNow().notNull(),
+  updatedAt: timestamp('updatedAt').defaultNow().notNull(),
+}, (t) => ({
+  byUser: index('polls_user_idx').on(t.userId),
+  byToken: index('polls_token_idx').on(t.token),
+}));
+
+export const pollResponses = pgTable('pollResponses', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  pollId: text('pollId').notNull().references(() => polls.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  /** One char per slot — '1' available, '0' not, '?' tentative.
+   * Length must equal poll.days.length × slots-per-day. */
+  bits: text('bits').notNull(),
+  note: text('note').default('').notNull(),
+  createdAt: timestamp('createdAt').defaultNow().notNull(),
+}, (t) => ({
+  byPoll: index('pollResponses_poll_idx').on(t.pollId, t.createdAt),
+}));
+
 /** Activity log — each user's recent operations for an "undo" surface
  * + audit trail. */
 export const events = pgTable('events', {
