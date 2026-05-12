@@ -249,60 +249,94 @@ export function IntegrationsCard() {
         <div className="mt-5 flex items-start gap-3 border-t border-zinc-100 pt-5 dark:border-zinc-800">
           <Video className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
           <div className="flex-1">
-            <div className="text-sm font-medium">Default video quality</div>
+            <div className="flex items-center gap-2 text-sm font-medium">
+              Default video quality
+              {savingQuality && <span className="text-[10px] font-normal text-zinc-500">Saving…</span>}
+            </div>
             <p className="mt-1 text-xs text-zinc-500">
               Applied to every Save-offline that doesn&rsquo;t override. yt-dlp asks YouTube
               for the best file ≤ the height cap (and falls through if exactly that
               resolution isn&rsquo;t published — there&rsquo;s no &quot;no result&quot; failure).
-              &quot;Audio only&quot; transcodes the audio stream to mp3 192 kbps and drops video
-              entirely — handy for podcasts / lectures.
+              &quot;Audio only&quot; transcodes to mp3 192 kbps — handy for podcasts / lectures.
             </p>
-            <div className="mt-3 flex items-center gap-2">
-              <select
-                value={ytQuality}
-                onChange={(e) => void saveQuality(e.target.value)}
-                disabled={savingQuality}
-                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-              >
-                {YT_QUALITIES.map((q) => (
-                  <option key={q.value} value={q.value}>{q.label}</option>
-                ))}
-              </select>
-              {savingQuality && <span className="text-[10px] text-zinc-500">Saving…</span>}
+            <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+              {YT_QUALITIES.map((q) => {
+                const active = ytQuality === q.value;
+                return (
+                  <button
+                    key={q.value}
+                    type="button"
+                    onClick={() => void saveQuality(q.value)}
+                    disabled={savingQuality}
+                    title={q.hint || q.label}
+                    className={`rounded-lg border px-3 py-2 text-left text-xs transition disabled:opacity-50 ${active
+                      ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                      : 'border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800'}`}
+                  >
+                    <div className="font-medium">{q.label}</div>
+                    {q.hint && (
+                      <div className={`mt-0.5 line-clamp-2 text-[10px] ${active ? 'opacity-80' : 'text-zinc-500'}`}>
+                        {q.hint}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
             </div>
-            {YT_QUALITIES.find((q) => q.value === ytQuality)?.hint && (
-              <p className="mt-2 text-[10px] text-zinc-500">
-                {YT_QUALITIES.find((q) => q.value === ytQuality)?.hint}
-              </p>
-            )}
           </div>
         </div>
 
         <div className="mt-5 flex items-start gap-3 border-t border-zinc-100 pt-5 dark:border-zinc-800">
           <Network className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
           <div className="flex-1">
-            <div className="text-sm font-medium">Related-papers source</div>
+            <div className="flex items-center gap-2 text-sm font-medium">
+              Related-papers source
+              {savingRelated && <span className="text-[10px] font-normal text-zinc-500">Saving…</span>}
+            </div>
             <p className="mt-1 text-xs text-zinc-500">
-              Backend the <span className="font-medium">Related papers</span> page on a paper
-              uses to find recommendations.{' '}
-              <span className="font-medium">OpenAlex</span> needs no API key and gives 100&nbsp;k
-              requests/day from the polite pool — the right default.{' '}
-              <span className="font-medium">Semantic Scholar</span> returns more candidates per
-              paper (up to 100 vs ~10) but rate-limits shared cloud IPs heavily without a key —
-              set <span className="font-mono">SEMANTIC_SCHOLAR_API_KEY</span> in the droplet env
-              before switching to it.
+              Backend the <span className="font-medium">Related papers</span> page uses to find
+              recommendations.
             </p>
-            <div className="mt-3 flex items-center gap-2">
-              <select
-                value={relatedProvider}
-                onChange={(e) => void saveRelatedProvider(e.target.value)}
-                disabled={savingRelated}
-                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-              >
-                <option value="openalex">OpenAlex (default)</option>
-                <option value="semanticscholar">Semantic Scholar</option>
-              </select>
-              {savingRelated && <span className="text-[10px] text-zinc-500">Saving…</span>}
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {([
+                {
+                  value: 'openalex',
+                  title: 'OpenAlex',
+                  badge: 'Default',
+                  desc: 'No API key needed. 100 k requests / day from the polite pool. Returns up to ~10 closely-related works per paper.',
+                },
+                {
+                  value: 'semanticscholar',
+                  title: 'Semantic Scholar',
+                  badge: 'Needs key',
+                  desc: 'Returns up to 100 candidates per paper. Rate-limits shared cloud IPs heavily without SEMANTIC_SCHOLAR_API_KEY in the droplet env.',
+                },
+              ] as const).map((opt) => {
+                const active = relatedProvider === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => void saveRelatedProvider(opt.value)}
+                    disabled={savingRelated}
+                    className={`rounded-lg border px-3 py-2.5 text-left text-xs transition disabled:opacity-50 ${active
+                      ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                      : 'border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800'}`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium">{opt.title}</span>
+                      <span className={`rounded-full px-1.5 py-0.5 text-[9px] uppercase tracking-wide ${active
+                        ? 'bg-white/20 text-white dark:bg-zinc-900/15 dark:text-zinc-900'
+                        : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'}`}>
+                        {opt.badge}
+                      </span>
+                    </div>
+                    <div className={`mt-1 text-[10px] leading-snug ${active ? 'opacity-80' : 'text-zinc-500'}`}>
+                      {opt.desc}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
