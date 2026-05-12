@@ -143,6 +143,26 @@ export function AddByUrl({
           }
         })();
       }
+      // Auto-enrich metadata on add. The server's refresh-metadata
+      // route knows how to dispatch based on the URL shape: YouTube
+      // (needs API key — 409s silently if absent), arxiv, DOI. We
+      // fire-and-forget; on success the row's local state is
+      // patched so the new title / channel / duration shows up
+      // without a reload.
+      if (created?.id) {
+        (async () => {
+          try {
+            const mr = await fetch(`/api/sections/${section.slug}/rows/${created.id}/refresh-metadata`, { method: 'POST' });
+            if (!mr.ok) return; // 409 (no API key, no matching source) — silent
+            const mj = (await mr.json().catch(() => ({}))) as { data?: Record<string, unknown> };
+            if (mj.data) {
+              // Forward the merged row.data so the parent's row cache
+              // picks up the freshly-fetched title/thumbnail/etc.
+              onAdded({ id: created.id, data: mj.data, updatedAt: new Date().toISOString() });
+            }
+          } catch { /* tolerate */ }
+        })();
+      }
       return { one: created };
     },
     onSuccess: (out) => {

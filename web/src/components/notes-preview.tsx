@@ -122,6 +122,53 @@ function PdfInline({ url, name }: { url: string; name: string }) {
   );
 }
 
+function DocxInline({ url, name }: { url: string; name: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // Dynamic import keeps mammoth (~600 KB) out of the main bundle
+        // until a docx attachment actually appears in a notes preview.
+        const [{ default: mammoth }, r] = await Promise.all([
+          import('mammoth/mammoth.browser'),
+          fetch(url),
+        ]);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const ab = await r.arrayBuffer();
+        const result = await mammoth.convertToHtml({ arrayBuffer: ab });
+        if (!cancelled) setHtml(result.value || '<em class="text-zinc-500">Empty document.</em>');
+      } catch (e) {
+        if (!cancelled) setErr((e as Error).message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [url]);
+  if (err) return (
+    <div className="my-2 rounded border border-red-300 bg-red-50 p-2 text-[10px] text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-300">
+      Failed to render <span className="font-mono">{name}</span> ({err}). <a href={url} className="underline">Download</a>.
+    </div>
+  );
+  if (html == null) return (
+    <div className="my-2 flex items-center gap-2 text-[10px] text-zinc-500">
+      <Loader2 className="h-3 w-3 animate-spin" /> Loading {name}…
+    </div>
+  );
+  return (
+    <div className="my-2 rounded border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-zinc-500">
+        <span className="inline-flex items-center gap-1"><FileType2 className="h-3 w-3" /> {name}</span>
+        <a href={url} className="underline">Download</a>
+      </div>
+      <div
+        className="prose prose-sm max-w-none text-xs leading-relaxed"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </div>
+  );
+}
+
 function Attachment({ url, name }: { url: string; name: string }) {
   const kind = classify(name);
   if (kind === 'image') {
@@ -130,15 +177,7 @@ function Attachment({ url, name }: { url: string; name: string }) {
   if (kind === 'pdf') return <PdfInline url={url} name={name} />;
   if (kind === 'text') return <InlineText url={url} name={name} asMarkdown={false} />;
   if (kind === 'markdown') return <InlineText url={url} name={name} asMarkdown={true} />;
-  if (kind === 'docx') {
-    return (
-      <FileChip
-        url={url}
-        name={`${name} (open in word — inline preview not yet supported)`}
-        icon={<FileText className="h-3 w-3" />}
-      />
-    );
-  }
+  if (kind === 'docx') return <DocxInline url={url} name={name} />;
   return <FileChip url={url} name={name} icon={<FileIcon className="h-3 w-3" />} />;
 }
 

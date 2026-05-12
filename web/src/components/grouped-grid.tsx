@@ -9,6 +9,7 @@ import { notify } from '@/lib/notify';
 import { readNdjsonResult } from '@/lib/ndjson';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
+import { CITATION_FORMATS } from '@/lib/citations';
 import { appPickMany } from './multi-picker';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
@@ -209,6 +210,52 @@ export function GroupedGrid({
                   <GroupNotes sectionSlug={section.slug} groupKey={key} />
                   {(section.preset === 'youtube' || section.preset === 'papers') && (
                     <>
+                      {section.preset === 'papers' && (
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <button
+                              type="button"
+                              className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                              title={`Copy citations for every paper in "${key}"`}
+                            >
+                              Copy citations
+                            </button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content
+                              align="start"
+                              sideOffset={4}
+                              className="z-[60] min-w-[10rem] overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
+                            >
+                              {CITATION_FORMATS.map((f) => (
+                                <DropdownMenu.Item
+                                  key={f.id}
+                                  onSelect={() => {
+                                    const blocks = groupRows
+                                      .map((r) => f.render(r.data as Record<string, unknown>))
+                                      .filter((s) => s.trim().length > 0);
+                                    if (!blocks.length) {
+                                      notify.error('No paper in this group has citation metadata.');
+                                      return;
+                                    }
+                                    const sep = f.id === 'bibtex' ? '\n\n' : '\n\n';
+                                    const text = blocks.join(sep);
+                                    try {
+                                      void navigator.clipboard.writeText(text);
+                                      toast.success(`${blocks.length} ${f.label} citation${blocks.length === 1 ? '' : 's'} copied`);
+                                    } catch {
+                                      notify.error('Clipboard blocked. First citation:\n' + blocks[0]);
+                                    }
+                                  }}
+                                  className="cursor-pointer px-3 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                                >
+                                  {f.label}
+                                </DropdownMenu.Item>
+                              ))}
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
+                      )}
                       <button
                         type="button"
                         onClick={async () => {

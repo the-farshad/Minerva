@@ -144,12 +144,28 @@ export function SectionView({
           </div>
           <AddByUrl
             section={section}
-            onAdded={(row) => setRows((rs) => [...rs, row])}
+            onAdded={(row) => setRows((rs) => {
+              const idx = rs.findIndex((x) => x.id === row.id);
+              if (idx >= 0) {
+                const next = rs.slice();
+                next[idx] = row;
+                return next;
+              }
+              return [...rs, row];
+            })}
           />
           {section.preset === 'papers' && (
             <UploadPaperButton
               slug={section.slug}
-              onAdded={(row) => setRows((rs) => [...rs, row])}
+              onAdded={(row) => setRows((rs) => {
+              const idx = rs.findIndex((x) => x.id === row.id);
+              if (idx >= 0) {
+                const next = rs.slice();
+                next[idx] = row;
+                return next;
+              }
+              return [...rs, row];
+            })}
             />
           )}
           {/* URL-keyed presets only accept rows via Add-by-URL. Other
