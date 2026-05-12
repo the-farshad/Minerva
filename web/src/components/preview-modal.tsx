@@ -589,7 +589,7 @@ export function PreviewModal({
     }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
-        <Dialog.Content className="fixed inset-0 z-50 m-0 flex flex-col bg-zinc-100 dark:bg-zinc-950 sm:inset-2 sm:rounded-xl sm:overflow-hidden">
+        <Dialog.Content className={`fixed inset-0 z-50 m-0 flex flex-col bg-zinc-100 dark:bg-zinc-950 ${view.sectionPreset === 'notes' ? '' : 'sm:inset-2 sm:rounded-xl sm:overflow-hidden'}`}>
           <header className="flex flex-wrap items-center gap-1 border-b border-zinc-200 bg-white/70 px-3 py-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/70">
             <Dialog.Title className="flex-1 truncate text-sm font-medium">
               {view.title || view.url}
@@ -869,6 +869,27 @@ export function PreviewModal({
                 rowId={view.rowId}
                 initial={typeof view.data?.content === 'string' ? (view.data.content as string) : (view.notes || '')}
                 contentField="content"
+                fullWidth
+                noteType={(view.data?.type as 'text' | 'md' | 'sketch') || 'md'}
+                onTypeChange={async (next) => {
+                  // Optimistic UI update — flip the badge immediately,
+                  // then PATCH the row's type field. Avoids a flicker
+                  // while the request is in-flight; rolls back if it
+                  // fails.
+                  const prevType = (view.data?.type as string) || 'md';
+                  setView((prev) => (prev ? { ...prev, data: { ...(prev.data || {}), type: next } } : prev));
+                  if (view.rowId && view.data) onRowDataChanged?.(view.rowId, { ...view.data, type: next });
+                  try {
+                    const r = await fetch(`/api/sections/${view.sectionSlug}/rows/${view.rowId}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ data: { type: next } }),
+                    });
+                    if (!r.ok) throw new Error(`type: ${r.status}`);
+                  } catch {
+                    setView((prev) => (prev ? { ...prev, data: { ...(prev.data || {}), type: prevType } } : prev));
+                  }
+                }}
                 onSaved={(next) => {
                   setView((prev) => (prev ? { ...prev, data: { ...(prev.data || {}), content: next } } : prev));
                   if (view.rowId && view.data) onRowDataChanged?.(view.rowId, { ...view.data, content: next });

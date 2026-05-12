@@ -13,27 +13,33 @@ import { readPref, writePref } from '@/lib/prefs';
 /** Markdown notes sidebar for the preview modal. Persists into the
  * row's `notes` column via the existing PATCH /rows/[id]. Debounced
  * save (1.2s) so every keystroke doesn't slam the server. */
+export type NoteType = 'text' | 'md' | 'sketch';
+
 export function NotesPane({
   sectionSlug,
   rowId,
   initial,
   onSaved,
   contentField = 'notes',
+  fullWidth = false,
+  noteType,
+  onTypeChange,
 }: {
   sectionSlug: string;
   rowId: string;
   initial: string;
-  /** Notify the parent of a successful save so its local row state
-   * doesn't drift out of sync with the server. Without this, the
-   * parent's `rows` cache still holds the pre-edit notes and any
-   * re-render trickles the stale value back down via `initial`,
-   * wiping the textarea mid-edit. */
   onSaved?: (next: string) => void;
-  /** Which `row.data` key the PATCH writes to. Defaults to `notes`
-   * (the sidebar use-case on papers/videos); the Notes preset
-   * passes `content` so the dedicated editor writes to the row's
-   * primary markdown body instead of the secondary notes column. */
   contentField?: string;
+  /** Drop the 320-px sidebar shape and stretch to the parent's
+   * width — used when NotesPane IS the editor (Notes preset),
+   * not a sidebar alongside an iframe. */
+  fullWidth?: boolean;
+  /** Per-row content type. When provided, renders a 3-way toggle
+   * (Text / Markdown / Sketch). Sketch mode replaces the textarea
+   * with a canvas preview + edit button; the row's content field
+   * stores the PNG data-URL. */
+  noteType?: NoteType;
+  onTypeChange?: (next: NoteType) => void;
 }) {
   const [value, setValue] = useState(initial);
   const [saving, setSaving] = useState<'idle' | 'pending' | 'saved' | 'error'>('idle');
@@ -197,9 +203,10 @@ export function NotesPane({
     }
   }
 
-  const paneWidth = mode === 'split' ? 'w-[36rem]' : 'w-80';
-  const showEditor = mode === 'edit' || mode === 'split';
-  const showPreview = mode === 'preview' || mode === 'split';
+  const paneWidth = fullWidth ? 'w-full flex-1' : (mode === 'split' ? 'w-[36rem]' : 'w-80');
+  const effType: NoteType = noteType ?? 'md';
+  const showEditor = effType !== 'sketch' && (mode === 'edit' || mode === 'split' || effType === 'text');
+  const showPreview = effType === 'md' && (mode === 'preview' || mode === 'split');
 
   return (
     <aside
@@ -325,48 +332,98 @@ export function NotesPane({
           >
             <Printer className="h-3.5 w-3.5" />
           </button>
-          <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
-            {(['edit', 'split', 'preview'] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => changeMode(m)}
-                className={`rounded-full px-2 py-0.5 text-[10px] capitalize ${mode === m ? 'bg-white shadow-sm dark:bg-zinc-950' : 'opacity-60 hover:opacity-100'}`}
-                title={`Switch to ${m} mode`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
+          {onTypeChange && (
+            <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800" title="Note content type">
+              {(['text', 'md', 'sketch'] as const).map((tp) => (
+                <button
+                  key={tp}
+                  type="button"
+                  onClick={() => onTypeChange(tp)}
+                  className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${effType === tp ? 'bg-white shadow-sm dark:bg-zinc-950' : 'opacity-60 hover:opacity-100'}`}
+                  title={tp === 'text' ? 'Plain text — no markdown rendering' : tp === 'md' ? 'Markdown — rendered preview available' : 'Sketch — pen-pressure canvas'}
+                >
+                  {tp}
+                </button>
+              ))}
+            </div>
+          )}
+          {effType === 'md' && (
+            <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
+              {(['edit', 'split', 'preview'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => changeMode(m)}
+                  className={`rounded-full px-2 py-0.5 text-[10px] capitalize ${mode === m ? 'bg-white shadow-sm dark:bg-zinc-950' : 'opacity-60 hover:opacity-100'}`}
+                  title={`Switch to ${m} mode`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          )}
           <span className="text-zinc-500">
             {uploading ? 'Uploading…' : saving === 'pending' ? 'Saving…' : saving === 'saved' ? '✓ Saved' : saving === 'error' ? '⚠ retry' : ''}
           </span>
         </div>
       </div>
-      <div className={`flex flex-1 overflow-hidden ${mode === 'split' ? 'divide-x divide-zinc-200 dark:divide-zinc-800' : ''}`}>
-        {showEditor && (
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => schedule(e.target.value)}
-            onBlur={() => {
-              if (t.current) { clearTimeout(t.current); t.current = null; }
-              if (value !== initial) void save(value);
-            }}
-            placeholder={'Markdown — autosaves to row.notes.\nDrop files here to attach, or click the 📎.'}
-            className="h-full flex-1 resize-none border-0 bg-transparent p-3 font-mono text-xs focus:outline-none"
-          />
-        )}
-        {showPreview && (
-          <div className="h-full flex-1 overflow-auto p-3">
-            <NotesPreview content={value} />
+      <div className={`flex flex-1 overflow-hidden ${mode === 'split' && effType === 'md' ? 'divide-x divide-zinc-200 dark:divide-zinc-800' : ''}`}>
+        {effType === 'sketch' ? (
+          /* The row's content field IS a PNG data-URL when the note's
+           * type is sketch. Render the existing canvas as a fullbleed
+           * preview; an Edit button reopens the sketch modal seeded
+           * from the current data-URL. */
+          <div className="flex h-full w-full flex-col items-center justify-center bg-zinc-50 p-4 dark:bg-zinc-900">
+            {value ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={value} alt="sketch" className="max-h-full max-w-full rounded border border-zinc-200 bg-white shadow-sm dark:border-zinc-800" />
+            ) : (
+              <p className="text-xs text-zinc-500">No sketch yet — click <strong>Edit sketch</strong> to draw one.</p>
+            )}
+            <button
+              type="button"
+              onClick={() => setSketchOpen(true)}
+              className="mt-4 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+            >
+              <Pencil className="h-3.5 w-3.5" /> {value ? 'Edit sketch' : 'Draw sketch'}
+            </button>
           </div>
+        ) : (
+          <>
+            {showEditor && (
+              <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(e) => schedule(e.target.value)}
+                onBlur={() => {
+                  if (t.current) { clearTimeout(t.current); t.current = null; }
+                  if (value !== initial) void save(value);
+                }}
+                placeholder={effType === 'text' ? 'Plain text — autosaves.' : 'Markdown — autosaves.\nDrop files here to attach, or click the 📎.'}
+                className={`h-full flex-1 resize-none border-0 bg-transparent p-3 focus:outline-none ${effType === 'text' ? 'text-sm' : 'font-mono text-xs'}`}
+              />
+            )}
+            {showPreview && (
+              <div className="h-full flex-1 overflow-auto p-3">
+                <NotesPreview content={value} />
+              </div>
+            )}
+          </>
         )}
       </div>
       <SketchModal
         open={sketchOpen}
         onClose={() => setSketchOpen(false)}
-        onSaved={(url, name) => spliceAtCaret(`![${name}](${url})\n`)}
+        seed={effType === 'sketch' ? value : undefined}
+        onSaved={(url, name) => {
+          if (effType === 'sketch') {
+            // For sketch-typed notes, the saved data-URL IS the
+            // content; replace, don't splice.
+            schedule(url);
+          } else {
+            spliceAtCaret(`![${name}](${url})\n`);
+          }
+        }}
       />
     </aside>
   );

@@ -597,8 +597,11 @@ export function GroupedGrid({
                         * to the three-dots overflow menu so the
                         * corner cluster reads as a single control
                         * group. */}
-                      <div className="pr-12 text-sm font-medium">
-                        {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
+                      <div className="flex items-start gap-1.5 pr-12">
+                        <div className="flex-1 text-sm font-medium">
+                          {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
+                        </div>
+                        {section.preset === 'notes' && <NotesTypeBadge type={String(r.data.type || 'md')} />}
                       </div>
                       <div className="mt-1.5 line-clamp-1 text-xs text-zinc-500">
                         {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
@@ -685,6 +688,27 @@ function PlaylistProgress({ rows }: { rows: Row[] }) {
       </div>
       <span>{mm(totalWatched)} / {mm(totalDur)}</span>
     </div>
+  );
+}
+
+/** Small uppercase chip in the card corner identifying a Notes row's
+ * content type. Drives nothing — purely informational so users can
+ * spot sketches and plain-text notes at a glance among Markdown ones. */
+function NotesTypeBadge({ type }: { type: string }) {
+  const t = (type === 'text' || type === 'md' || type === 'sketch') ? type : 'md';
+  const label = t === 'md' ? 'MD' : t === 'sketch' ? 'SKETCH' : 'TEXT';
+  const tone = t === 'md'
+    ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+    : t === 'sketch'
+      ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+      : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
+  return (
+    <span
+      title={`Note type: ${t}`}
+      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold tracking-wide ${tone}`}
+    >
+      {label}
+    </span>
   );
 }
 

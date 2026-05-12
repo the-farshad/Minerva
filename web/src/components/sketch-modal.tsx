@@ -28,14 +28,20 @@ type Stroke = { color: string; points: Point[]; eraser: boolean };
 const PALETTE = ['#1f1f1f', '#e11d48', '#ea580c', '#ca8a04', '#16a34a', '#0284c7', '#7c3aed'];
 
 export function SketchModal({
-  open, onClose, onSaved,
+  open, onClose, onSaved, seed,
 }: {
   open: boolean;
   onClose: () => void;
   onSaved: (url: string, name: string) => void;
+  /** When set, the canvas opens with this image painted as a
+   * non-erasable background layer. Used by the Notes preset to
+   * "Edit sketch" — the previous PNG is loaded so the user can
+   * keep refining instead of starting from scratch. */
+  seed?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const bgImageRef = useRef<HTMLImageElement | null>(null);
   const strokesRef = useRef<Stroke[]>([]);
   const drawing = useRef<Stroke | null>(null);
   const [color, setColor] = useState(PALETTE[0]);
@@ -50,6 +56,10 @@ export function SketchModal({
     const c = canvasRef.current;
     const wrap = wrapRef.current;
     if (!c || !wrap) return;
+    // Fresh open → drop any prior strokes / bg so re-opening doesn't
+    // stack last session's drawing under the new one.
+    strokesRef.current = [];
+    bgImageRef.current = null;
     const sync = () => {
       const dpr = window.devicePixelRatio || 1;
       const rect = wrap.getBoundingClientRect();
@@ -67,9 +77,15 @@ export function SketchModal({
     };
     sync();
     window.addEventListener('resize', sync);
+    if (seed) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { bgImageRef.current = img; redraw(); force((n) => n + 1); };
+      img.src = seed;
+    }
     return () => window.removeEventListener('resize', sync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, seed]);
 
   function redraw() {
     const c = canvasRef.current;
@@ -81,6 +97,19 @@ export function SketchModal({
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.scale(dpr, dpr);
+    if (bgImageRef.current) {
+      // Paint the seed image fit-to-canvas, preserving aspect ratio,
+      // centered. The CSS box is what the user sees so we draw in
+      // CSS pixels (the ctx.scale above already maps to DPR).
+      const cw = c.clientWidth || c.width / dpr;
+      const ch = c.clientHeight || c.height / dpr;
+      const iw = bgImageRef.current.naturalWidth;
+      const ih = bgImageRef.current.naturalHeight;
+      const r = Math.min(cw / iw, ch / ih);
+      const w = iw * r;
+      const h = ih * r;
+      ctx.drawImage(bgImageRef.current, (cw - w) / 2, (ch - h) / 2, w, h);
+    }
     for (const s of strokesRef.current) {
       drawStroke(ctx, s);
     }
@@ -173,7 +202,7 @@ export function SketchModal({
   async function save() {
     const c = canvasRef.current;
     if (!c) return;
-    if (strokesRef.current.length === 0) {
+    if (strokesRef.current.length === 0 && !bgImageRef.current) {
       notify.error('Sketch is empty — draw something first.');
       return;
     }
