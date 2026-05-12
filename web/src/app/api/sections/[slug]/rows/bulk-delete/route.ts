@@ -61,8 +61,12 @@ export async function POST(
         ),
       });
       driveIds = toGo
-        .flatMap((r) => Array.from(String((r.data as Record<string, unknown>).offline || '')
-          .matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]));
+        .flatMap((r) => {
+          const d = r.data as Record<string, unknown>;
+          const offlineIds = Array.from(String(d.offline || '').matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]);
+          const origId = String(d.originalFileId || '').trim();
+          return origId ? [...offlineIds, origId] : offlineIds;
+        });
       const res = await db.update(schema.rows)
         .set({ deleted: true, updatedAt: new Date() })
         .where(and(
@@ -127,8 +131,12 @@ export async function POST(
 
       driveIds = toGoRows
         .filter((r) => toDelete.includes(r.id))
-        .flatMap((r) => Array.from(String((r.data || {}).offline || '')
-          .matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]));
+        .flatMap((r) => {
+          const d = r.data || {};
+          const offlineIds = Array.from(String(d.offline || '').matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]);
+          const origId = String(d.originalFileId || '').trim();
+          return origId ? [...offlineIds, origId] : offlineIds;
+        });
 
       if (toDelete.length > 0) {
         const res = await db.update(schema.rows)
