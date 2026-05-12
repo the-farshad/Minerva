@@ -101,6 +101,11 @@ export function PreviewModal({
   // scrolls so BookmarkDrawer / writePref stay current.
   const lockedRowId = useRef<string | null>(null);
   const initialPdfPageRef = useRef(1);
+  // Mirror of the PDF page-resume pattern for YT playback position.
+  // Locked by the video URL so a refresh-metadata or other parent
+  // re-render doesn't re-read the pref and yank the iframe back.
+  const lockedYtUrl = useRef<string | null>(null);
+  const initialYtResumeRef = useRef(0);
   if (item?.rowId && lockedRowId.current !== item.rowId) {
     lockedRowId.current = item.rowId;
     const saved = readPref<number>(`pdf.page.${item.rowId}`, 0);
@@ -197,19 +202,22 @@ export function PreviewModal({
     return () => window.removeEventListener('message', onMsg);
   }, []);
 
-  // Persist resume position when leaving a YT video. Local-only
-  // for now (per-device); a future build pushes through userprefs.
+  // Persist resume position when leaving a YT video. Effect re-runs
+  // whenever the active video URL changes, so the cleanup fires both
+  // on modal close AND on switching to a different item — using the
+  // URL captured by THIS render's closure but the LATEST time from
+  // ytTimeRef. The previous version had `[]` deps and captured
+  // `view` at mount (when item was still null), so the save never
+  // fired.
   useEffect(() => {
+    const url = view?.url;
+    if (!url) return;
+    if (!ytId(url)) return;
     return () => {
-      const v = view;
-      if (!v) return;
-      const yt = ytId(v.url);
-      if (!yt) return;
       const t = Math.floor(ytTimeRef.current);
-      if (t > 5) writePref(`resume.${v.url}`, t);
+      if (t > 5) writePref(`resume.${url}`, t);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [view?.url]);
 
   // Paper auto-mirror on first preview-open: fire and forget so
   // the iframe can start loading the (probably-X-Frame-blocked)
@@ -403,7 +411,18 @@ export function PreviewModal({
 
   const yt = ytId(view.url);
   const pdf = isPdf(view.url);
-  const ytResume = yt ? readPref<number>(`resume.${view.url}`, 0) : 0;
+  // Lock the resume value per URL so the YouTubeFrame mounts with
+  // the saved `start=<n>` on its very first render. The iframe only
+  // honours `start` at mount time — a later update from a useEffect
+  // won't make it seek, exactly like the PDF #page=<n> bug we fixed
+  // earlier. The locked ref also means we don't re-read the pref on
+  // every render (which would otherwise yank the iframe back to the
+  // old timestamp every time pagechanging fires).
+  if (yt && view.url && lockedYtUrl.current !== view.url) {
+    lockedYtUrl.current = view.url;
+    initialYtResumeRef.current = readPref<number>(`resume.${view.url}`, 0);
+  }
+  const ytResume = initialYtResumeRef.current;
   const hostSrc = view.hostPath
     ? `/api/helper/file/serve?path=${encodeURIComponent(view.hostPath)}`
     : null;
@@ -834,11 +853,24 @@ export function PreviewModal({
                * via yt-dlp + mirrored to Drive, play the local MP4
                * instead of the YouTube embed. Drive auth is handled
                * server-side; the <video> element sees plain
-               * same-origin bytes with Range support. */
+               * same-origin bytes with Range support.
+               *
+               * Resume position carries through here too: we seek
+               * to `ytResume` after metadata loads and pipe
+               * `currentTime` updates into ytTimeRef so the
+               * shared save-on-close effect picks them up. */
               <video
+                key={view.driveFileId}
                 src={`/api/drive/file?id=${encodeURIComponent(view.driveFileId)}`}
                 controls
                 autoPlay
+                onLoadedMetadata={(e) => {
+                  const el = e.currentTarget;
+                  if (ytResume > 5 && Number.isFinite(el.duration) && ytResume < el.duration - 2) {
+                    el.currentTime = ytResume;
+                  }
+                }}
+                onTimeUpdate={(e) => { ytTimeRef.current = e.currentTarget.currentTime; }}
                 className="h-full w-full bg-black"
               />
             ) : yt ? (
@@ -1035,6 +1067,7 @@ function YouTubeFrame({
         </div>
       )}
       <iframe
+        key={`${videoId}-${start}`}
         ref={iframeRef as React.RefObject<HTMLIFrameElement>}
         src={ytSrc}
         className="h-full w-full"
