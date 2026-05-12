@@ -569,18 +569,6 @@ def download():
 def pdf_extract():
     if request.method == "OPTIONS":
         return ("", 204, _cors_dict())
-    body = request.get_json(silent=True) or {}
-    pdf_url = (body.get("url") or "").strip()
-    if not pdf_url:
-        return (jsonify({"ok": False, "error": "Missing 'url' in body."}), 400, _cors_dict())
-    # Translate URL shapes that fetch HTML rather than the PDF bytes
-    # the loader expects. arxiv abs pages, for instance, are the
-    # paper's HTML record — opendataloader-pdf crashes when fed HTML.
-    # Server-side rewrite means clients can pass either form.
-    import re as _re
-    abs_match = _re.match(r"^(https?://arxiv\.org/)abs/(.+?)(?:v\d+)?(?:\.pdf)?$", pdf_url, _re.I)
-    if abs_match:
-        pdf_url = abs_match.group(1) + "pdf/" + abs_match.group(2) + ".pdf"
     if not shutil.which("opendataloader-pdf"):
         return (
             jsonify({
@@ -594,19 +582,34 @@ def pdf_extract():
         )
     tmpdir = tempfile.mkdtemp(prefix="minerva-pdfextract-")
     pdf_path = os.path.join(tmpdir, "in.pdf")
-    out_path = os.path.join(tmpdir, "out.json")
+    # Two intake shapes — multipart upload (preferred, used by the
+    # Next.js extract proxy which already has Drive-authed bytes in
+    # hand) OR a public URL we fetch ourselves. The URL path is here
+    # for backwards compat with the legacy SPA which passed an
+    # arxiv URL directly.
     try:
-        try:
-            up = requests.get(pdf_url, timeout=60)
-            up.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            return (
-                jsonify({"ok": False, "error": f"PDF fetch failed: {exc}"}),
-                502,
-                _cors_dict(),
-            )
-        with open(pdf_path, "wb") as fh:
-            fh.write(up.content)
+        if request.files and "file" in request.files:
+            request.files["file"].save(pdf_path)
+        else:
+            body = request.get_json(silent=True) or {}
+            pdf_url = (body.get("url") or "").strip()
+            if not pdf_url:
+                return (jsonify({"ok": False, "error": "Send either a multipart `file` part or a JSON `{\"url\": ...}` body."}), 400, _cors_dict())
+            import re as _re
+            abs_match = _re.match(r"^(https?://arxiv\.org/)abs/(.+?)(?:v\d+)?(?:\.pdf)?$", pdf_url, _re.I)
+            if abs_match:
+                pdf_url = abs_match.group(1) + "pdf/" + abs_match.group(2) + ".pdf"
+            try:
+                up = requests.get(pdf_url, timeout=60)
+                up.raise_for_status()
+            except Exception as exc:  # noqa: BLE001
+                return (
+                    jsonify({"ok": False, "error": f"PDF fetch failed: {exc}"}),
+                    502,
+                    _cors_dict(),
+                )
+            with open(pdf_path, "wb") as fh:
+                fh.write(up.content)
         out_dir = os.path.join(tmpdir, "out")
         os.makedirs(out_dir, exist_ok=True)
         try:

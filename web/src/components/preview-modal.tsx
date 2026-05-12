@@ -581,20 +581,18 @@ export function PreviewModal({
                 <RefreshCw className="h-3.5 w-3.5" /> Refresh
               </button>
             )}
-            {pdf && view.rowId && (
+            {pdf && view.rowId && view.sectionSlug && (
               <button
                 type="button"
                 onClick={async () => {
-                  if (!view.rowId) return;
+                  if (!view.rowId || !view.sectionSlug) return;
                   toast.info('Extracting text…');
                   try {
-                    const r = await fetch('/api/helper/pdf/extract', {
+                    const r = await fetch(`/api/sections/${view.sectionSlug}/rows/${view.rowId}/extract-pdf`, {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ url: `${window.location.origin}/api/pdf/${view.rowId}` }),
                     });
                     const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string; content?: string; markdown?: string; text?: string };
-                    if (!r.ok || j.ok === false) throw new Error(j.error || `pdf/extract: ${r.status}`);
+                    if (!r.ok || j.ok === false) throw new Error(j.error || `extract-pdf: ${r.status}`);
                     const text = j.markdown || j.content || j.text || '';
                     if (!text.trim()) throw new Error('Loader returned an empty document.');
                     try {

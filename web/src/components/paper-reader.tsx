@@ -66,16 +66,17 @@ export function PaperReader({
     setLoading(true);
     setErr(null);
     try {
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const r = await fetch('/api/helper/pdf/extract', {
+      // Use the auth-aware server-side extractor — it loads PDF
+      // bytes from Drive / host / proxy and forwards them to the
+      // helper as multipart. The previous URL-passing path hit
+      // /api/pdf through Cloudflare and 401'd.
+      const r = await fetch(`/api/sections/${sectionSlug}/rows/${rowId}/extract-pdf`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: `${origin}${extractUrl}` }),
       });
       const j = (await r.json().catch(() => ({}))) as {
         ok?: boolean; error?: string; content?: string; markdown?: string; text?: string;
       };
-      if (!r.ok || j.ok === false) throw new Error(j.error || `pdf/extract: ${r.status}`);
+      if (!r.ok || j.ok === false) throw new Error(j.error || `extract-pdf: ${r.status}`);
       const md = j.markdown || j.content || j.text || '';
       if (!md.trim()) throw new Error('Loader returned an empty document.');
       setText(md);

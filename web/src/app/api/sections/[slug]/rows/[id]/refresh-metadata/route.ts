@@ -22,6 +22,8 @@ const YT_VIDEO_RE = /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/
 const YT_PLAYLIST_RE = /[?&]list=([A-Za-z0-9_-]+)/;
 const ARXIV_RE = /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]+(?:v\d+)?|[a-z\-]+\/\d+)/i;
 const DOI_RE = /^10\.[0-9]{4,9}\/\S+$/;
+const ISBN_RE = /^(?:97[89])?\d{9}[\dX]$/i;
+function normalizeIsbn(s: string): string { return String(s || '').replace(/[\s-]/g, '').toUpperCase(); }
 
 type RowData = Record<string, unknown>;
 
@@ -109,6 +111,54 @@ async function fetchArxiv(arxivId: string): Promise<RowData> {
   return out;
 }
 
+async function fetchOpenLibrary(isbn: string): Promise<RowData> {
+  // Open Library returns a dictionary keyed by the bibkey we passed.
+  // jscmd=data gives us a cleanly-shaped object (title, authors,
+  // publishers, publish_date, …).
+  const key = `ISBN:${isbn}`;
+  const r = await fetch(
+    `https://openlibrary.org/api/books?bibkeys=${encodeURIComponent(key)}&format=json&jscmd=data`,
+    { cache: 'no-store' },
+  );
+  if (!r.ok) throw new Error(`Open Library ${r.status}`);
+  const j = await r.json() as Record<string, {
+    title?: string; subtitle?: string;
+    authors?: Array<{ name?: string }>;
+    publishers?: Array<{ name?: string }>;
+    publish_date?: string;
+    number_of_pages?: number;
+    cover?: { large?: string; medium?: string; small?: string };
+    url?: string;
+    notes?: string;
+    subjects?: Array<{ name?: string }>;
+  }>;
+  const item = j[key];
+  if (!item) throw new Error(`Open Library has no record for ISBN ${isbn}.`);
+  const out: RowData = {};
+  if (item.title) {
+    out.title = item.subtitle ? `${item.title}: ${item.subtitle}` : item.title;
+  }
+  if (item.authors?.length) {
+    out.authors = item.authors.map((a) => a.name).filter(Boolean).join(', ');
+  }
+  if (item.publishers?.length) {
+    out.publisher = item.publishers.map((p) => p.name).filter(Boolean).join(', ');
+  }
+  if (item.publish_date) {
+    const y = item.publish_date.match(/\d{4}/);
+    if (y) out.year = y[0];
+  }
+  if (item.number_of_pages) out.pages = String(item.number_of_pages);
+  if (item.cover?.large || item.cover?.medium) {
+    out.thumbnail = item.cover.large || item.cover.medium!;
+  }
+  if (item.subjects?.length) {
+    out.subjects = item.subjects.slice(0, 8).map((s) => s.name).filter(Boolean).join(', ');
+  }
+  out.isbn = isbn;
+  return out;
+}
+
 async function fetchCrossref(doi: string): Promise<RowData> {
   const r = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`crossref ${r.status}`);
@@ -187,18 +237,27 @@ export async function POST(
       const m = ARXIV_RE.exec(url)!;
       fetched = await fetchArxiv(m[1]);
       source = 'arxiv';
-    } else if (typeof data.doi === 'string' && DOI_RE.test(data.doi)) {
-      fetched = await fetchCrossref(data.doi);
+    } else if (typeof data.doi === 'string' && DOI_RE.test(String(data.doi).trim())) {
+      fetched = await fetchCrossref(String(data.doi).trim());
       source = 'crossref';
     } else if (/^doi\.org\//i.test(url) || /^https?:\/\/(dx\.)?doi\.org\//i.test(url)) {
       const doi = url.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
       fetched = await fetchCrossref(doi);
       source = 'crossref';
     } else {
-      return NextResponse.json(
-        { error: 'No metadata source matches this row. Supported: YouTube (with API key), arxiv, DOI.' },
-        { status: 409 },
-      );
+      // ISBN — check data.isbn, data.isbn10, data.isbn13. The user
+      // may have typed any of them in the Info pane Edit mode.
+      const rawIsbn = String(data.isbn || data.isbn13 || data.isbn10 || '');
+      const isbn = normalizeIsbn(rawIsbn);
+      if (isbn && ISBN_RE.test(isbn)) {
+        fetched = await fetchOpenLibrary(isbn);
+        source = 'openlibrary';
+      } else {
+        return NextResponse.json(
+          { error: 'No metadata source matches this row. Supported: YouTube (with API key), arxiv URLs, DOI (data.doi or doi.org URL), ISBN-10/13 (data.isbn). Add a `doi` or `isbn` field in the Info pane and click Refresh.' },
+          { status: 409 },
+        );
+      }
     }
 
     // Respect manual edits: keys listed in data._userEdited stay
