@@ -173,7 +173,25 @@ export function PreviewModal({
   const [view, setView] = useState<PreviewItem | null>(item);
   useEffect(() => { setView(item); }, [item]);
   useEffect(() => {
-    if (!open && item) onClose();
+    if (!open && item) {
+      // Belt-and-suspenders resume save: PDF.js's `pagechanging`
+      // fires on visible-page change, but in practice a few edge
+      // cases (rapid scroll right before close, the page never
+      // crossing into the centre, the user clicking Close before
+      // the event loop drains) can leave the latest page un-
+      // persisted. On close, read `app.page` directly and write
+      // it one more time so the next open always sees the right
+      // page. Cheap and idempotent — same value as the last
+      // pagechanging just overwrites itself.
+      try {
+        const w = pdfIframeRef.current?.contentWindow as (Window & { PDFViewerApplication?: { page?: number } }) | null;
+        const p = w?.PDFViewerApplication?.page;
+        if (typeof p === 'number' && p > 0 && item.rowId) {
+          writePref(`pdf.page.${item.rowId}`, p);
+        }
+      } catch { /* iframe contentWindow inaccessible — no-op */ }
+      onClose();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 

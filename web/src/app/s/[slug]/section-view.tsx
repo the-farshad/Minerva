@@ -10,6 +10,7 @@ import { notify } from '@/lib/notify';
 import { PreviewModal } from '@/components/preview-modal';
 import { InlineCell, parseType } from '@/components/inline-cell';
 import { AddByUrl } from '@/components/add-by-url';
+import { AddNote } from '@/components/add-note';
 import { appConfirm } from '@/components/confirm';
 import { appPrompt } from '@/components/prompt';
 import { GroupedGrid } from '@/components/grouped-grid';
@@ -44,7 +45,7 @@ export function SectionView({
   // their rows aren't really board-shaped.
   const availableModes: readonly ('list' | 'grid' | 'kanban' | 'calendar')[] =
     section.preset === 'tasks'   ? (['kanban'] as const) :
-    section.preset === 'notes'   ? (['grid', 'kanban', 'calendar'] as const) :
+    section.preset === 'notes'   ? (['grid'] as const) :
     isUrlKeyed                   ? (['list', 'grid'] as const) :
                                    (['list', 'grid', 'kanban', 'calendar'] as const);
   // Preset-aware default view mode. Tasks naturally read as a
@@ -222,17 +223,19 @@ export function SectionView({
   const effectivePreset = section.preset;
 
   // ---- Drag-and-drop file uploads --------------------------------
-  // For Papers, dropped PDFs become rows via /upload-paper. For
-  // YouTube, dropped video files become rows via /upload-video.
-  // Other presets get a "not supported" toast — Notes already has
-  // its own per-note file drop inside the editor pane.
+  // Works on every section preset. The Papers / YouTube branches
+  // route to specialized endpoints that auto-extract metadata
+  // (PDF title/authors/year, video duration/thumbnail). For
+  // everything else, the file streams to Drive and a row is
+  // created with whichever shape best fits the preset:
+  //   - Notes: image MIME → type='sketch' + content=<url>;
+  //     other MIME → type='md' + content='[name](url)'
+  //   - Tasks + other: { title=<filename>, attachments=<url> }
+  //     (with status=first-column for Tasks so it lands in
+  //     the leftmost Kanban lane).
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(0);
-  const dropPreset: 'papers' | 'youtube' | null =
-    effectivePreset === 'papers' ? 'papers' :
-    effectivePreset === 'youtube' ? 'youtube' :
-    null;
 
   function isFileDrag(e: React.DragEvent): boolean {
     const types = e.dataTransfer?.types;
@@ -249,6 +252,74 @@ export function SectionView({
     dragDepth.current = Math.max(0, dragDepth.current - 1);
     if (dragDepth.current === 0) setDragging(false);
   }
+
+  /** Upload a single file via the specialized Papers / YouTube
+   *  endpoint when the MIME matches; fall through to a generic
+   *  Drive upload + create-row for everything else. Returns the
+   *  new row so the caller can splice it into local state. */
+  async function uploadOne(file: File): Promise<Row | null> {
+    const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+    const isVideo = /\.(mp4|mkv|mov|webm|avi)$/i.test(file.name) || /^video\//i.test(file.type);
+    const isImage = /^image\//i.test(file.type);
+
+    // Specialized routes — Papers / YouTube where the matching file
+    // type also matches the preset; richer metadata than the
+    // generic path can produce.
+    if (effectivePreset === 'papers' && isPdf) {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const r = await fetch(`/api/sections/${section.slug}/upload-paper`, { method: 'POST', body: fd });
+      const j = (await r.json().catch(() => ({}))) as { error?: string; id?: string; data?: Record<string, unknown>; updatedAt?: string };
+      if (!r.ok || !j.id || !j.data || !j.updatedAt) throw new Error(j.error || `upload-paper: ${r.status}`);
+      return { id: j.id, data: j.data, updatedAt: j.updatedAt };
+    }
+    if (effectivePreset === 'youtube' && isVideo) {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const r = await fetch(`/api/sections/${section.slug}/upload-video`, { method: 'POST', body: fd });
+      const j = (await r.json().catch(() => ({}))) as { error?: string; id?: string; data?: Record<string, unknown>; updatedAt?: string };
+      if (!r.ok || !j.id || !j.data || !j.updatedAt) throw new Error(j.error || `upload-video: ${r.status}`);
+      return { id: j.id, data: j.data, updatedAt: j.updatedAt };
+    }
+
+    // Generic path — stream to Drive, then create a row whose
+    // shape fits the preset.
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    fd.append('name', file.name);
+    fd.append('kind', 'misc');
+    const r = await fetch('/api/drive/upload', { method: 'POST', body: fd });
+    const j = (await r.json().catch(() => ({}))) as { fileId?: string; error?: string };
+    if (!r.ok || !j.fileId) throw new Error(j.error || `upload: ${r.status}`);
+    const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
+    const headers = section.schema.headers;
+    const bareName = file.name.replace(/\.[^.]+$/, '');
+
+    let data: Record<string, unknown>;
+    if (effectivePreset === 'notes') {
+      data = isImage
+        ? { title: bareName, type: 'sketch', content: url }
+        : { title: bareName, type: 'md', content: `[${file.name}](${url})\n` };
+    } else if (effectivePreset === 'tasks') {
+      // Drop into the leftmost Kanban column so the new card is
+      // immediately visible rather than tucked at the end.
+      const statusIdx = headers.indexOf('status');
+      const types = section.schema.types || [];
+      const m = statusIdx >= 0 ? String(types[statusIdx] || '').match(/^select\(([^)]*)\)/) : null;
+      const firstStatus = m ? m[1].split(',')[0].trim() : '';
+      data = { title: bareName, attachments: url, ...(firstStatus ? { status: firstStatus } : {}) };
+    } else {
+      data = { title: bareName, attachments: url };
+      // If the schema has no `attachments` header but does have
+      // `url`, populate that instead so the row's link affordances
+      // can find the file.
+      if (!headers.includes('attachments') && headers.includes('url')) {
+        data = { title: bareName, url };
+      }
+    }
+    return createRow(data);
+  }
+
   async function onDrop(e: React.DragEvent) {
     if (!isFileDrag(e)) return;
     e.preventDefault();
@@ -256,34 +327,19 @@ export function SectionView({
     setDragging(false);
     const files = Array.from(e.dataTransfer.files || []);
     if (!files.length) return;
-    if (!dropPreset) {
-      notify.error(`Drag-and-drop upload isn't supported for the "${effectivePreset || 'this'}" preset yet.`);
-      return;
-    }
-    const endpoint = dropPreset === 'papers' ? 'upload-paper' : 'upload-video';
-    // Light client-side filter so a stray screenshot doesn't try to
-    // become a paper row. The server validates anyway; this just
-    // saves a round-trip on obviously-wrong drops.
-    const accepted = files.filter((f) => dropPreset === 'papers'
-      ? /\.pdf$/i.test(f.name) || f.type === 'application/pdf'
-      : /\.(mp4|mkv|mov|webm|avi)$/i.test(f.name) || /^video\//i.test(f.type));
-    const rejected = files.length - accepted.length;
-    if (rejected > 0) {
-      notify.error(`Skipped ${rejected} file${rejected === 1 ? '' : 's'} — wrong type for ${dropPreset}.`);
-    }
-    if (accepted.length === 0) return;
 
-    setUploading(accepted.length);
-    toast.info(`Uploading ${accepted.length} file${accepted.length === 1 ? '' : 's'}…`);
+    setUploading(files.length);
+    toast.info(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`);
     let done = 0, failed = 0;
-    for (const file of accepted) {
+    for (const file of files) {
       try {
-        const fd = new FormData();
-        fd.append('file', file, file.name);
-        const r = await fetch(`/api/sections/${section.slug}/${endpoint}`, { method: 'POST', body: fd });
-        const j = (await r.json().catch(() => ({}))) as { error?: string; id?: string; data?: Record<string, unknown>; updatedAt?: string };
-        if (!r.ok || !j.id || !j.data || !j.updatedAt) throw new Error(j.error || `${endpoint}: ${r.status}`);
-        setRows((rs) => [{ id: j.id!, data: j.data!, updatedAt: j.updatedAt! }, ...rs]);
+        const row = await uploadOne(file);
+        if (!row) throw new Error('create-row failed');
+        // createRow already prepends; uploadOne's specialized
+        // branches return a fresh row that's NOT yet in setRows
+        // (they bypassed createRow). Patch both shapes by ensuring
+        // the row is present without duplicating.
+        setRows((rs) => rs.some((x) => x.id === row.id) ? rs : [row, ...rs]);
         done++;
       } catch (err) {
         failed++;
@@ -308,16 +364,14 @@ export function SectionView({
         <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-blue-500/10 backdrop-blur-sm">
           <div className="rounded-2xl border-2 border-dashed border-blue-500 bg-white px-8 py-6 text-center shadow-xl dark:bg-zinc-900">
             <FileUp className="mx-auto h-10 w-10 text-blue-500" />
-            <p className="mt-3 text-sm font-medium">
-              {dropPreset
-                ? `Drop to upload ${dropPreset === 'papers' ? 'PDF' : 'video'} files`
-                : `Drag-and-drop upload isn't supported here`}
+            <p className="mt-3 text-sm font-medium">Drop to upload</p>
+            <p className="mt-1 text-[11px] text-zinc-500">
+              {effectivePreset === 'papers' ? 'PDFs get parsed for title / authors / year'
+                : effectivePreset === 'youtube' ? 'Videos get duration + thumbnail'
+                : effectivePreset === 'notes' ? 'Image → sketch note · other → markdown note'
+                : effectivePreset === 'tasks' ? 'New card with the file attached'
+                : 'New row with the file attached'} · uploads to your Drive
             </p>
-            {dropPreset && (
-              <p className="mt-1 text-[11px] text-zinc-500">
-                {dropPreset === 'papers' ? 'PDF only' : 'mp4, mkv, mov, webm'} · uploads to your Drive
-              </p>
-            )}
           </div>
         </div>
       )}
@@ -354,18 +408,25 @@ export function SectionView({
               </button>
             ))}
           </div>
-          <AddByUrl
-            section={section}
-            onAdded={(row) => setRows((rs) => {
-              const idx = rs.findIndex((x) => x.id === row.id);
-              if (idx >= 0) {
-                const next = rs.slice();
-                next[idx] = row;
-                return next;
-              }
-              return [...rs, row];
-            })}
-          />
+          {section.preset === 'notes' ? (
+            <AddNote
+              section={section}
+              onAdded={(row) => setRows((rs) => [row, ...rs])}
+            />
+          ) : (
+            <AddByUrl
+              section={section}
+              onAdded={(row) => setRows((rs) => {
+                const idx = rs.findIndex((x) => x.id === row.id);
+                if (idx >= 0) {
+                  const next = rs.slice();
+                  next[idx] = row;
+                  return next;
+                }
+                return [...rs, row];
+              })}
+            />
+          )}
           {section.preset === 'papers' && (
             <UploadPaperButton
               slug={section.slug}

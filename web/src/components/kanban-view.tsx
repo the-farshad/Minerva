@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Trash2, Plus, MoreVertical, CheckSquare, Square, Paperclip, StickyNote, GripVertical, X, Pencil, FileText } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { toast } from 'sonner';
@@ -563,16 +563,10 @@ function KanbanCard({
       </div>
       <div className="pl-3">
         {editingTitle ? (
-          <input
-            autoFocus
-            defaultValue={title}
-            onBlur={(e) => void commitTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); void commitTitle((e.target as HTMLInputElement).value); }
-              if (e.key === 'Escape') setEditingTitle(false);
-            }}
-            className="w-full rounded border border-zinc-300 bg-white px-1 py-0.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            onClick={(e) => e.stopPropagation()}
+          <CardTitleInput
+            initial={title}
+            onCommit={commitTitle}
+            onCancel={() => setEditingTitle(false)}
           />
         ) : (
           <button
@@ -702,6 +696,49 @@ function KanbanCard({
         )}
       </div>
     </li>
+  );
+}
+
+/** Inline title editor for a Kanban card. Wraps the bare <input>
+ *  so the latest typed value is flushed even when the card
+ *  unmounts mid-edit (drag-to-reorder dropping the card off-
+ *  screen, parent re-render swapping ids, etc.) — onBlur isn't
+ *  fired in those cases and the user's typing would otherwise
+ *  silently vanish. Escape sets a `cancelled` flag so the
+ *  cleanup discards the typed value. */
+function CardTitleInput({
+  initial, onCommit, onCancel,
+}: {
+  initial: string;
+  onCommit: (next: string) => Promise<void> | void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const valueRef = useRef(value);
+  const initialRef = useRef(initial);
+  const cancelledRef = useRef(false);
+  useEffect(() => { valueRef.current = value; }, [value]);
+  useEffect(() => () => {
+    if (cancelledRef.current) return;
+    const v = valueRef.current.trim();
+    if (v && v !== initialRef.current) {
+      void onCommit(v);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <input
+      autoFocus
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={(e) => void onCommit(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); void onCommit(value); }
+        if (e.key === 'Escape') { cancelledRef.current = true; onCancel(); }
+      }}
+      className="w-full rounded border border-zinc-300 bg-white px-1 py-0.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+      onClick={(e) => e.stopPropagation()}
+    />
   );
 }
 

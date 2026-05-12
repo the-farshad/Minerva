@@ -50,7 +50,12 @@ export function SketchModal({
   const [uploading, setUploading] = useState(false);
 
   // Resize the backing canvas to match its CSS box so strokes don't
-  // appear blurry on hi-DPI displays. Re-fires on every open.
+  // appear blurry on hi-DPI displays. The window-resize listener
+  // alone wasn't enough — Radix Dialog animates its content in,
+  // and the first effect-tick frequently catches a 0×0 wrap which
+  // left the canvas un-clickable until you resized the window.
+  // ResizeObserver watches the wrap itself and re-syncs the moment
+  // it grows from 0 to its real size.
   useEffect(() => {
     if (!open) return;
     const c = canvasRef.current;
@@ -63,6 +68,7 @@ export function SketchModal({
     const sync = () => {
       const dpr = window.devicePixelRatio || 1;
       const rect = wrap.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
       c.width = Math.round(rect.width * dpr);
       c.height = Math.round(rect.height * dpr);
       c.style.width = rect.width + 'px';
@@ -76,14 +82,27 @@ export function SketchModal({
       }
     };
     sync();
+    const ro = new ResizeObserver(() => sync());
+    ro.observe(wrap);
     window.addEventListener('resize', sync);
     if (seed) {
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => { bgImageRef.current = img; redraw(); force((n) => n + 1); };
+      img.onerror = () => {
+        // Seed image failed to load (CORS, 404, etc.) — leave a
+        // blank canvas instead of stranding the user with a stuck
+        // loading state. They can still draw fresh strokes and
+        // save them as a new sketch.
+        bgImageRef.current = null;
+        force((n) => n + 1);
+      };
       img.src = seed;
     }
-    return () => window.removeEventListener('resize', sync);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', sync);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed]);
 
@@ -290,7 +309,7 @@ export function SketchModal({
               <button
                 type="button"
                 onClick={save}
-                disabled={uploading || strokesRef.current.length === 0}
+                disabled={uploading || (strokesRef.current.length === 0 && !bgImageRef.current)}
                 className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
               >
                 {uploading
