@@ -120,6 +120,78 @@ export function SectionView({
       return null;
     }
   }
+  // ---- Kanban column management ---------------------------------
+  // Resolves which schema column carries the status enum — same
+  // pickStatusField logic as the Kanban view itself but inlined
+  // here since the View doesn't expose it.
+  function pickStatusField(): string | null {
+    for (const c of ['status', 'state', 'stage', 'column']) {
+      if (section.schema.headers.includes(c)) return c;
+    }
+    return null;
+  }
+  function statusFieldOptions(field: string): string[] {
+    const idx = section.schema.headers.indexOf(field);
+    if (idx < 0) return [];
+    const m = String(section.schema.types?.[idx] || '').match(/^select\(([^)]*)\)/);
+    return m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+  }
+
+  async function addColumn(name: string) {
+    const field = pickStatusField();
+    if (!field) { notify.error('No status column on this section.'); return; }
+    const current = statusFieldOptions(field);
+    if (current.includes(name)) { notify.error(`Column "${name}" already exists.`); return; }
+    const next = [...current, name];
+    const r = await fetch(`/api/sections/${section.slug}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ setSelect: { column: field, options: next } }),
+    });
+    if (!r.ok) {
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      throw new Error(j.error || `setSelect: ${r.status}`);
+    }
+    toast.success(`Added column "${name}".`);
+    router.refresh();
+  }
+  async function renameColumn(from: string, to: string) {
+    const field = pickStatusField();
+    if (!field) { notify.error('No status column on this section.'); return; }
+    // rewrite-tag handles both the schema's select(...) options AND
+    // every row's `status` value in a single round-trip.
+    const r = await fetch(`/api/sections/${section.slug}/rewrite-tag`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ column: field, from, to }),
+    });
+    if (!r.ok) {
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      throw new Error(j.error || `rename: ${r.status}`);
+    }
+    const j = (await r.json()) as { rewrote: number };
+    toast.success(`Renamed — ${j.rewrote} card${j.rewrote === 1 ? '' : 's'} updated.`);
+    router.refresh();
+  }
+  async function deleteColumn(col: string, moveTo: string | null) {
+    const field = pickStatusField();
+    if (!field) { notify.error('No status column on this section.'); return; }
+    const r = await fetch(`/api/sections/${section.slug}/rewrite-tag`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ column: field, from: col, to: moveTo, deleteOrphaned: false }),
+    });
+    if (!r.ok) {
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      throw new Error(j.error || `delete: ${r.status}`);
+    }
+    const j = (await r.json()) as { rewrote: number };
+    toast.success(moveTo
+      ? `Column removed — ${j.rewrote} card${j.rewrote === 1 ? '' : 's'} moved to "${moveTo}".`
+      : `Column removed — ${j.rewrote} card${j.rewrote === 1 ? '' : 's'} untagged.`);
+    router.refresh();
+  }
+
   async function deleteRow(rowId: string) {
     if (!(await appConfirm('Delete this row?', { dangerLabel: 'Delete' }))) return;
     const r = await fetch(`/api/sections/${section.slug}/rows/${rowId}`, { method: 'DELETE' });
@@ -399,7 +471,7 @@ export function SectionView({
         const eff = (availableModes as readonly string[]).includes(mode) ? mode : 'grid';
         if (eff === 'list')     return <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />;
         if (eff === 'grid')     return <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onRowUpdated={(row) => setRows((rs) => rs.map((x) => (x.id === row.id ? row : x)))} />;
-        if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} onCreate={createRow} />;
+        if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} onCreate={createRow} onAddColumn={addColumn} onRenameColumn={renameColumn} onDeleteColumn={deleteColumn} />;
         return <CalendarView section={section} rows={sorted} onOpen={openPreview} />;
       })()}
       <PreviewModal

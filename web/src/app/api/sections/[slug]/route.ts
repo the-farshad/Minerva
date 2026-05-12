@@ -36,6 +36,11 @@ export async function PATCH(
      * / remove category values without forcing the user to drop
      * the section. */
     setMultiselect?: { column: string; options: string[] };
+    /** Replace the `select(...)` option list for a column on the
+     *  section schema. The Kanban "+ Column" / rename / delete
+     *  controls use this to manage status values without forcing
+     *  a schema migration. */
+    setSelect?: { column: string; options: string[] };
   };
   const patch: Partial<typeof schema.sections.$inferInsert> = {};
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
@@ -54,6 +59,24 @@ export async function PATCH(
     ));
     const nextTypes = sch.types.slice();
     nextTypes[idx] = `multiselect(${cleaned.join(', ')})`;
+    patch.schema = { headers: sch.headers, types: nextTypes } as typeof schema.sections.$inferInsert.schema;
+  }
+  if (body.setSelect && typeof body.setSelect.column === 'string') {
+    const sch = (sec.schema as { headers: string[]; types: string[] }) || { headers: [], types: [] };
+    const idx = sch.headers.indexOf(body.setSelect.column);
+    if (idx < 0) {
+      return NextResponse.json({ error: `Section has no column "${body.setSelect.column}".` }, { status: 400 });
+    }
+    const cleaned = Array.from(new Set(
+      (body.setSelect.options || [])
+        .map((s) => String(s).trim())
+        .filter(Boolean),
+    ));
+    if (cleaned.length === 0) {
+      return NextResponse.json({ error: 'At least one option is required.' }, { status: 400 });
+    }
+    const nextTypes = sch.types.slice();
+    nextTypes[idx] = `select(${cleaned.join(',')})`;
     patch.schema = { headers: sch.headers, types: nextTypes } as typeof schema.sections.$inferInsert.schema;
   }
   if (Object.keys(patch).length === 0) {

@@ -1,11 +1,12 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { Trash2, Plus, MoreVertical, Calendar as CalIcon, CheckSquare, Square, Paperclip, StickyNote, GripVertical } from 'lucide-react';
+import { Trash2, Plus, MoreVertical, CheckSquare, Square, Paperclip, StickyNote, GripVertical, X, Pencil, FileText } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { appConfirm } from './confirm';
+import { appPrompt } from './prompt';
 import { readPref, writePref } from '@/lib/prefs';
 
 type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
@@ -79,15 +80,24 @@ const PRIORITY_BAND: Record<NonNullable<Priority>, string> = {
  */
 export function KanbanView({
   section, rows, onOpen, onDelete, onPatch, onCreate,
+  onAddColumn, onRenameColumn, onDeleteColumn,
 }: {
   section: Section;
   rows: Row[];
   onOpen: (r: Row) => void;
   onDelete: (rowId: string) => Promise<void>;
   onPatch: (rowId: string, patch: Record<string, unknown>) => Promise<void>;
-  /** Create a row from a partial data object. Returning the new row
-   * lets us update local state without a hard refresh. */
   onCreate: (data: Record<string, unknown>) => Promise<Row | null>;
+  /** Append a new option to the section schema's `select(...)` type
+   *  for the status column. Triggers a router.refresh so the new
+   *  column appears immediately. */
+  onAddColumn: (name: string) => Promise<void>;
+  /** Rename an existing column value across the schema AND every
+   *  row whose status equals `from`. */
+  onRenameColumn: (from: string, to: string) => Promise<void>;
+  /** Remove a column from the schema. Any rows still in that column
+   *  get moved to `moveTo` (or untagged when null). */
+  onDeleteColumn: (col: string, moveTo: string | null) => Promise<void>;
 }) {
   const statusField = useMemo(() => pickStatusField(section.schema.headers), [section.schema.headers]);
   const titleField = useMemo(() => titleFieldFor(section.schema.headers), [section.schema.headers]);
@@ -184,19 +194,69 @@ export function KanbanView({
     }
   }
 
-  async function addCard(col: string) {
+  // When `addingTo` is set to a column name, that column renders an
+  // inline title input at the bottom of its list instead of the
+  // "+ Add card" button. Press Enter → POST + reset; Escape → close.
+  const [addingTo, setAddingTo] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState('');
+
+  async function commitNewCard(col: string) {
     if (!statusField || !titleField) {
       notify.error('This section needs `title` + `status` columns to add cards.');
       return;
     }
-    const data: Record<string, unknown> = { [titleField]: 'New task', [statusField]: col === '—' ? '' : col };
+    const t = draftTitle.trim();
+    if (!t) { setAddingTo(null); setDraftTitle(''); return; }
+    const data: Record<string, unknown> = { [titleField]: t, [statusField]: col === '—' ? '' : col };
+    setDraftTitle('');
     try {
       const created = await onCreate(data);
       if (!created) throw new Error('add failed');
-      toast.success('Card added.');
+      // Keep the composer open so the user can type a second card
+      // without re-clicking — Trello does the same.
     } catch (e) {
       notify.error((e as Error).message);
     }
+  }
+
+  // ---- column-management actions --------------------------------
+  async function addColumnAction() {
+    const name = await appPrompt('Add column', {
+      okLabel: 'Add',
+      placeholder: 'e.g. Review',
+    });
+    if (!name || !name.trim()) return;
+    try { await onAddColumn(name.trim()); }
+    catch (e) { notify.error((e as Error).message); }
+  }
+  async function renameColumnAction(col: string) {
+    const next = await appPrompt(`Rename "${col}"`, { okLabel: 'Rename', initial: col });
+    if (next == null) return;
+    const to = next.trim();
+    if (!to || to === col) return;
+    try { await onRenameColumn(col, to); }
+    catch (e) { notify.error((e as Error).message); }
+  }
+  async function deleteColumnAction(col: string) {
+    const rowsInCol = columns.find(([c]) => c === col)?.[1].length || 0;
+    const others = orderedColumns.filter((c) => c !== col);
+    if (others.length === 0) {
+      notify.error('At least one column has to exist — rename it instead.');
+      return;
+    }
+    const moveTo = others[0];
+    const ok = await appConfirm(
+      `Delete column "${col}"?`,
+      {
+        body: rowsInCol > 0
+          ? `${rowsInCol} card${rowsInCol === 1 ? '' : 's'} will move to "${moveTo}".`
+          : 'No cards live here right now.',
+        dangerLabel: 'Delete',
+      },
+    );
+    if (!ok) return;
+    try { await onDeleteColumn(col, moveTo); }
+    catch (e) { notify.error((e as Error).message); }
   }
 
   if (!statusField) {
@@ -218,16 +278,38 @@ export function KanbanView({
         >
           <header className="mb-2 flex items-center justify-between px-2 text-xs">
             <strong className="uppercase tracking-wide text-zinc-600 dark:text-zinc-400">{col}</strong>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-zinc-500">{items.length}</span>
-              <button
-                type="button"
-                onClick={() => addCard(col)}
-                title={`Add card to "${col}"`}
-                className="rounded-full p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    type="button"
+                    title={`Manage "${col}"`}
+                    className="rounded-full p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  >
+                    <MoreVertical className="h-3.5 w-3.5" />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    align="end" sideOffset={4}
+                    className="z-50 min-w-[8rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    <DropdownMenu.Item
+                      onSelect={(e) => { e.preventDefault(); void renameColumnAction(col); }}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> Rename
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      onSelect={(e) => { e.preventDefault(); void deleteColumnAction(col); }}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-red-600 outline-none hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Delete column
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
           </header>
           <ul className="space-y-2">
@@ -246,14 +328,64 @@ export function KanbanView({
                 highlightBefore={dragOver?.col === col && dragOver.before === r.id}
               />
             ))}
-            {items.length === 0 && (
+            {items.length === 0 && addingTo !== col && (
               <li className="rounded-md border border-dashed border-zinc-300 p-3 text-center text-[11px] text-zinc-400 dark:border-zinc-700">
                 Drop a card here
               </li>
             )}
           </ul>
+          {addingTo === col ? (
+            <div className="mt-2 rounded-md border border-zinc-300 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+              <textarea
+                autoFocus
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commitNewCard(col); }
+                  if (e.key === 'Escape') { setAddingTo(null); setDraftTitle(''); }
+                }}
+                placeholder="Card title — Enter to add, Esc to close"
+                rows={2}
+                className="w-full resize-none border-0 bg-transparent text-sm placeholder-zinc-400 focus:outline-none focus:ring-0"
+              />
+              <div className="mt-1 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => void commitNewCard(col)}
+                  disabled={!draftTitle.trim()}
+                  className="rounded-md bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+                >
+                  Add card
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAddingTo(null); setDraftTitle(''); }}
+                  title="Cancel"
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setAddingTo(col); setDraftTitle(''); }}
+              className="mt-2 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add a card
+            </button>
+          )}
         </div>
       ))}
+      <button
+        type="button"
+        onClick={addColumnAction}
+        className="flex h-12 w-72 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 text-xs text-zinc-500 hover:border-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-zinc-300"
+        title="Add a new column"
+      >
+        <Plus className="h-3.5 w-3.5" /> Add column
+      </button>
     </div>
   );
 }
@@ -384,12 +516,18 @@ function KanbanCard({
               >
                 <Paperclip className="h-3.5 w-3.5" /> Attach files
               </DropdownMenu.Item>
-              <DropdownMenu.Item
-                onSelect={(e) => { e.preventDefault(); setSubOpen((v) => !v); }}
-                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              >
-                <CheckSquare className="h-3.5 w-3.5" /> Subtasks ({subDone}/{subTotal})
-              </DropdownMenu.Item>
+              {/* When the card has no subtasks yet, the inline form is
+                * hidden. This menu entry reveals it so the user can
+                * type their first one. With subtasks > 0 the form is
+                * already inline so the menu item is suppressed. */}
+              {subTotal === 0 && (
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); setSubOpen(true); }}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <CheckSquare className="h-3.5 w-3.5" /> Add subtask
+                </DropdownMenu.Item>
+              )}
               <DropdownMenu.Sub>
                 <DropdownMenu.SubTrigger className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800">
                   Priority
@@ -446,37 +584,84 @@ function KanbanCard({
             {title || '(untitled)'}
           </button>
         )}
-        <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px]">
-          {due && (
-            <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 ${due.overdue ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300'}`}>
-              <CalIcon className="h-2.5 w-2.5" /> {due.label}
-            </span>
-          )}
+        <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px]" onClick={(e) => e.stopPropagation()}>
+          {/* Inline date input — always shown so the deadline is one
+            * click away. The native picker handles styling per-OS.
+            * `?` cleared = no due date. */}
+          <input
+            type="date"
+            value={due?.iso.slice(0, 10) || ''}
+            onChange={(e) => void onPatch({ due: e.target.value })}
+            title={due ? (due.overdue ? 'Overdue' : `Due ${due.label}`) : 'Set due date'}
+            className={`rounded-full border-0 px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+              due
+                ? due.overdue
+                  ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
+                  : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300'
+                : 'bg-transparent text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+            }`}
+          />
           {priority && (
             <span className={`rounded-full px-1.5 py-0.5 ${priority === 'high' ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : priority === 'med' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'}`}>
               {priority}
             </span>
           )}
           {subTotal > 0 && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setSubOpen((v) => !v); }}
-              className="inline-flex items-center gap-0.5 rounded-full bg-zinc-100 px-1.5 py-0.5 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-zinc-100 px-1.5 py-0.5 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
               title={`${subDone} of ${subTotal} subtasks done`}
             >
               <CheckSquare className="h-2.5 w-2.5" /> {subDone}/{subTotal}
-            </button>
+            </span>
           )}
           {attachments.length > 0 && (
-            <span className="inline-flex items-center gap-0.5 rounded-full bg-zinc-100 px-1.5 py-0.5 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-              <Paperclip className="h-2.5 w-2.5" /> {attachments.length}
-            </span>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  title={`${attachments.length} attachment${attachments.length === 1 ? '' : 's'} — click to view`}
+                  className="inline-flex items-center gap-0.5 rounded-full bg-zinc-100 px-1.5 py-0.5 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                >
+                  <Paperclip className="h-2.5 w-2.5" /> {attachments.length}
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="start" sideOffset={4}
+                  className="z-50 max-w-[18rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+                >
+                  {attachments.map((url, i) => {
+                    const label = attachmentLabel(url, i);
+                    return (
+                      <DropdownMenu.Item
+                        key={url + i}
+                        asChild
+                        onSelect={() => { /* let the anchor handle it */ }}
+                      >
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener"
+                          className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        >
+                          <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                          <span className="truncate">{label}</span>
+                        </a>
+                      </DropdownMenu.Item>
+                    );
+                  })}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           )}
           {tags.slice(0, 3).map((t) => (
             <span key={t} className="rounded-full bg-blue-100 px-1.5 py-0.5 text-blue-700 dark:bg-blue-950 dark:text-blue-300">{t}</span>
           ))}
         </div>
-        {subOpen && (
+        {/* Subtasks render inline whenever the card has any — no
+          * extra click needed to peek. The "+ Add subtask" line is
+          * always there as the natural way to keep adding more. */}
+        {(subTotal > 0 || subOpen) && (
           <div className="mt-2 space-y-1 border-t border-zinc-100 pt-2 dark:border-zinc-800" onClick={(e) => e.stopPropagation()}>
             {subtasks.map((s) => (
               <label key={s.id} className="flex cursor-pointer items-center gap-1.5 text-[11px]">
@@ -518,4 +703,18 @@ function KanbanCard({
       </div>
     </li>
   );
+}
+
+/** Try to pick a readable label out of an attachment URL. Drive
+ *  links don't carry a filename in the path — for those we
+ *  fall back to "File N". External URLs get the basename. */
+function attachmentLabel(url: string, idx: number): string {
+  try {
+    const u = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://x');
+    if (u.pathname.startsWith('/api/drive/file')) return `File ${idx + 1}`;
+    const base = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '');
+    return base || u.host || `File ${idx + 1}`;
+  } catch {
+    return `File ${idx + 1}`;
+  }
 }

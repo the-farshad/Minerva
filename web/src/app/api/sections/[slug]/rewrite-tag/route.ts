@@ -109,25 +109,34 @@ export async function POST(
     }
   }
 
-  // Schema's multiselect (currently only `category`) — keep the
-  // picker vocabulary in step with the bulk rewrite.
-  if (column === 'category') {
+  // Keep the schema's option list in step with the bulk rewrite —
+  // for `multiselect(...)` (categories on Papers) and for
+  // `select(...)` (Tasks Kanban status). Without this, renaming a
+  // Kanban column would leave the old name in the schema and the
+  // new column would never appear.
+  {
     const idx = sch.headers.indexOf(column);
     if (idx >= 0) {
       const typeStr = String(sch.types?.[idx] || '');
-      const m = typeStr.match(/^multiselect\(([^)]*)\)/);
-      const opts = m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
-      const nextOpts: string[] = [];
-      for (const v of opts) {
-        if (v === from) continue;
-        if (!nextOpts.includes(v)) nextOpts.push(v);
+      const mMulti = typeStr.match(/^multiselect\(([^)]*)\)/);
+      const mSel   = typeStr.match(/^select\(([^)]*)\)/);
+      if (mMulti || mSel) {
+        const raw = (mMulti?.[1] ?? mSel?.[1]) || '';
+        const opts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+        const nextOpts: string[] = [];
+        for (const v of opts) {
+          if (v === from) continue;
+          if (!nextOpts.includes(v)) nextOpts.push(v);
+        }
+        if (to && !nextOpts.includes(to)) nextOpts.push(to);
+        const nextTypes = sch.types.slice();
+        nextTypes[idx] = mMulti
+          ? `multiselect(${nextOpts.join(', ')})`
+          : `select(${nextOpts.join(',')})`;
+        await db.update(schema.sections)
+          .set({ schema: { headers: sch.headers, types: nextTypes }, updatedAt: new Date() })
+          .where(eq(schema.sections.id, sec.id));
       }
-      if (to && !nextOpts.includes(to)) nextOpts.push(to);
-      const nextTypes = sch.types.slice();
-      nextTypes[idx] = `multiselect(${nextOpts.join(', ')})`;
-      await db.update(schema.sections)
-        .set({ schema: { headers: sch.headers, types: nextTypes }, updatedAt: new Date() })
-        .where(eq(schema.sections.id, sec.id));
     }
   }
 
