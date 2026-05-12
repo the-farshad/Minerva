@@ -17,64 +17,11 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { uploadToMinervaDrive, DRIVE_SUBFOLDERS } from '@/lib/drive';
+import { extractPdfMeta } from '@/lib/pdf-meta';
 
-function decodePdfString(raw: string): string {
-  // PDF strings can be `(literal)` or `<hex>`. Cover both, decode
-  // backslash escapes in literals.
-  if (raw.startsWith('<') && raw.endsWith('>')) {
-    const hex = raw.slice(1, -1).replace(/\s+/g, '');
-    let s = '';
-    for (let i = 0; i + 1 < hex.length; i += 2) s += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
-    return s.replace(/^﻿/, '');
-  }
-  if (raw.startsWith('(') && raw.endsWith(')')) {
-    return raw.slice(1, -1)
-      .replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t')
-      .replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\\/g, '\\');
-  }
-  return raw;
-}
-
-function extractPdfMeta(buf: Uint8Array): { title?: string; authors?: string; year?: string; doi?: string } {
-  // Scan a wider 256 KB window now that we're hunting for a DOI
-  // in the page text in addition to the Info dictionary at the
-  // start. DOIs typically appear on page 1 (header / footer /
-  // citation block) which is comfortably inside that window for
-  // an academic paper.
-  const slice = buf.slice(0, Math.min(buf.length, 256 * 1024));
-  const text = new TextDecoder('latin1').decode(slice);
-  const out: { title?: string; authors?: string; year?: string; doi?: string } = {};
-  const matchField = (key: string): string | null => {
-    const re = new RegExp(`/${key}\\s*(\\(([^)]*)\\)|<([0-9A-Fa-f\\s]+)>)`);
-    const m = text.match(re);
-    if (!m) return null;
-    return decodePdfString(m[1]).trim();
-  };
-  const title = matchField('Title');
-  const author = matchField('Author');
-  const created = matchField('CreationDate');
-  if (title) out.title = title;
-  if (author) out.authors = author;
-  if (created) {
-    const ym = created.match(/D:?(\d{4})/);
-    if (ym) out.year = ym[1];
-  }
-  // DOI: try the PDF's metadata first ( /doi (…) is a common
-  // non-standard Info entry), then fall back to a content scan.
-  // The content regex is intentionally conservative — DOIs use a
-  // restricted character set so we strip trailing punctuation
-  // that the surrounding sentence usually drags along.
-  const metaDoi = matchField('doi');
-  if (metaDoi) {
-    out.doi = metaDoi.replace(/^doi:\s*/i, '').trim();
-  } else {
-    const m = text.match(/\b(?:doi[:\s]*)?(10\.\d{4,9}\/[^\s<>"'(){}[\]]+)/i);
-    if (m) {
-      out.doi = m[1].replace(/[.,;:)\]]+$/, '').trim();
-    }
-  }
-  return out;
-}
+// extractPdfMeta lives in src/lib/pdf-meta.ts so the
+// refresh-metadata route can reuse the same parser when
+// backfilling DOI on existing papers.
 
 export async function POST(
   req: NextRequest,

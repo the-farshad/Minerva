@@ -17,6 +17,21 @@ interface Paper {
   venue?: string;
 }
 
+/** Translate the seed paper's ref into the connectedpapers.com
+ *  main-view URL. They accept DOI directly and arXiv IDs via the
+ *  same /main/<id>/Lookup path. Returns null when we have nothing
+ *  to send them. */
+function connectedPapersUrl(ref: string | null): string | null {
+  if (!ref) return null;
+  // ARXIV:2401.12345 → main/arxiv:2401.12345/Lookup
+  const arxivMatch = ref.match(/^ARXIV:(.+)$/i);
+  if (arxivMatch) return `https://www.connectedpapers.com/main/arxiv:${encodeURIComponent(arxivMatch[1])}/Lookup`;
+  // DOI:10.x/y → main/<doi>/Lookup
+  const doiMatch = ref.match(/^DOI:(.+)$/i);
+  if (doiMatch) return `https://www.connectedpapers.com/main/${encodeURIComponent(doiMatch[1])}/Lookup`;
+  return null;
+}
+
 /** Pick the best external URL for a paper — prefer the openAccess
  *  PDF (clicks straight into reading), then arXiv abs (renders
  *  well in our preview), then a DOI lookup. */
@@ -142,7 +157,7 @@ export function RelatedView({
         <ArrowLeft className="h-3 w-3" /> Back to {sectionSlug}
       </Link>
 
-      <header className="mb-6 flex items-start gap-3">
+      <header className="mb-4 flex items-start gap-3">
         <Network className="mt-1 h-5 w-5 shrink-0 text-zinc-500" />
         <div className="flex-1">
           <div className="text-xs uppercase tracking-wide text-zinc-500">Related papers</div>
@@ -153,7 +168,34 @@ export function RelatedView({
             </p>
           )}
         </div>
+        {connectedPapersUrl(seedRef) && (
+          <a
+            href={connectedPapersUrl(seedRef)!}
+            target="_blank"
+            rel="noopener"
+            className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            title="Open the same paper on connectedpapers.com"
+          >
+            <ExternalLink className="h-3.5 w-3.5" /> Open in Connected Papers
+          </a>
+        )}
       </header>
+
+      {/* Connected Papers graph visualisation. Their /main/<id>/
+        * route is iframe-friendly; this gives the user the same
+        * 2D graph they recognise from connectedpapers.com without
+        * leaving Minerva. Falls back gracefully when we can't
+        * resolve an arXiv ID / DOI to pass to them. */}
+      {connectedPapersUrl(seedRef) && (
+        <div className="mb-6 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+          <iframe
+            src={connectedPapersUrl(seedRef)!}
+            title="Connected Papers graph"
+            className="h-[60vh] w-full bg-white dark:bg-zinc-950"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[12rem]">

@@ -17,6 +17,8 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { getServerPref } from '@/lib/server-prefs';
+import { fetchDriveFileBytes } from '@/lib/drive';
+import { extractPdfMeta } from '@/lib/pdf-meta';
 
 // Scope to actual YouTube hostnames — the previous bare `v=...{11}`
 // pattern matched ANY URL with a `v=` query param (e.g. a publisher
@@ -257,10 +259,36 @@ export async function POST(
         fetched = await fetchOpenLibrary(isbn);
         source = 'openlibrary';
       } else {
-        return NextResponse.json(
-          { error: 'No metadata source matches this row. Supported: YouTube (with API key), arxiv URLs, DOI (data.doi or doi.org URL), ISBN-10/13 (data.isbn). Add a `doi` or `isbn` field in the Info pane and click Refresh.' },
-          { status: 409 },
-        );
+        // PDF-scan fallback: papers added before the DOI extractor
+        // landed have no data.doi and a Drive-only URL. Pull the
+        // cached PDF bytes through Drive and re-run extractPdfMeta
+        // so the row's DOI / title / authors / year get backfilled.
+        const offline = String(data.offline || '');
+        const driveId = offline.match(/drive:([\w-]{20,})/)?.[1];
+        if (driveId) {
+          try {
+            const { bytes, mime } = await fetchDriveFileBytes(userId, driveId);
+            if (!mime.startsWith('application/pdf') && !mime.includes('pdf')) {
+              return NextResponse.json(
+                { error: `Cached file is not a PDF (got ${mime}). Add a doi / arxiv / isbn field in the Info pane and click Refresh.` },
+                { status: 409 },
+              );
+            }
+            const meta = extractPdfMeta(new Uint8Array(bytes));
+            fetched = { ...meta } as RowData;
+            source = 'pdf-scan';
+          } catch (e) {
+            return NextResponse.json(
+              { error: `Couldn't read the cached PDF: ${(e as Error).message}` },
+              { status: 502 },
+            );
+          }
+        } else {
+          return NextResponse.json(
+            { error: 'No metadata source matches this row. Supported: YouTube (with API key), arxiv URLs, DOI (data.doi or doi.org URL), ISBN-10/13 (data.isbn), or an offline PDF copy. Add a `doi` / `isbn` field in the Info pane and click Refresh.' },
+            { status: 409 },
+          );
+        }
       }
     }
 

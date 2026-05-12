@@ -29,10 +29,22 @@ const FIELDS = [
   'venue',
 ].join(',');
 
+function ssHeaders(): HeadersInit {
+  const h: Record<string, string> = { Accept: 'application/json' };
+  // The public SS API rate-limits shared cloud IPs aggressively
+  // (DigitalOcean droplets typically see 429s on most requests).
+  // Set SEMANTIC_SCHOLAR_API_KEY in the droplet env to unlock the
+  // partner tier; the route degrades gracefully when it's absent.
+  if (process.env.SEMANTIC_SCHOLAR_API_KEY) {
+    h['x-api-key'] = process.env.SEMANTIC_SCHOLAR_API_KEY;
+  }
+  return h;
+}
+
 async function getRecommendations(paperRef: string, limit: number) {
   const url = `https://api.semanticscholar.org/recommendations/v1/papers/forpaper/${encodeURIComponent(paperRef)}?limit=${limit}&fields=${encodeURIComponent(FIELDS)}`;
   const r = await fetch(url, {
-    headers: { Accept: 'application/json' },
+    headers: ssHeaders(),
     next: { revalidate: 300 },
   });
   if (!r.ok) return { ok: false as const, status: r.status, text: await r.text().catch(() => '') };
@@ -44,7 +56,7 @@ async function searchByTitle(title: string): Promise<string | null> {
   const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(title)}&limit=1&fields=paperId,title`;
   try {
     const r = await fetch(url, {
-      headers: { Accept: 'application/json' },
+      headers: ssHeaders(),
       next: { revalidate: 300 },
     });
     if (!r.ok) return null;
@@ -75,8 +87,14 @@ export async function GET(req: NextRequest) {
       // this ID shape" — fall through to title search if we have
       // one. Other errors bubble up directly.
       if (res.status !== 404 && !title) {
+        const rateLimited = res.status === 429;
         return NextResponse.json(
-          { error: `Semantic Scholar returned ${res.status}${res.text ? `: ${res.text.slice(0, 200)}` : ''}` },
+          {
+            error: rateLimited
+              ? "Semantic Scholar is rate-limiting this shared IP. Set SEMANTIC_SCHOLAR_API_KEY on the droplet to unlock the partner tier, or open the paper in Connected Papers directly using the link above."
+              : `Semantic Scholar returned ${res.status}${res.text ? `: ${res.text.slice(0, 200)}` : ''}`,
+            rateLimited,
+          },
           { status: res.status },
         );
       }
