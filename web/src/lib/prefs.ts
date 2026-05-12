@@ -11,6 +11,32 @@ const NS = 'minerva.v2.';
 /** Keys excluded from cross-device sync — per-device by design. */
 const LOCAL_ONLY = new Set(['theme']);
 
+/** Prefix-matched keys that are per-device too. The exact `pdf.page.<rowId>`
+ * / `resume.<videoUrl>` keys are unbounded, so we match by leading
+ * namespace instead of enumerating one row at a time. Without this,
+ * `pullServerPrefs` on the next page load overwrites the local
+ * value with whatever the server last received — which is whatever
+ * a different device wrote, or the initial 1/0, or stale from
+ * before the user's scroll. Bug pattern: "I scrolled to page 30,
+ * closed, reopened → page 1 again." */
+const LOCAL_ONLY_PREFIXES = [
+  'pdf.page.',
+  'resume.',
+  'notes.mode',
+  'reader.',
+  'paper.theme',
+  'catfilter.',
+  'collapsed.',
+  'groupsort.',
+  'grouporder.',
+  'sectiongrouporder.',
+];
+
+function isLocalOnly(key: string): boolean {
+  if (LOCAL_ONLY.has(key)) return true;
+  return LOCAL_ONLY_PREFIXES.some((p) => key.startsWith(p));
+}
+
 export function readPref<T = string>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
   try {
@@ -24,10 +50,10 @@ export function writePref(key: string, value: unknown) {
   try {
     if (value == null || value === '' || (Array.isArray(value) && value.length === 0)) {
       localStorage.removeItem(NS + key);
-      if (!LOCAL_ONLY.has(key)) schedulePush(key, null);
+      if (!isLocalOnly(key)) schedulePush(key, null);
     } else {
       localStorage.setItem(NS + key, JSON.stringify(value));
-      if (!LOCAL_ONLY.has(key)) schedulePush(key, value);
+      if (!isLocalOnly(key)) schedulePush(key, value);
     }
   } catch { /* quota — ignore */ }
 }
@@ -70,7 +96,7 @@ export async function pullServerPrefs(): Promise<void> {
     if (!r.ok) return;
     const j = (await r.json()) as Record<string, unknown>;
     for (const [k, v] of Object.entries(j)) {
-      if (LOCAL_ONLY.has(k)) continue;
+      if (isLocalOnly(k)) continue;
       if (v == null) localStorage.removeItem(NS + k);
       else localStorage.setItem(NS + k, JSON.stringify(v));
     }

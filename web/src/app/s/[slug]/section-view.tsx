@@ -126,8 +126,12 @@ export function SectionView({
   // Meetings preset is a thin wrapper over the polls table — it
   // doesn't share the row schema at all. Forward to the polls
   // index page inline so /s/meets behaves like a real "meeting
-  // polls" surface rather than an empty rows grid.
-  if (section.preset === 'meetings') {
+  // polls" surface rather than an empty rows grid. We also fall
+  // back to slug-based detection because sections created before
+  // the `meetings` preset existed have preset=NULL in PG — without
+  // this fallback, /s/meets renders an empty rows grid forever.
+  const effectivePreset = section.preset || (section.slug === 'meets' ? 'meetings' : null);
+  if (effectivePreset === 'meetings') {
     return <MeetingsSectionView title={section.title} />;
   }
   return (

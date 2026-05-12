@@ -11,6 +11,7 @@ import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
 import { CITATION_FORMATS } from '@/lib/citations';
 import { CategoryBar } from './category-bar';
+import { computeWatched } from '@/lib/watched';
 import { appPickMany } from './multi-picker';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
@@ -269,6 +270,12 @@ export function GroupedGrid({
           }}
         />
       )}
+      {section.preset === 'youtube' && (
+        <div className="-mt-2 mb-1 flex items-center gap-2 text-xs text-zinc-500">
+          <span>Section total:</span>
+          <PlaylistProgress rows={rows} />
+        </div>
+      )}
       {groupCol && (
         <header className="flex items-center gap-3 text-xs">
           <span className="text-zinc-500">Sort {groupCol}s:</span>
@@ -304,6 +311,7 @@ export function GroupedGrid({
                   {groupCol ? key : section.title}
                   <span className="text-xs font-normal text-zinc-500">· {groupRows.length}</span>
                 </button>
+                {section.preset === 'youtube' && <PlaylistProgress rows={groupRows} />}
                 {groupCol && key !== '(uncategorised)' && (
                   <button
                     type="button"
@@ -596,6 +604,7 @@ export function GroupedGrid({
                         {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
                       </div>
                     </button>
+                    {section.preset === 'youtube' && <WatchedBar row={r} />}
                     {/* Single overflow menu — three dots always
                       * visible in the corner. Inside: Info (opens a
                       * popover with full metadata), Save offline (for
@@ -623,6 +632,62 @@ export function GroupedGrid({
  * dropdown with Info / Save offline / Delete. Info itself opens a
  * second popover with the row's metadata; everything else fires
  * inline. */
+/** Thin progress bar under each YouTube card: filled to the
+ * watched fraction of the video's total duration. Stays hidden
+ * when we don't know the duration (row hasn't been enriched by
+ * the YT API yet OR yt-dlp metadata is missing). */
+function WatchedBar({ row }: { row: Row }) {
+  const { duration, watched, pct } = computeWatched(row);
+  if (!pct || !duration || watched <= 0) return null;
+  const filled = Math.max(0, Math.min(1, pct));
+  return (
+    <div
+      className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800"
+      title={`${Math.floor(watched / 60)} min watched of ${Math.floor(duration / 60)} (${Math.round(filled * 100)}%)`}
+    >
+      <div
+        className={filled >= 0.95 ? 'h-full bg-emerald-500' : filled >= 0.5 ? 'h-full bg-amber-500' : 'h-full bg-blue-500'}
+        style={{ width: `${filled * 100}%` }}
+      />
+    </div>
+  );
+}
+
+/** Aggregate progress across a playlist group — sums duration and
+ * watched seconds across all videos, renders one bar + a "x of y"
+ * caption. Hidden when no row carries a duration. */
+function PlaylistProgress({ rows }: { rows: Row[] }) {
+  let totalDur = 0;
+  let totalWatched = 0;
+  let known = 0;
+  for (const r of rows) {
+    const w = computeWatched(r);
+    if (w.duration && w.duration > 0) {
+      totalDur += w.duration;
+      totalWatched += w.watched;
+      known += 1;
+    }
+  }
+  if (known === 0 || totalDur === 0) return null;
+  const pct = Math.max(0, Math.min(1, totalWatched / totalDur));
+  const mm = (s: number) => {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h}h${m}m` : `${m}m`;
+  };
+  return (
+    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500" title={`${known} of ${rows.length} videos have durations`}>
+      <div className="h-1 w-24 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+        <div
+          className={pct >= 0.95 ? 'h-full bg-emerald-500' : pct >= 0.5 ? 'h-full bg-amber-500' : 'h-full bg-blue-500'}
+          style={{ width: `${pct * 100}%` }}
+        />
+      </div>
+      <span>{mm(totalWatched)} / {mm(totalDur)}</span>
+    </div>
+  );
+}
+
 function CardActions({
   row, section, onDelete, onRowUpdated,
 }: {
