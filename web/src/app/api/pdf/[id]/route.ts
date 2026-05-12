@@ -46,7 +46,7 @@ export async function GET(
 }
 
 async function serve(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
@@ -61,6 +61,20 @@ async function serve(
   const data = row.data as Record<string, unknown>;
   const offline = String(data.offline || '');
 
+  // ?download=1 → ship the file as an attachment with a sensible
+  // filename derived from the row's title (or a fallback). Without
+  // this flag we serve inline so the PDF.js viewer can stream the
+  // bytes into the canvas as before.
+  const downloadAttachment = req.nextUrl.searchParams.get('download') === '1';
+  const downloadName = (String(data.title || data.name || 'paper')
+    .replace(/[^\w.\- ]+/g, '_')
+    .slice(0, 100)) + '.pdf';
+  const dispoHeader = (): Record<string, string> => (
+    downloadAttachment
+      ? { 'Content-Disposition': `attachment; filename="${downloadName}"` }
+      : {}
+  );
+
   // 1. Drive copy.
   const drive = offline.match(/drive:([\w-]{20,})/);
   if (drive) {
@@ -74,12 +88,13 @@ async function serve(
         return new Response(r.body, {
           headers: {
             'Content-Type': r.headers.get('Content-Type') || 'application/pdf',
-            // no-store so an annotation save (which overwrites the underlying
-// Drive bytes in place) is visible the next time the iframe asks
-// for the same /api/pdf/<rowId> URL — without this, the browser
-// served the pre-save body for 5 min and "click does not show the
-// edited version" was the resulting bug.
-'Cache-Control': 'no-store',
+            // no-store so an annotation save (which overwrites the
+            // underlying Drive bytes in place) is visible the next
+            // time the iframe asks for the same /api/pdf/<rowId>
+            // URL — without this the browser served the pre-save
+            // body for 5 min.
+            'Cache-Control': 'no-store',
+            ...dispoHeader(),
           },
         });
       }
@@ -98,12 +113,8 @@ async function serve(
       return new Response(r.body, {
         headers: {
           'Content-Type': r.headers.get('Content-Type') || 'application/pdf',
-          // no-store so an annotation save (which overwrites the underlying
-// Drive bytes in place) is visible the next time the iframe asks
-// for the same /api/pdf/<rowId> URL — without this, the browser
-// served the pre-save body for 5 min and "click does not show the
-// edited version" was the resulting bug.
-'Cache-Control': 'no-store',
+          'Cache-Control': 'no-store',
+          ...dispoHeader(),
         },
       });
     }
@@ -131,12 +142,8 @@ async function serve(
   return new Response(r.body, {
     headers: {
       'Content-Type': ct || 'application/pdf',
-      // no-store so an annotation save (which overwrites the underlying
-// Drive bytes in place) is visible the next time the iframe asks
-// for the same /api/pdf/<rowId> URL — without this, the browser
-// served the pre-save body for 5 min and "click does not show the
-// edited version" was the resulting bug.
-'Cache-Control': 'no-store',
+      'Cache-Control': 'no-store',
+      ...dispoHeader(),
     },
   });
 }

@@ -42,5 +42,16 @@ export async function GET(req: NextRequest) {
   if (cr) respHeaders['Content-Range'] = cr;
   const cl = upstream.headers.get('Content-Length');
   if (cl) respHeaders['Content-Length'] = cl;
+  // `?download=1[&name=...]` flips the response from inline streaming
+  // (used by <video> playback) to an attachment download with a
+  // sensible filename. Falls back to the upstream Drive filename
+  // when one is available in the Content-Disposition.
+  if (req.nextUrl.searchParams.get('download') === '1') {
+    const requested = req.nextUrl.searchParams.get('name')?.replace(/[^\w.\- ]+/g, '_').slice(0, 100);
+    const upstreamDispo = upstream.headers.get('Content-Disposition') || '';
+    const upstreamMatch = upstreamDispo.match(/filename="?([^";]+)"?/i);
+    const name = requested || upstreamMatch?.[1] || 'minerva-download';
+    respHeaders['Content-Disposition'] = `attachment; filename="${name}"`;
+  }
   return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
 }

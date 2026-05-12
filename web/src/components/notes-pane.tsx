@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Paperclip, Pencil } from 'lucide-react';
+import { Paperclip, Pencil, Download } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { NotesPreview } from './notes-preview';
 import { SketchModal } from './sketch-modal';
@@ -185,6 +185,28 @@ export function NotesPane({
             className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
           >
             <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!value.trim()) {
+                toast.info('Nothing to download — write something first.');
+                return;
+              }
+              const blob = new Blob([value], { type: 'text/markdown;charset=utf-8' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `notes-${rowId.slice(0, 8)}.md`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }}
+            title="Download these notes as a Markdown file"
+            className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <Download className="h-3.5 w-3.5" />
           </button>
           <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
             {(['edit', 'split', 'preview'] as const).map((m) => (

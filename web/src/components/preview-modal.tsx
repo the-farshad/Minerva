@@ -114,6 +114,14 @@ export function PreviewModal({
   const [pdfReload, setPdfReload] = useState(0);
   const [resettingPdf, setResettingPdf] = useState(false);
   const [readerMode, setReaderMode] = useState(false);
+  // Tracks whether the PDF.js editor has had a change since the
+  // last successful saveAnnotations. PDF.js's annotationStorage.
+  // modifiedIds property isn't reliably visible across versions —
+  // flipping a flag in our existing onSetModified callback (set up
+  // for auto-save) is more robust. Set false again once the save
+  // finishes so closing-without-saving only prompts when there's
+  // real unsaved work.
+  const annotDirtyRef = useRef(false);
   useEffect(() => {
     const saved = readPref<string>('paper.theme', 'light');
     if (saved === 'sepia' || saved === 'dark' || saved === 'light') setPdfTheme(saved);
@@ -269,6 +277,7 @@ export function PreviewModal({
         const storage = app.pdfDocument?.annotationStorage;
         if (!storage) return false;
         storage.onSetModified = () => {
+          annotDirtyRef.current = true;
           if (debounce) clearTimeout(debounce);
           debounce = setTimeout(() => { void saveAnnotations(); }, 4000);
         };
@@ -448,6 +457,7 @@ export function PreviewModal({
         ...prev,
         originalFileId: upJson.originalFileId || prev.originalFileId,
       } : prev));
+      annotDirtyRef.current = false;
     } catch (e) {
       notify.error((e as Error).message);
     } finally {
@@ -489,19 +499,10 @@ export function PreviewModal({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => {
       if (next) { setOpen(true); return; }
-      // Closing — check for unsaved annotation edits in the PDF.js
-      // viewer. PDF.js tracks edits on `annotationStorage.modifiedIds`;
-      // a non-empty set means the auto-save 4 s debounce hasn't fired
-      // yet (or just fired and is still in flight).
-      interface PdfApp {
-        pdfDocument?: { annotationStorage?: { modifiedIds?: { size?: number } } };
-      }
-      const w = pdfIframeRef.current?.contentWindow as (Window & { PDFViewerApplication?: PdfApp }) | null;
-      const annotDirty = (w?.PDFViewerApplication?.pdfDocument?.annotationStorage?.modifiedIds?.size ?? 0) > 0;
-      if (!annotDirty) { setOpen(false); return; }
+      if (!annotDirtyRef.current) { setOpen(false); return; }
       void (async () => {
         const ok = await appConfirm('Save annotations before closing?', {
-          body: 'Your highlights or notes haven\'t hit Drive yet. Click OK to save now, or Cancel to keep editing.',
+          body: "Your highlights or notes haven't hit Drive yet. Click OK to save now, or Cancel to keep editing.",
         });
         if (!ok) return; // stay open
         try { await saveAnnotations(); } catch { /* notify.error already fired */ }
@@ -529,6 +530,29 @@ export function PreviewModal({
                 href={hostSrc}
                 download
                 title="Download local copy"
+                className="rounded-full p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <Download className="h-4 w-4" />
+              </a>
+            )}
+            {/* Download the actual bytes the modal is showing:
+              * PDF → /api/pdf/<rowId>?download=1 (Drive copy or live)
+              * Video with Drive copy → /api/drive/file?id=... */}
+            {pdf && view.rowId && (
+              <a
+                href={`/api/pdf/${view.rowId}?download=1`}
+                download
+                title="Download this PDF (with your latest annotations if any)"
+                className="rounded-full p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <Download className="h-4 w-4" />
+              </a>
+            )}
+            {yt && view.driveFileId && (
+              <a
+                href={`/api/drive/file?id=${encodeURIComponent(view.driveFileId)}&download=1&name=${encodeURIComponent((view.title || 'video').replace(/[^\w.\- ]+/g, '_').slice(0, 80) + '.mp4')}`}
+                download
+                title="Download the saved MP4"
                 className="rounded-full p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
               >
                 <Download className="h-4 w-4" />
@@ -625,7 +649,11 @@ export function PreviewModal({
                 type="button"
                 onClick={async () => {
                   if (!view.sectionSlug || !view.rowId) return;
-                  if (!window.confirm('Reset this paper to the pristine original? Your annotations will be replaced.')) return;
+                  const ok = await appConfirm('Reset this paper to the pristine original?', {
+                    body: 'Your annotations will be replaced with the saved snapshot.',
+                    dangerLabel: 'Reset',
+                  });
+                  if (!ok) return;
                   setResettingPdf(true);
                   try {
                     const r = await fetch(
