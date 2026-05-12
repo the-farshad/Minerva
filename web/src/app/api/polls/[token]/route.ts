@@ -49,6 +49,7 @@ export async function GET(
         location: '',
         finalSlot: null,
         mode: (poll.mode as 'group' | 'book') || 'group',
+        kind: (poll.kind as 'meeting' | 'yesno' | 'ranked') || 'meeting',
         passwordSet: true,
       },
       responses: [],
@@ -70,6 +71,7 @@ export async function GET(
       location: poll.location || '',
       finalSlot: poll.finalSlot || null,
       mode: (poll.mode as 'group' | 'book') || 'group',
+      kind: (poll.kind as 'meeting' | 'yesno' | 'ranked') || 'meeting',
       passwordSet: !!poll.passwordHash,
     },
     responses: responses.map((r) => ({
@@ -102,24 +104,58 @@ export async function POST(
   }
   const name = String(body.name || '').trim().slice(0, 80);
   if (!name) return NextResponse.json({ error: 'Name is required.' }, { status: 400 });
-  const expectedLen = cellCount({ days: poll.days as string[], slots: poll.slots as PollSlots });
+  const kind = (poll.kind as 'meeting' | 'yesno' | 'ranked') || 'meeting';
+  const days = poll.days as string[];
   const bits = String(body.bits || '');
-  if (bits.length !== expectedLen) {
-    return NextResponse.json(
-      { error: `bits must be exactly ${expectedLen} chars (got ${bits.length}).` },
-      { status: 400 },
-    );
-  }
-  if (!/^[01?]+$/.test(bits)) {
-    return NextResponse.json({ error: "bits must contain only '0', '1', or '?'." }, { status: 400 });
+
+  if (kind === 'meeting') {
+    const expectedLen = cellCount({ days, slots: poll.slots as PollSlots });
+    if (bits.length !== expectedLen) {
+      return NextResponse.json(
+        { error: `bits must be exactly ${expectedLen} chars (got ${bits.length}).` },
+        { status: 400 },
+      );
+    }
+    if (!/^[01?]+$/.test(bits)) {
+      return NextResponse.json({ error: "bits must contain only '0', '1', or '?'." }, { status: 400 });
+    }
+  } else if (kind === 'yesno') {
+    if (bits.length !== 1 || !/^[01?]$/.test(bits)) {
+      return NextResponse.json({ error: "yes/no response must be one of '1', '0', '?'." }, { status: 400 });
+    }
+  } else {
+    // ranked: one digit per option, '0' = unranked, '1'-'9' = rank
+    // position (1 = top). For >9 options we'd need a different
+    // encoding; the composer caps `days.length` at 20 but practical
+    // ranked polls top out well below that anyway.
+    if (bits.length !== days.length) {
+      return NextResponse.json(
+        { error: `ranked response must be ${days.length} chars (got ${bits.length}).` },
+        { status: 400 },
+      );
+    }
+    if (!/^[0-9]+$/.test(bits)) {
+      return NextResponse.json({ error: 'ranked response must be digits only.' }, { status: 400 });
+    }
+    // No duplicate non-zero ranks allowed (each rank appears once).
+    const seen = new Set<string>();
+    for (const c of bits) {
+      if (c === '0') continue;
+      if (seen.has(c)) {
+        return NextResponse.json({ error: `Rank ${c} appears more than once.` }, { status: 400 });
+      }
+      seen.add(c);
+    }
   }
   const note = String(body.note || '').slice(0, 500);
 
   // 1-to-1 booking mode: enforce that exactly one cell is picked
   // AND that nobody else has already claimed it. Atomically — we
   // re-query existing responses inside the same handler so a near-
-  // simultaneous submission can't double-book the same slot.
-  if (poll.mode === 'book') {
+  // simultaneous submission can't double-book the same slot. Only
+  // applies to meeting polls — yes/no and ranked have their own
+  // shape validation above.
+  if (poll.mode === 'book' && kind === 'meeting') {
     const ones: number[] = [];
     for (let i = 0; i < bits.length; i++) if (bits[i] === '1') ones.push(i);
     if (ones.length !== 1) {
@@ -183,13 +219,28 @@ export async function PATCH(
     patch.passwordHash = await hashPollPassword(body.password.trim());
   }
   if (Array.isArray(body.days)) {
-    const days = Array.from(new Set(
-      body.days.map((d) => String(d).trim()).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
-    )).sort();
-    if (days.length === 0) {
-      return NextResponse.json({ error: 'Days must be YYYY-MM-DD strings.' }, { status: 400 });
+    // For meeting polls `days` must be date-shaped; for yes/no and
+    // ranked it's the question / option list and we keep the raw
+    // strings verbatim.
+    const pollKind = (poll.kind as 'meeting' | 'yesno' | 'ranked') || 'meeting';
+    if (pollKind === 'meeting') {
+      const days = Array.from(new Set(
+        body.days.map((d) => String(d).trim()).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+      )).sort();
+      if (days.length === 0) {
+        return NextResponse.json({ error: 'Days must be YYYY-MM-DD strings.' }, { status: 400 });
+      }
+      patch.days = days;
+    } else {
+      const raw = body.days.map((d) => String(d).trim()).filter(Boolean);
+      if (pollKind === 'yesno' && raw.length !== 1) {
+        return NextResponse.json({ error: 'A yes/no poll needs exactly one question.' }, { status: 400 });
+      }
+      if (pollKind === 'ranked' && (raw.length < 2 || raw.length > 20)) {
+        return NextResponse.json({ error: 'A ranked poll needs between 2 and 20 options.' }, { status: 400 });
+      }
+      patch.days = raw;
     }
-    patch.days = days;
   }
   if (body.slots !== undefined) {
     try { patch.slots = validateSlots(body.slots); }
@@ -227,6 +278,7 @@ export async function PATCH(
     location: updated.location || '',
     finalSlot: updated.finalSlot || null,
     mode: (updated.mode as 'group' | 'book') || 'group',
+    kind: (updated.kind as 'meeting' | 'yesno' | 'ranked') || 'meeting',
     passwordSet: !!updated.passwordHash,
   });
 }

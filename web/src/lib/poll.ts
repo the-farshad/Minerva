@@ -20,24 +20,30 @@ export type PollSlots = {
 };
 
 export type PollMode = 'group' | 'book';
+/** Poll kind controls the participant-view UX and the meaning of
+ *  the `days` / `bits` fields:
+ *    'meeting' — date grid (legacy). days = ISO dates. bits = '1' /
+ *                '0' / '?' per cell.
+ *    'yesno'   — single question, 3-way. days = [question]; one
+ *                cell. bits is a single char per response.
+ *    'ranked'  — rank a list of options. days = option labels (in
+ *                fixed order). bits = digit per option giving its
+ *                1-based rank (0 = unranked). */
+export type PollKind = 'meeting' | 'yesno' | 'ranked';
 
 export type Poll = {
   token: string;
   title: string;
-  days: string[];      // ISO date strings, e.g. "2026-06-12"
+  /** For 'meeting' polls, ISO date strings. For 'yesno', a single-
+   *  element array holding the question. For 'ranked', the option
+   *  labels in fixed order. */
+  days: string[];
   slots: PollSlots;
   closesAt: string | null;
-  /** Free-text — Zoom URL, Meet URL, address, "TBD", … */
   location: string;
-  /** "<dayIdx>:<slotIdx>" once the organizer locks in a final slot. */
   finalSlot: string | null;
-  /** 'group' (default) — every participant marks a 0/1/? bit per
-   *  cell, organizer reads the heat-map. 'book' — Calendly-style:
-   *  each participant picks exactly one cell, first-come claims it. */
   mode: PollMode;
-  /** True when a password is set on the poll. The plaintext is
-   *  never returned to the client — participants type the password
-   *  separately and the server compares hashes. */
+  kind: PollKind;
   passwordSet: boolean;
 };
 

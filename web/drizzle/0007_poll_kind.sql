@@ -1,0 +1,1 @@
+ALTER TABLE "polls" ADD COLUMN "kind" text DEFAULT 'meeting' NOT NULL;

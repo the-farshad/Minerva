@@ -180,6 +180,12 @@ export const polls = pgTable('polls', {
   /** 'group' (default) or 'book'. Drives participant-view UX and
    * server-side response validation. */
   mode: text('mode').default('group').notNull(),
+  /** Poll kind. 'meeting' = the date/slot grid this table was
+   * originally designed for. 'yesno' = single question, '1'/'0'/'?'
+   * answers. 'ranked' = ordered preference over a list of options
+   * (Borda count). For the latter two `days` is repurposed as the
+   * option list and `slots` is a no-op placeholder. */
+  kind: text('kind').default('meeting').notNull(),
   /** Optional shared-secret password. When set, participants must
    * supply it (server-validated) before reading the grid or
    * submitting a response. Stored as a sha-256 hex digest, not

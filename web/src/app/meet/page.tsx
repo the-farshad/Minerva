@@ -23,9 +23,48 @@ type PollSummary = {
   location: string;
   finalSlot: string | null;
   mode: 'group' | 'book';
+  kind: 'meeting' | 'yesno' | 'ranked';
   responseCount: number;
   createdAt: string;
 };
+
+function KindBadge({ kind, mode }: { kind: 'meeting' | 'yesno' | 'ranked'; mode: 'group' | 'book' }) {
+  const label =
+    kind === 'yesno'  ? 'yes / no'      :
+    kind === 'ranked' ? 'ranked'        :
+    mode === 'book'   ? '1-to-1 booking':
+                        'group';
+  const tone =
+    kind === 'yesno'  ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'   :
+    kind === 'ranked' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300' :
+                        'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}>{label}</span>
+  );
+}
+
+function PollSubline({ poll }: { poll: PollSummary }) {
+  const kind = poll.kind || 'meeting';
+  const respLabel = `${poll.responseCount} response${poll.responseCount === 1 ? '' : 's'}`;
+  if (kind === 'yesno') {
+    return <>
+      <span className="line-clamp-1 break-all">{poll.days[0] || '(no question)'}</span>
+      <span> · {respLabel}</span>
+      {poll.location && <><span> · </span><span className="break-all">{poll.location}</span></>}
+    </>;
+  }
+  if (kind === 'ranked') {
+    return <>
+      <span>{poll.days.length} options</span>
+      <span> · {respLabel}</span>
+      {poll.location && <><span> · </span><span className="break-all">{poll.location}</span></>}
+    </>;
+  }
+  return <>
+    {fmtDaysRange(poll.days)} · {poll.slots.fromHour}:00–{poll.slots.toHour}:00 · {poll.slots.slotMin} min · {respLabel}
+    {poll.location && <><span> · </span><span className="break-all">{poll.location}</span></>}
+  </>;
+}
 
 function fmtDaysRange(days: string[]): string {
   if (days.length === 0) return '';
@@ -83,7 +122,7 @@ export default function PollsIndex() {
     <main className="mx-auto max-w-3xl px-4 py-8">
       <header className="mb-6 flex items-center gap-3">
         <CalendarDays className="h-5 w-5" />
-        <h1 className="text-lg font-semibold">Meeting polls</h1>
+        <h1 className="text-lg font-semibold">Polls</h1>
         <Link
           href="/meet/new"
           className="ml-auto inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-white dark:text-zinc-900"
@@ -117,9 +156,7 @@ export default function PollsIndex() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <Link href={`/meet/${p.token}`} className="truncate text-sm font-medium hover:underline">{p.title}</Link>
-                  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                    {p.mode === 'book' ? '1-to-1 booking' : 'group'}
-                  </span>
+                  <KindBadge kind={p.kind || 'meeting'} mode={p.mode} />
                   {p.finalSlot && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                       <CheckCircle2 className="h-3 w-3" /> Finalized
@@ -127,8 +164,7 @@ export default function PollsIndex() {
                   )}
                 </div>
                 <div className="mt-1 text-[11px] text-zinc-500">
-                  {fmtDaysRange(p.days)} · {p.slots.fromHour}:00–{p.slots.toHour}:00 · {p.slots.slotMin} min · {p.responseCount} response{p.responseCount === 1 ? '' : 's'}
-                  {p.location && (<><span> · </span><span className="break-all">{p.location}</span></>)}
+                  <PollSubline poll={p} />
                 </div>
               </div>
               <button

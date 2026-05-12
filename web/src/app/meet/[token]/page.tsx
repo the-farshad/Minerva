@@ -60,8 +60,20 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
       setPasswordRequired(false);
       setPoll(j.poll);
       setResponses(j.responses || []);
-      const total = j.poll.days.length * slotsPerDay(j.poll.slots);
-      setCells(Array.from({ length: total }, () => '0' as Cell));
+      // Init the input buffer based on poll kind:
+      //   meeting → days × slots-per-day cells of '0'/'1'/'?'
+      //   yesno   → exactly one cell, default '0' (no)
+      //   ranked  → one digit per option, all '0' (unranked) until
+      //             the participant assigns ranks
+      const kind = j.poll.kind || 'meeting';
+      if (kind === 'meeting') {
+        const total = j.poll.days.length * slotsPerDay(j.poll.slots);
+        setCells(Array.from({ length: total }, () => '0' as Cell));
+      } else if (kind === 'yesno') {
+        setCells(['0' as Cell]);
+      } else {
+        setCells(Array.from({ length: j.poll.days.length }, () => '0' as Cell));
+      }
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -168,14 +180,15 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
     );
   }
 
+  const kind = poll.kind || 'meeting';
   const slots = poll.slots as PollSlots;
-  const perDay = slotsPerDay(slots);
+  const perDay = kind === 'meeting' ? slotsPerDay(slots) : 0;
   const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}/meet/${poll.token}` : '';
   const maxYes = consensus.length ? Math.max(...consensus) : 0;
 
   // Final slot — set by the organizer via the Finalize button. We
   // parse it to surface a "Confirmed" banner at the top.
-  const finalSlotMatch = poll.finalSlot ? /^(\d+):(\d+)$/.exec(poll.finalSlot) : null;
+  const finalSlotMatch = poll.finalSlot && kind === 'meeting' ? /^(\d+):(\d+)$/.exec(poll.finalSlot) : null;
   const finalDay = finalSlotMatch ? Number(finalSlotMatch[1]) : -1;
   const finalSlotIdx = finalSlotMatch ? Number(finalSlotMatch[2]) : -1;
 
@@ -315,6 +328,8 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
         </button>
       </div>
 
+      {kind === 'meeting' && (
+      <>
       <div className="overflow-x-auto">
         <table className="text-xs">
           <thead>
@@ -420,9 +435,29 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
           <CheckCircle2 className="h-3.5 w-3.5" /> Finalize top consensus
         </button>
       </div>
+      </>
+      )}
+
+      {kind === 'yesno' && (
+        <YesNoBody
+          question={poll.days[0] || poll.title}
+          value={cells[0] ?? '0'}
+          onChange={(v) => setCells([v as Cell])}
+          responses={responses}
+        />
+      )}
+
+      {kind === 'ranked' && (
+        <RankedBody
+          options={poll.days}
+          ranks={cells}
+          onChange={(arr) => setCells(arr as Cell[])}
+          responses={responses}
+        />
+      )}
 
       <section className="mt-6 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-medium">Submit your availability</h2>
+        <h2 className="text-sm font-medium">{kind === 'meeting' ? 'Submit your availability' : 'Submit your response'}</h2>
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <input
             type="text"
@@ -464,5 +499,181 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
         </section>
       )}
     </main>
+  );
+}
+
+/** Yes / no / maybe body. The participant picks one of three
+ * answers; results render as a stacked horizontal bar chart. */
+function YesNoBody({
+  question, value, onChange, responses,
+}: {
+  question: string;
+  value: '0' | '1' | '?';
+  onChange: (next: '0' | '1' | '?') => void;
+  responses: PollResponse[];
+}) {
+  const tally = useMemo(() => {
+    let yes = 0, no = 0, maybe = 0;
+    for (const r of responses) {
+      const c = r.bits.charAt(0);
+      if (c === '1') yes++;
+      else if (c === '0') no++;
+      else if (c === '?') maybe++;
+    }
+    return { yes, no, maybe, total: yes + no + maybe };
+  }, [responses]);
+
+  const OPTS: { v: '1' | '0' | '?'; label: string; tone: string }[] = [
+    { v: '1', label: 'Yes',   tone: 'bg-emerald-500 text-white' },
+    { v: '0', label: 'No',    tone: 'bg-red-500 text-white' },
+    { v: '?', label: 'Maybe', tone: 'bg-amber-300 text-amber-900' },
+  ];
+
+  return (
+    <section className="mt-2 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <p className="text-base font-medium">{question}</p>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        {OPTS.map((o) => {
+          const active = value === o.v;
+          return (
+            <button
+              key={o.v}
+              type="button"
+              onClick={() => onChange(o.v)}
+              className={`rounded-lg border px-3 py-3 text-sm font-medium transition ${active
+                ? `${o.tone} border-transparent`
+                : 'border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800'}`}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tally.total > 0 && (
+        <div className="mt-5">
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Results · {tally.total} response{tally.total === 1 ? '' : 's'}</div>
+          <div className="flex h-3 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            {tally.yes > 0   && <div className="h-full bg-emerald-500" style={{ width: `${(tally.yes / tally.total) * 100}%` }} />}
+            {tally.maybe > 0 && <div className="h-full bg-amber-300"   style={{ width: `${(tally.maybe / tally.total) * 100}%` }} />}
+            {tally.no > 0    && <div className="h-full bg-red-500"     style={{ width: `${(tally.no / tally.total) * 100}%` }} />}
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+            <YesNoTally tone="emerald" label="Yes"   count={tally.yes}   total={tally.total} />
+            <YesNoTally tone="red"     label="No"    count={tally.no}    total={tally.total} />
+            <YesNoTally tone="amber"   label="Maybe" count={tally.maybe} total={tally.total} />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function YesNoTally({ tone, label, count, total }: { tone: 'emerald' | 'red' | 'amber'; label: string; count: number; total: number }) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  const dot = tone === 'emerald' ? 'bg-emerald-500' : tone === 'red' ? 'bg-red-500' : 'bg-amber-300';
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
+      <span className="font-medium">{label}</span>
+      <span className="text-zinc-500">{count} · {pct}%</span>
+    </div>
+  );
+}
+
+/** Ranked-choice body. Each option gets a 1-to-N rank picker (or
+ * 0 = unranked). Results are aggregated by Borda count: an option
+ * ranked first by N voters with M options gets M points each. */
+function RankedBody({
+  options, ranks, onChange, responses,
+}: {
+  options: string[];
+  ranks: string[];
+  onChange: (next: string[]) => void;
+  responses: PollResponse[];
+}) {
+  const N = options.length;
+  // Borda count: rank-1 → N points, rank-2 → N-1 points, etc.;
+  // rank 0 (unranked) → 0 points.
+  const totals = useMemo(() => {
+    const out = new Array<number>(N).fill(0);
+    for (const r of responses) {
+      for (let i = 0; i < N && i < r.bits.length; i++) {
+        const rank = Number(r.bits[i]);
+        if (Number.isFinite(rank) && rank >= 1 && rank <= N) {
+          out[i] += (N - rank + 1);
+        }
+      }
+    }
+    return out;
+  }, [responses, N]);
+  const maxTotal = Math.max(0, ...totals);
+  const winnerIdx = totals.indexOf(maxTotal);
+
+  function setRank(optIdx: number, rank: number) {
+    const next = ranks.slice();
+    // Enforce unique ranks (1..N): if rank already in use, swap.
+    if (rank !== 0) {
+      for (let j = 0; j < next.length; j++) {
+        if (j !== optIdx && Number(next[j]) === rank) {
+          next[j] = String(Number(next[optIdx]) || 0);
+        }
+      }
+    }
+    next[optIdx] = String(rank);
+    onChange(next);
+  }
+
+  return (
+    <section className="mt-2 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <h2 className="text-sm font-medium">Rank the options ({options.length})</h2>
+      <p className="mt-1 text-[11px] text-zinc-500">1 = top pick, {N} = last. Leave at 0 to skip an option.</p>
+      <ul className="mt-3 space-y-2">
+        {options.map((opt, i) => (
+          <li key={i} className="flex items-center gap-2">
+            <select
+              value={ranks[i] ?? '0'}
+              onChange={(e) => setRank(i, Number(e.target.value))}
+              className="w-16 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              title="Set rank — picking a rank that's in use will swap with the other option"
+            >
+              <option value="0">—</option>
+              {Array.from({ length: N }, (_, k) => k + 1).map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+            <span className="flex-1 text-sm">{opt}</span>
+          </li>
+        ))}
+      </ul>
+
+      {responses.length > 0 && (
+        <div className="mt-5">
+          <div className="mb-2 text-[10px] uppercase tracking-wide text-zinc-500">Borda count · {responses.length} response{responses.length === 1 ? '' : 's'}</div>
+          <ul className="space-y-1.5">
+            {options.map((opt, i) => {
+              const pct = maxTotal > 0 ? (totals[i] / maxTotal) * 100 : 0;
+              const isWinner = i === winnerIdx && maxTotal > 0;
+              return (
+                <li key={i} className="text-xs">
+                  <div className="mb-0.5 flex items-center justify-between">
+                    <span className={isWinner ? 'font-semibold text-emerald-600 dark:text-emerald-400' : ''}>
+                      {isWinner ? '★ ' : ''}{opt}
+                    </span>
+                    <span className="font-mono text-zinc-500">{totals[i]} pt</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                    <div
+                      className={isWinner ? 'h-full bg-emerald-500' : 'h-full bg-blue-500'}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }
