@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Paperclip } from 'lucide-react';
+import { Paperclip, Pencil } from 'lucide-react';
 import { notify } from '@/lib/notify';
-import { renderMarkdown } from '@/lib/markdown';
+import { NotesPreview } from './notes-preview';
+import { SketchModal } from './sketch-modal';
 import { readPref, writePref } from '@/lib/prefs';
 
 /** Markdown notes sidebar for the preview modal. Persists into the
@@ -40,6 +41,26 @@ export function NotesPane({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [sketchOpen, setSketchOpen] = useState(false);
+
+  /** Splice a markdown snippet into the textarea at the caret. */
+  function spliceAtCaret(snippet: string) {
+    const ta = textareaRef.current;
+    if (ta && document.activeElement === ta) {
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const next = value.slice(0, start) + snippet + value.slice(end);
+      schedule(next);
+      setTimeout(() => {
+        ta.focus();
+        const pos = start + snippet.length;
+        ta.setSelectionRange(pos, pos);
+      }, 0);
+    } else {
+      const next = (value.endsWith('\n') || !value) ? value + snippet : value + '\n' + snippet;
+      schedule(next);
+    }
+  }
 
   /** Upload a file to the user's Drive and splice a markdown link
    * (or image embed when it's an image MIME) into the notes at
@@ -61,23 +82,7 @@ export function NotesPane({
         const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
         const isImage = /^image\//i.test(file.type);
         const snippet = isImage ? `![${file.name}](${url})\n` : `[${file.name}](${url})\n`;
-        const ta = textareaRef.current;
-        let next: string;
-        if (ta && document.activeElement === ta) {
-          const start = ta.selectionStart;
-          const end = ta.selectionEnd;
-          next = value.slice(0, start) + snippet + value.slice(end);
-          schedule(next);
-          // Restore caret after the inserted snippet on next tick.
-          setTimeout(() => {
-            ta.focus();
-            const pos = start + snippet.length;
-            ta.setSelectionRange(pos, pos);
-          }, 0);
-        } else {
-          next = (value.endsWith('\n') || !value) ? value + snippet : value + '\n' + snippet;
-          schedule(next);
-        }
+        spliceAtCaret(snippet);
       }
       toast.success(list.length === 1 ? 'File attached.' : `${list.length} files attached.`);
     } catch (e) {
@@ -172,6 +177,15 @@ export function NotesPane({
           >
             <Paperclip className="h-3.5 w-3.5" />
           </button>
+          <button
+            type="button"
+            onClick={() => setSketchOpen(true)}
+            disabled={uploading}
+            title="Open a pen-friendly sketch pad (iPad Pen / Surface Pen / Wacom pressure supported)"
+            className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
           <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
             {(['edit', 'split', 'preview'] as const).map((m) => (
               <button
@@ -205,14 +219,16 @@ export function NotesPane({
           />
         )}
         {showPreview && (
-          <div
-            className="prose prose-sm h-full flex-1 overflow-auto p-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-200"
-            dangerouslySetInnerHTML={{
-              __html: renderMarkdown(value) || '<em class="text-zinc-500">Nothing yet — switch to Edit and start typing.</em>',
-            }}
-          />
+          <div className="h-full flex-1 overflow-auto p-3">
+            <NotesPreview content={value} />
+          </div>
         )}
       </div>
+      <SketchModal
+        open={sketchOpen}
+        onClose={() => setSketchOpen(false)}
+        onSaved={(url, name) => spliceAtCaret(`![${name}](${url})\n`)}
+      />
     </aside>
   );
 }

@@ -16,6 +16,13 @@ function esc(s: string) {
 
 function inline(s: string): string {
   let out = esc(s);
+  // Images first — must run before plain links so the leading `!`
+  // isn't swallowed by the `[text](url)` rule. The same URL safety
+  // gate is applied (no `javascript:` or `data:` schemes).
+  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, alt: string, u: string) => {
+    const safeUrl = /^(https?:|\/)/.test(u) ? u : '#';
+    return `<img src="${safeUrl}" alt="${alt}" class="my-1 max-h-80 rounded" loading="lazy" />`;
+  });
   // links — must run before bold/italic so the URL isn't mangled.
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, t: string, u: string) => {
     const safeUrl = /^(https?:|mailto:|\/)/.test(u) ? u : '#';
