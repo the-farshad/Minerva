@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { naturalCompare, cn } from '@/lib/utils';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp } from 'lucide-react';
@@ -158,8 +158,113 @@ export function SectionView({
   if (effectivePreset === 'meetings') {
     return <MeetingsSectionView title={section.title} />;
   }
+
+  // ---- Drag-and-drop file uploads --------------------------------
+  // For Papers, dropped PDFs become rows via /upload-paper. For
+  // YouTube, dropped video files become rows via /upload-video.
+  // Other presets get a "not supported" toast — Notes already has
+  // its own per-note file drop inside the editor pane.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const dropPreset: 'papers' | 'youtube' | null =
+    effectivePreset === 'papers' ? 'papers' :
+    effectivePreset === 'youtube' ? 'youtube' :
+    null;
+
+  function isFileDrag(e: React.DragEvent): boolean {
+    const types = e.dataTransfer?.types;
+    return !!types && Array.from(types).includes('Files');
+  }
+  function onDragEnter(e: React.DragEvent) {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    if (!dragging) setDragging(true);
+  }
+  function onDragLeave(e: React.DragEvent) {
+    if (!isFileDrag(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+  async function onDrop(e: React.DragEvent) {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
+    if (!dropPreset) {
+      notify.error(`Drag-and-drop upload isn't supported for the "${effectivePreset || 'this'}" preset yet.`);
+      return;
+    }
+    const endpoint = dropPreset === 'papers' ? 'upload-paper' : 'upload-video';
+    // Light client-side filter so a stray screenshot doesn't try to
+    // become a paper row. The server validates anyway; this just
+    // saves a round-trip on obviously-wrong drops.
+    const accepted = files.filter((f) => dropPreset === 'papers'
+      ? /\.pdf$/i.test(f.name) || f.type === 'application/pdf'
+      : /\.(mp4|mkv|mov|webm|avi)$/i.test(f.name) || /^video\//i.test(f.type));
+    const rejected = files.length - accepted.length;
+    if (rejected > 0) {
+      notify.error(`Skipped ${rejected} file${rejected === 1 ? '' : 's'} — wrong type for ${dropPreset}.`);
+    }
+    if (accepted.length === 0) return;
+
+    setUploading(accepted.length);
+    toast.info(`Uploading ${accepted.length} file${accepted.length === 1 ? '' : 's'}…`);
+    let done = 0, failed = 0;
+    for (const file of accepted) {
+      try {
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        const r = await fetch(`/api/sections/${section.slug}/${endpoint}`, { method: 'POST', body: fd });
+        const j = (await r.json().catch(() => ({}))) as { error?: string; id?: string; data?: Record<string, unknown>; updatedAt?: string };
+        if (!r.ok || !j.id || !j.data || !j.updatedAt) throw new Error(j.error || `${endpoint}: ${r.status}`);
+        setRows((rs) => [{ id: j.id!, data: j.data!, updatedAt: j.updatedAt! }, ...rs]);
+        done++;
+      } catch (err) {
+        failed++;
+        notify.error(`${file.name}: ${(err as Error).message}`);
+      }
+    }
+    setUploading(0);
+    toast.success(`Uploaded ${done}${failed ? ` · ${failed} failed` : ''}.`);
+    qc.invalidateQueries({ queryKey: ['rows', section.slug] });
+    router.refresh();
+  }
+
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-8">
+    <main
+      className="mx-auto w-full max-w-6xl px-6 py-8"
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => { if (isFileDrag(e)) e.preventDefault(); }}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging && (
+        <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-blue-500/10 backdrop-blur-sm">
+          <div className="rounded-2xl border-2 border-dashed border-blue-500 bg-white px-8 py-6 text-center shadow-xl dark:bg-zinc-900">
+            <FileUp className="mx-auto h-10 w-10 text-blue-500" />
+            <p className="mt-3 text-sm font-medium">
+              {dropPreset
+                ? `Drop to upload ${dropPreset === 'papers' ? 'PDF' : 'video'} files`
+                : `Drag-and-drop upload isn't supported here`}
+            </p>
+            {dropPreset && (
+              <p className="mt-1 text-[11px] text-zinc-500">
+                {dropPreset === 'papers' ? 'PDF only' : 'mp4, mkv, mov, webm'} · uploads to your Drive
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {uploading > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <Upload className="h-3.5 w-3.5 animate-pulse text-blue-500" />
+          Uploading {uploading} file{uploading === 1 ? '' : 's'}…
+        </div>
+      )}
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">{section.title}</h1>
         <div className="flex flex-wrap items-center gap-2">

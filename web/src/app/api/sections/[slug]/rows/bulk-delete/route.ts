@@ -46,6 +46,11 @@ export async function POST(
     // count; the offline-marker scan happens in a separate read just
     // before the update so we don't lose the data.
     let deleted = 0;
+    /** When the group field is a multiselect (e.g. `category`),
+     * rows that carry MORE than just the targeted value shouldn't
+     * be wiped — only the matching tag is stripped from their
+     * data, the row stays. This number reports those untagged. */
+    let untagged = 0;
     let driveIds: string[] = [];
     if (Array.isArray(body.ids) && body.ids.length > 0) {
       const toGo = await db.query.rows.findMany({
@@ -80,8 +85,21 @@ export async function POST(
       // Regex-escape the value before splicing it into the pattern.
       const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const pattern = `(^|,\\s*)${escaped}(\\s*,|\\s*$)`;
-      // Pre-fetch the rows we're about to soft-delete so we can scrub
-      // their Drive copies after the update.
+
+      // Is the targeted column a multiselect? If so, rows that
+      // carry the targeted value alongside OTHER values should
+      // only have that one tag stripped, not be deleted outright.
+      // Single-valued columns (e.g. `playlist`) keep the legacy
+      // behaviour where everything in the group goes away.
+      const headers = (sec.schema as { headers?: string[] }).headers || [];
+      const types = (sec.schema as { types?: string[] }).types || [];
+      const colIdx = headers.indexOf(field);
+      const isMulti = colIdx >= 0 && /^multiselect\(/.test(String(types[colIdx] || ''));
+
+      // Pre-fetch the rows we're about to act on so we can scrub
+      // their Drive copies after the update (for the full-delete
+      // batch) and so we can compute the untag patch (for the
+      // multi-tagged batch).
       const toGo = await db.execute<{ id: string; data: Record<string, unknown> }>(
         sql`SELECT id, data FROM rows
             WHERE "userId" = ${userId}
@@ -90,20 +108,52 @@ export async function POST(
               AND ((data ->> ${field}) = ${value} OR (data ->> ${field}) ~ ${pattern})`,
       );
       const toGoRows = Array.isArray(toGo) ? toGo : ((toGo as unknown as { rows?: { id: string; data: Record<string, unknown> }[] }).rows || []);
+
+      // Partition: rows whose entire field value is just this one
+      // tag get fully deleted; rows with more than one tag get the
+      // targeted tag stripped and stay alive.
+      const toDelete: string[] = [];
+      const toUntag: { id: string; data: Record<string, unknown> }[] = [];
+      for (const r of toGoRows) {
+        const raw = String((r.data || {})[field] || '');
+        const tokens = raw.split(',').map((s) => s.trim()).filter(Boolean);
+        if (isMulti && tokens.length > 1) {
+          const remaining = tokens.filter((t) => t !== value);
+          toUntag.push({ id: r.id, data: { ...(r.data || {}), [field]: remaining.join(', ') } });
+        } else {
+          toDelete.push(r.id);
+        }
+      }
+
       driveIds = toGoRows
+        .filter((r) => toDelete.includes(r.id))
         .flatMap((r) => Array.from(String((r.data || {}).offline || '')
           .matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]));
-      const res = await db.execute(
-        sql`UPDATE rows SET deleted = true, "updatedAt" = NOW()
-            WHERE "userId" = ${userId}
-              AND "sectionId" = ${sec.id}
-              AND (
-                (data ->> ${field}) = ${value}
-                OR (data ->> ${field}) ~ ${pattern}
-              )
-          RETURNING id`,
-      );
-      deleted = Array.isArray(res) ? res.length : ((res as unknown as { length: number }).length ?? 0);
+
+      if (toDelete.length > 0) {
+        const res = await db.update(schema.rows)
+          .set({ deleted: true, updatedAt: new Date() })
+          .where(and(
+            eq(schema.rows.userId, userId),
+            eq(schema.rows.sectionId, sec.id),
+            inArray(schema.rows.id, toDelete),
+          ))
+          .returning({ id: schema.rows.id });
+        deleted = res.length;
+      }
+      if (toUntag.length > 0) {
+        // No bulk-set-jsonb in Drizzle — issue per-row patches in
+        // parallel. The per-row count is small in practice (one
+        // category's worth of multi-tagged rows) so this is fine.
+        await Promise.all(toUntag.map((r) => db.update(schema.rows)
+          .set({ data: r.data, updatedAt: new Date() })
+          .where(and(
+            eq(schema.rows.userId, userId),
+            eq(schema.rows.sectionId, sec.id),
+            eq(schema.rows.id, r.id),
+          ))));
+        untagged = toUntag.length;
+      }
     } else {
       return NextResponse.json({ error: 'Specify ids OR (field+value)' }, { status: 400 });
     }
@@ -114,7 +164,7 @@ export async function POST(
     if (driveIds.length) {
       await Promise.all(driveIds.map((fid) => deleteDriveFile(userId, fid)));
     }
-    return NextResponse.json({ ok: true, deleted, driveDeleted: driveIds.length });
+    return NextResponse.json({ ok: true, deleted, untagged, driveDeleted: driveIds.length });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

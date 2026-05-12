@@ -514,9 +514,18 @@ export function GroupedGrid({
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ field: groupCol, value: key }),
                             });
-                            const j = await resp.json().catch(() => ({}));
+                            const j = (await resp.json().catch(() => ({}))) as { error?: string; deleted?: number; untagged?: number };
                             if (!resp.ok) throw new Error(j.error || String(resp.status));
-                            toast.success(`Deleted ${j.deleted ?? groupRows.length} items.`);
+                            // Surface both numbers — a multi-category row
+                            // dropped out of THIS group but stays alive in
+                            // its other ones, which matters for the user
+                            // to trust the action.
+                            const del = j.deleted ?? groupRows.length;
+                            const untag = j.untagged ?? 0;
+                            const msg = untag > 0
+                              ? `Deleted ${del} · removed "${key}" from ${untag} multi-tagged item${untag === 1 ? '' : 's'}.`
+                              : `Deleted ${del} items.`;
+                            toast.success(msg);
                             router.refresh();
                           } catch (e) {
                             notify.error('Delete failed: ' + (e as Error).message);
