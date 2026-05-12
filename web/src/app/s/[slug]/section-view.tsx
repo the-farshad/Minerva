@@ -514,9 +514,12 @@ export function SectionView({
           )}
           {/* URL-keyed presets (youtube / papers) only accept rows
             * via Add-by-URL. Notes has its own typed-creation
-            * dialog. Everything else gets a quick-add input so the
-            * row lands with a title already on it. */}
-          {section.preset !== 'youtube' && section.preset !== 'papers' && section.preset !== 'notes' && (
+            * dialog. Tasks has per-column "+ Add card" inline
+            * composers in the Kanban view so a header-level quick
+            * add would create rows in a no-status bucket and just
+            * add confusion. Everything else gets a quick-add input
+            * so the row lands with a title already on it. */}
+          {section.preset !== 'youtube' && section.preset !== 'papers' && section.preset !== 'notes' && section.preset !== 'tasks' && (
             <QuickAdd
               titleField={titleField}
               onCreate={async (title) => {
@@ -585,12 +588,18 @@ export function SectionView({
         </div>
       </header>
 
-      {sorted.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          Empty section. Click <strong>Add row</strong> to start.
-        </p>
-      ) : (() => {
+      {(() => {
         const eff = (availableModes as readonly string[]).includes(mode) ? mode : 'grid';
+        // Kanban (Tasks) renders even on an empty board — the
+        // columns ARE the affordance for adding the first card.
+        // Every other mode keeps the empty-state placeholder.
+        if (sorted.length === 0 && eff !== 'kanban') {
+          return (
+            <p className="rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
+              Empty section. Click <strong>Add</strong> to start.
+            </p>
+          );
+        }
         if (eff === 'list')     return <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />;
         if (eff === 'grid')     return <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onRowUpdated={(row) => setRows((rs) => rs.map((x) => (x.id === row.id ? row : x)))} />;
         if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} onCreate={createRow} onAddColumn={addColumn} onRenameColumn={renameColumn} onDeleteColumn={deleteColumn} />;

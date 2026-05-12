@@ -35,12 +35,15 @@ function decodePdfString(raw: string): string {
   return raw;
 }
 
-function extractPdfMeta(buf: Uint8Array): { title?: string; authors?: string; year?: string } {
-  // Scan only the first 64 KB — the Info dictionary is almost always
-  // near the start (or end, but start hits more PDFs).
-  const slice = buf.slice(0, Math.min(buf.length, 64 * 1024));
+function extractPdfMeta(buf: Uint8Array): { title?: string; authors?: string; year?: string; doi?: string } {
+  // Scan a wider 256 KB window now that we're hunting for a DOI
+  // in the page text in addition to the Info dictionary at the
+  // start. DOIs typically appear on page 1 (header / footer /
+  // citation block) which is comfortably inside that window for
+  // an academic paper.
+  const slice = buf.slice(0, Math.min(buf.length, 256 * 1024));
   const text = new TextDecoder('latin1').decode(slice);
-  const out: { title?: string; authors?: string; year?: string } = {};
+  const out: { title?: string; authors?: string; year?: string; doi?: string } = {};
   const matchField = (key: string): string | null => {
     const re = new RegExp(`/${key}\\s*(\\(([^)]*)\\)|<([0-9A-Fa-f\\s]+)>)`);
     const m = text.match(re);
@@ -55,6 +58,20 @@ function extractPdfMeta(buf: Uint8Array): { title?: string; authors?: string; ye
   if (created) {
     const ym = created.match(/D:?(\d{4})/);
     if (ym) out.year = ym[1];
+  }
+  // DOI: try the PDF's metadata first ( /doi (…) is a common
+  // non-standard Info entry), then fall back to a content scan.
+  // The content regex is intentionally conservative — DOIs use a
+  // restricted character set so we strip trailing punctuation
+  // that the surrounding sentence usually drags along.
+  const metaDoi = matchField('doi');
+  if (metaDoi) {
+    out.doi = metaDoi.replace(/^doi:\s*/i, '').trim();
+  } else {
+    const m = text.match(/\b(?:doi[:\s]*)?(10\.\d{4,9}\/[^\s<>"'(){}[\]]+)/i);
+    if (m) {
+      out.doi = m[1].replace(/[.,;:)\]]+$/, '').trim();
+    }
   }
   return out;
 }
@@ -97,6 +114,7 @@ export async function POST(
     set('title', meta.title || name);
     set('authors', meta.authors);
     set('year', meta.year);
+    set('doi', meta.doi);
     if (allowed.has('offline')) data.offline = `drive:${up.id}`;
     if (allowed.has('url')) data.url = `https://drive.google.com/file/d/${up.id}/view`;
 
