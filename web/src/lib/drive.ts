@@ -97,11 +97,22 @@ export async function uploadToMinervaDrive(
   bytes: ArrayBuffer,
   filename: string,
   mime: string,
-  subfolder: string | null = null,
+  /** Either a single sub-folder name (legacy: lands at
+   *  `Minerva offline/<subfolder>/`) or an array of names that
+   *  build a nested path top-down (`Minerva offline/<a>/<b>/<c>/`).
+   *  Each segment is created on demand via ensureFolder; nulls /
+   *  empties in the array are skipped silently. */
+  subfolder: string | string[] | null = null,
 ): Promise<{ id: string }> {
   const token = await getGoogleAccessToken(userId);
   const root = await ensureMinervaFolder(userId);
-  const parent = subfolder ? await ensureFolder(userId, subfolder, root) : root;
+  const segments = Array.isArray(subfolder)
+    ? subfolder.map((s) => String(s || '').trim()).filter(Boolean)
+    : subfolder ? [String(subfolder).trim()].filter(Boolean) : [];
+  let parent = root;
+  for (const seg of segments) {
+    parent = await ensureFolder(userId, seg, parent);
+  }
   const init = await fetch(`${DRIVE_UPLOAD}/files?uploadType=resumable&fields=id`, {
     method: 'POST',
     headers: {

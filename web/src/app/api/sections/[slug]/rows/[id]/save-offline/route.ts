@@ -169,10 +169,26 @@ async function saveOffline(
         : `yt-dlp returned ${mime || 'unknown content-type'} (${bytes.byteLength} bytes) instead of a video.`;
       throw new StatusError(`${reason} Refresh YT cookies on the droplet, then retry.`, 502);
     }
+    // Prefer the row's title for the on-Drive filename — yt-dlp's
+    // own Content-Disposition is usually `<title>-<videoId>.<ext>`
+    // which clutters the user's Drive. Fall back to the helper's
+    // name only when the row has no title at all. Audio-only saves
+    // get `.mp3`; everything else keeps the original extension from
+    // the helper if it gave one, or `.mp4` as a default.
     const disp = r.headers.get('Content-Disposition') || '';
     const m = disp.match(/filename="?([^"]+)"?/);
-    const stem = (data.title || data.id || 'video').toString().replace(/[^\w.\- ]+/g, '_').slice(0, 100);
-    const leaf = m ? m[1] : `${stem}.mp4`;
+    const helperLeaf = m ? m[1] : '';
+    const extMatch = helperLeaf.match(/\.([a-z0-9]{2,4})$/i);
+    const ext = quality === 'audio' ? 'mp3' : (extMatch?.[1] || 'mp4');
+    const stem = (data.title || data.id || helperLeaf.replace(/\.[a-z0-9]+$/i, '') || 'video')
+      .toString()
+      .replace(/[^\w.\- ]+/g, '_')
+      .slice(0, 100);
+    const leaf = `${stem}.${ext}`;
+    // Playlist becomes a folder under videos/ on Drive (e.g.
+    // `Minerva offline/videos/Tutorials/<title>.mp4`). Local mirror
+    // already groups under the playlist; the comment that used to
+    // say "Drive keeps the flat name" no longer applies.
     const pl = String(data.playlist || '').trim().replace(/[/\\]+/g, '_').slice(0, 80);
     filename = pl ? `${pl}/${leaf}` : leaf;
   } else {
@@ -204,9 +220,19 @@ async function saveOffline(
 
   let fileId: string;
   try {
-    const driveName = filename.split('/').pop() || filename;
-    const subfolder = DRIVE_SUBFOLDERS[kind] || null;
-    const up = await uploadToMinervaDrive(userId, bytes, driveName, mime, subfolder);
+    // `filename` may carry a `<playlist>/<leaf>` shape from the
+    // video branch. Split it into the nested-folder path expected
+    // by uploadToMinervaDrive — for papers it's just the kind
+    // subfolder; for videos with a playlist it's `videos/<playlist>`.
+    const parts = filename.split('/').filter(Boolean);
+    const driveName = parts.pop() || filename;
+    const folderPath: string[] = [];
+    if (DRIVE_SUBFOLDERS[kind]) folderPath.push(DRIVE_SUBFOLDERS[kind]!);
+    folderPath.push(...parts);
+    const up = await uploadToMinervaDrive(
+      userId, bytes, driveName, mime,
+      folderPath.length > 0 ? folderPath : null,
+    );
     fileId = up.id;
   } catch (e) {
     throw new StatusError((e as Error).message, 502);

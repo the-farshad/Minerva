@@ -106,10 +106,33 @@ export function PreviewModal({
   // re-render doesn't re-read the pref and yank the iframe back.
   const lockedYtUrl = useRef<string | null>(null);
   const initialYtResumeRef = useRef(0);
-  if (item?.rowId && lockedRowId.current !== item.rowId) {
-    lockedRowId.current = item.rowId;
-    const saved = readPref<number>(`pdf.page.${item.rowId}`, 0);
-    initialPdfPageRef.current = saved > 0 ? saved : 1;
+  if (item?.rowId) {
+    if (lockedRowId.current !== item.rowId) {
+      lockedRowId.current = item.rowId;
+      const saved = readPref<number>(`pdf.page.${item.rowId}`, 0);
+      initialPdfPageRef.current = saved > 0 ? saved : 1;
+    }
+  } else {
+    // Item flipped back to null (modal closed). Reset the lock so
+    // the NEXT time the same row opens we re-read prefs — otherwise
+    // a close + reopen on the same paper sticks at whatever page
+    // was saved the very first time we ever opened it, ignoring
+    // every scroll since.
+    lockedRowId.current = null;
+  }
+  // YT resume lock — same shape as the PDF lock, also driven off
+  // the `item` prop (not the inner `view` state) so it runs above
+  // the early return and the close-then-reopen flow correctly
+  // re-reads the saved time on the second open.
+  if (item?.url) {
+    if (ytId(item.url)) {
+      if (lockedYtUrl.current !== item.url) {
+        lockedYtUrl.current = item.url;
+        initialYtResumeRef.current = readPref<number>(`resume.${item.url}`, 0);
+      }
+    }
+  } else {
+    lockedYtUrl.current = null;
   }
   const [pdfPage, setPdfPage] = useState(1);
   useEffect(() => {
@@ -418,10 +441,6 @@ export function PreviewModal({
   // earlier. The locked ref also means we don't re-read the pref on
   // every render (which would otherwise yank the iframe back to the
   // old timestamp every time pagechanging fires).
-  if (yt && view.url && lockedYtUrl.current !== view.url) {
-    lockedYtUrl.current = view.url;
-    initialYtResumeRef.current = readPref<number>(`resume.${view.url}`, 0);
-  }
   const ytResume = initialYtResumeRef.current;
   const hostSrc = view.hostPath
     ? `/api/helper/file/serve?path=${encodeURIComponent(view.hostPath)}`

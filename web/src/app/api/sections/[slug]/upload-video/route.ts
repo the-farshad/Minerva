@@ -66,20 +66,32 @@ export async function POST(
       return NextResponse.json({ error: 'File does not look like a valid MP4 (no `ftyp` box).' }, { status: 400 });
     }
 
-    const cleanLeaf = filename.replace(/[^\w.\- ]+/g, '_').slice(0, 100);
-    const up = await uploadToMinervaDrive(
-      userId, ab, cleanLeaf, mime, DRIVE_SUBFOLDERS.video,
-    );
-
+    // Attach-to-existing-row pathway: load the row first so we can
+    // mirror its `title` + `playlist` into the Drive filename /
+    // folder. New-row pathway uses the form fields directly.
+    let existingRow: typeof schema.rows.$inferSelect | undefined;
     if (rowId) {
-      const row = await db.query.rows.findFirst({
+      existingRow = await db.query.rows.findFirst({
         where: and(
           eq(schema.rows.userId, userId),
           eq(schema.rows.sectionId, sec.id),
           eq(schema.rows.id, rowId),
         ),
       });
-      if (!row) return NextResponse.json({ error: 'Row not found.' }, { status: 404 });
+      if (!existingRow) return NextResponse.json({ error: 'Row not found.' }, { status: 404 });
+    }
+    const existingData = (existingRow?.data as Record<string, unknown>) || {};
+    const titleFromName = filename.replace(/\.(mp4|mov|mkv|webm|avi)$/i, '').replace(/[_\-]+/g, ' ').trim();
+    const ext = (filename.match(/\.([a-z0-9]{2,4})$/i)?.[1] || 'mp4').toLowerCase();
+    const effectiveTitle = (title || String(existingData.title || '') || titleFromName || 'video').toString();
+    const cleanLeaf = `${effectiveTitle.replace(/[^\w.\- ]+/g, '_').slice(0, 100)}.${ext}`;
+    const effectivePlaylist = (playlist || String(existingData.playlist || '') || '').trim().replace(/[/\\]+/g, '_').slice(0, 80);
+    const folderPath: string[] = [DRIVE_SUBFOLDERS.video];
+    if (effectivePlaylist) folderPath.push(effectivePlaylist);
+    const up = await uploadToMinervaDrive(userId, ab, cleanLeaf, mime, folderPath);
+
+    if (rowId && existingRow) {
+      const row = existingRow;
       const data = row.data as Record<string, unknown>;
       const prevOffline = String(data.offline || '').trim();
       const parts = prevOffline ? prevOffline.split(' · ').filter(Boolean) : [];
@@ -99,11 +111,12 @@ export async function POST(
       });
     }
 
-    // Otherwise: create a new row.
+    // Otherwise: create a new row. `effectiveTitle` was already
+    // computed above for the Drive filename; reuse it so the row's
+    // title matches the file's name on Drive.
     const allowed = new Set(((sec.schema as { headers?: string[] }).headers) || []);
-    const titleFromName = filename.replace(/\.(mp4|mov|mkv|webm|avi)$/i, '').replace(/[_\-]+/g, ' ').trim();
     const data: Record<string, unknown> = {};
-    if (allowed.has('title')) data.title = title || titleFromName || 'video';
+    if (allowed.has('title')) data.title = effectiveTitle;
     if (allowed.has('offline')) data.offline = `drive:${up.id}`;
     if (allowed.has('playlist') && playlist) data.playlist = playlist;
     const [row] = await db.insert(schema.rows).values({
