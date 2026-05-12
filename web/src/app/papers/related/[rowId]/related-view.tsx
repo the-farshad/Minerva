@@ -62,6 +62,14 @@ export function RelatedView({
   const [adding, setAdding] = useState<Set<string>>(new Set());
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Filters apply on top of the search query. All client-side so
+  // they're instant — the result set is small enough (≤ 50 from
+  // either backend) that no server round-trip is needed.
+  const [yearFrom, setYearFrom] = useState<string>('');
+  const [yearTo, setYearTo] = useState<string>('');
+  const [pdfOnly, setPdfOnly] = useState(false);
+  const [venueFilter, setVenueFilter] = useState<string>('');
+  const [sortBy, setSortBy] = useState<'relevance' | 'year-desc' | 'year-asc' | 'title'>('relevance');
 
   useEffect(() => {
     if (!seedRef && !seedTitle) {
@@ -90,17 +98,47 @@ export function RelatedView({
     return () => { cancelled = true; };
   }, [seedRef, seedTitle]);
 
+  /** Distinct venues across the loaded result set — drives the
+   *  venue dropdown so users only see options that match the
+   *  current backend's response. */
+  const allVenues = useMemo(() => {
+    if (!papers) return [] as string[];
+    const set = new Set<string>();
+    for (const p of papers) if (p.venue) set.add(p.venue);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [papers]);
+
   const filtered = useMemo(() => {
     if (!papers) return [];
     const Q = q.trim().toLowerCase();
-    if (!Q) return papers;
-    return papers.filter((p) => {
-      const t = (p.title || '').toLowerCase();
-      const a = (p.authors || []).map((x) => x.name || '').join(' ').toLowerCase();
-      const v = (p.venue || '').toLowerCase();
-      return t.includes(Q) || a.includes(Q) || v.includes(Q);
+    const yFrom = yearFrom ? Number(yearFrom) : null;
+    const yTo = yearTo ? Number(yearTo) : null;
+    const venue = venueFilter.trim().toLowerCase();
+    const out = papers.filter((p) => {
+      if (Q) {
+        const t = (p.title || '').toLowerCase();
+        const a = (p.authors || []).map((x) => x.name || '').join(' ').toLowerCase();
+        const v = (p.venue || '').toLowerCase();
+        if (!(t.includes(Q) || a.includes(Q) || v.includes(Q))) return false;
+      }
+      if (yFrom != null && (p.year == null || p.year < yFrom)) return false;
+      if (yTo != null && (p.year == null || p.year > yTo)) return false;
+      if (pdfOnly && !p.openAccessPdf?.url) return false;
+      if (venue && (p.venue || '').toLowerCase() !== venue) return false;
+      return true;
     });
-  }, [papers, q]);
+    // Sorting — relevance preserves backend order (already
+    // ranked); the explicit options key off year / title.
+    if (sortBy === 'year-desc') out.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+    else if (sortBy === 'year-asc') out.sort((a, b) => (a.year ?? 9999) - (b.year ?? 9999));
+    else if (sortBy === 'title') out.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    return out;
+  }, [papers, q, yearFrom, yearTo, pdfOnly, venueFilter, sortBy]);
+
+  const filtersActive = !!(yearFrom || yearTo || pdfOnly || venueFilter || sortBy !== 'relevance');
+  function clearFilters() {
+    setYearFrom(''); setYearTo(''); setPdfOnly(false); setVenueFilter(''); setSortBy('relevance');
+  }
 
   async function addOne(p: Paper): Promise<boolean> {
     const key = paperKey(p);
@@ -218,6 +256,72 @@ export function RelatedView({
             ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Adding…</>
             : <><Download className="h-3.5 w-3.5" /> Add all {filtered.length ? `(${filtered.length})` : ''}</>}
         </button>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+        <label className="inline-flex items-center gap-1">
+          <span className="text-zinc-500">Year</span>
+          <input
+            type="number"
+            value={yearFrom}
+            onChange={(e) => setYearFrom(e.target.value)}
+            placeholder="from"
+            className="w-16 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+          />
+          <span className="text-zinc-400">–</span>
+          <input
+            type="number"
+            value={yearTo}
+            onChange={(e) => setYearTo(e.target.value)}
+            placeholder="to"
+            className="w-16 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+          />
+        </label>
+
+        <label className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 px-2.5 py-1 dark:border-zinc-700">
+          <input
+            type="checkbox"
+            checked={pdfOnly}
+            onChange={(e) => setPdfOnly(e.target.checked)}
+            className="h-3 w-3"
+          />
+          <span className="text-zinc-600 dark:text-zinc-400">PDF only</span>
+        </label>
+
+        {allVenues.length > 1 && (
+          <select
+            value={venueFilter}
+            onChange={(e) => setVenueFilter(e.target.value)}
+            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+            title="Filter by venue"
+          >
+            <option value="">All venues ({allVenues.length})</option>
+            {allVenues.map((v) => (<option key={v} value={v}>{v}</option>))}
+          </select>
+        )}
+
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+          title="Sort order"
+        >
+          <option value="relevance">Sort: relevance</option>
+          <option value="year-desc">Sort: newest first</option>
+          <option value="year-asc">Sort: oldest first</option>
+          <option value="title">Sort: title A–Z</option>
+        </select>
+
+        {filtersActive && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            title="Clear all filters"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {err && (
