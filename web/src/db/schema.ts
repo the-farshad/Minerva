@@ -180,6 +180,12 @@ export const polls = pgTable('polls', {
   /** 'group' (default) or 'book'. Drives participant-view UX and
    * server-side response validation. */
   mode: text('mode').default('group').notNull(),
+  /** Optional shared-secret password. When set, participants must
+   * supply it (server-validated) before reading the grid or
+   * submitting a response. Stored as a sha-256 hex digest, not
+   * plaintext, even though it's a soft-secret — the level of
+   * effort needed to enforce it cleanly is the same either way. */
+  passwordHash: text('passwordHash'),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
   updatedAt: timestamp('updatedAt').defaultNow().notNull(),
 }, (t) => ({

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState, use } from 'react';
-import { Loader2, Copy, Send, Calendar, MapPin, CheckCircle2, Pencil } from 'lucide-react';
+import Link from 'next/link';
+import { Loader2, Copy, Send, Calendar, MapPin, CheckCircle2, Pencil, ArrowLeft, Lock } from 'lucide-react';
 import { appPrompt } from '@/components/prompt';
 import { appConfirm } from '@/components/confirm';
 import { toast } from 'sonner';
@@ -38,12 +39,25 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [cells, setCells] = useState<Cell[]>([]);
+  // Password the participant typed in this session — kept in state
+  // (NOT localStorage) so a closed tab forgets it. Sent via the
+  // `x-poll-password` header / body field so the server can verify
+  // and serve the real payload.
+  const [pollPassword, setPollPassword] = useState('');
+  const [passwordRequired, setPasswordRequired] = useState(false);
 
-  async function load() {
+  async function load(supplied?: string) {
     try {
-      const r = await fetch(`/api/polls/${encodeURIComponent(token)}`);
-      const j = (await r.json().catch(() => ({}))) as { poll?: Poll; responses?: PollResponse[]; error?: string };
+      const pw = supplied !== undefined ? supplied : pollPassword;
+      const r = await fetch(`/api/polls/${encodeURIComponent(token)}${pw ? `?p=${encodeURIComponent(pw)}` : ''}`);
+      const j = (await r.json().catch(() => ({}))) as { poll?: Poll; responses?: PollResponse[]; error?: string; passwordRequired?: boolean };
+      if (r.status === 401 && j.passwordRequired) {
+        setPasswordRequired(true);
+        setPoll(j.poll || null);
+        return;
+      }
       if (!r.ok || !j.poll) throw new Error(j.error || `load: ${r.status}`);
+      setPasswordRequired(false);
       setPoll(j.poll);
       setResponses(j.responses || []);
       const total = j.poll.days.length * slotsPerDay(j.poll.slots);
@@ -89,7 +103,7 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
       const r = await fetch(`/api/polls/${encodeURIComponent(token)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), bits: cells.join(''), note }),
+        body: JSON.stringify({ name: name.trim(), bits: cells.join(''), note, password: pollPassword || undefined }),
       });
       const j = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(j.error || `submit: ${r.status}`);
@@ -107,6 +121,41 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
       <main className="mx-auto max-w-md px-4 py-12 text-sm">
         <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-300">
           {err}
+        </div>
+      </main>
+    );
+  }
+  if (passwordRequired) {
+    return (
+      <main className="mx-auto max-w-md px-4 py-12 text-sm">
+        <Link href="/meet" className="mb-4 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+          <ArrowLeft className="h-3 w-3" /> Back to polls
+        </Link>
+        <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Lock className="h-4 w-4 text-amber-500" /> Password required
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">{poll?.title || 'This poll'} is password-protected. Ask the organizer for it.</p>
+          <form
+            className="mt-3 flex gap-2"
+            onSubmit={(e) => { e.preventDefault(); void load(pollPassword); }}
+          >
+            <input
+              type="password"
+              autoFocus
+              value={pollPassword}
+              onChange={(e) => setPollPassword(e.target.value)}
+              placeholder="Poll password"
+              className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            />
+            <button
+              type="submit"
+              disabled={!pollPassword}
+              className="rounded-full bg-zinc-900 px-4 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+            >
+              Unlock
+            </button>
+          </form>
         </div>
       </main>
     );
@@ -171,13 +220,53 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
     await patchPoll({ location: next });
     toast.success('Location updated.');
   }
+  async function editTitle() {
+    if (!poll) return;
+    const next = await appPrompt('Poll title', { okLabel: 'Save', initial: poll.title });
+    if (next == null) return;
+    if (!next.trim()) { notify.error('Title cannot be empty.'); return; }
+    await patchPoll({ title: next.trim() });
+    toast.success('Title updated.');
+  }
+  async function editPassword() {
+    if (!poll) return;
+    const next = await appPrompt(
+      poll.passwordSet ? 'Change or clear the password' : 'Set a poll password',
+      {
+        okLabel: 'Save',
+        placeholder: poll.passwordSet ? '••••• (empty = remove)' : 'New password',
+      },
+    );
+    if (next == null) return;
+    await patchPoll({ password: next.trim() ? next.trim() : null });
+    toast.success(next.trim() ? 'Password updated.' : 'Password cleared.');
+  }
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6">
+      <Link href="/meet" className="mb-3 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+        <ArrowLeft className="h-3 w-3" /> Back to polls
+      </Link>
       <header className="mb-4 flex flex-wrap items-center gap-3">
         <Calendar className="h-5 w-5" />
         <h1 className="text-lg font-semibold">{poll.title}</h1>
+        <button
+          type="button"
+          onClick={editTitle}
+          title="Rename this poll"
+          className="rounded-full p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
         <span className="text-xs text-zinc-500">{slots.tz}</span>
+        <button
+          type="button"
+          onClick={editPassword}
+          title={poll.passwordSet ? 'Password is set — click to change or clear' : 'Set a password so the share link needs unlocking'}
+          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${poll.passwordSet ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : 'border border-zinc-200 text-zinc-500 dark:border-zinc-700'}`}
+        >
+          <Lock className="h-3 w-3" /> {poll.passwordSet ? 'Password set' : 'No password'}
+        </button>
         <button
           type="button"
           onClick={() => { try { void navigator.clipboard.writeText(shareUrl); toast.success('Share link copied.'); } catch { /* tolerate */ } }}

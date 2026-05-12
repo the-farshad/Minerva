@@ -10,19 +10,52 @@ import { NextRequest, NextResponse } from 'next/server';
 import { eq, asc, and } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
-import { cellCount, type PollSlots } from '@/lib/poll';
+import { cellCount, hashPollPassword, validateSlots, type PollSlots } from '@/lib/poll';
 
 async function loadByToken(token: string) {
   return db.query.polls.findFirst({ where: eq(schema.polls.token, token) });
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ token: string }> },
 ) {
   const { token } = await ctx.params;
   const poll = await loadByToken(token);
   if (!poll) return NextResponse.json({ error: 'Poll not found.' }, { status: 404 });
+
+  // Password gate. The participant supplies `?p=<plaintext>` (or
+  // header `x-poll-password`); we hash and compare. If the poll
+  // has no password the gate is open. If it does have one and the
+  // supplied digest doesn't match, we return a stripped payload
+  // (no slots, no responses) plus `passwordRequired: true` so the
+  // UI can render the prompt without leaking anything.
+  let passwordOk = !poll.passwordHash;
+  if (poll.passwordHash) {
+    const supplied = req.nextUrl.searchParams.get('p') || req.headers.get('x-poll-password') || '';
+    if (supplied) {
+      const digest = await hashPollPassword(supplied);
+      if (digest === poll.passwordHash) passwordOk = true;
+    }
+  }
+  if (!passwordOk) {
+    return NextResponse.json({
+      poll: {
+        token: poll.token,
+        title: poll.title,
+        days: [],
+        slots: poll.slots,
+        closesAt: poll.closesAt?.toISOString() ?? null,
+        location: '',
+        finalSlot: null,
+        mode: (poll.mode as 'group' | 'book') || 'group',
+        passwordSet: true,
+      },
+      responses: [],
+      passwordRequired: true,
+    }, { status: 401 });
+  }
+
   const responses = await db.query.pollResponses.findMany({
     where: eq(schema.pollResponses.pollId, poll.id),
     orderBy: [asc(schema.pollResponses.createdAt)],
@@ -37,6 +70,7 @@ export async function GET(
       location: poll.location || '',
       finalSlot: poll.finalSlot || null,
       mode: (poll.mode as 'group' | 'book') || 'group',
+      passwordSet: !!poll.passwordHash,
     },
     responses: responses.map((r) => ({
       id: r.id,
@@ -58,7 +92,14 @@ export async function POST(
   if (poll.closesAt && new Date(poll.closesAt) < new Date()) {
     return NextResponse.json({ error: 'This poll is closed.' }, { status: 409 });
   }
-  const body = (await req.json().catch(() => ({}))) as { name?: string; bits?: string; note?: string };
+  const body = (await req.json().catch(() => ({}))) as { name?: string; bits?: string; note?: string; password?: string };
+  if (poll.passwordHash) {
+    const supplied = body.password || req.headers.get('x-poll-password') || '';
+    const digest = supplied ? await hashPollPassword(supplied) : '';
+    if (digest !== poll.passwordHash) {
+      return NextResponse.json({ error: 'Password is wrong or missing.' }, { status: 401 });
+    }
+  }
   const name = String(body.name || '').trim().slice(0, 80);
   if (!name) return NextResponse.json({ error: 'Name is required.' }, { status: 400 });
   const expectedLen = cellCount({ days: poll.days as string[], slots: poll.slots as PollSlots });
@@ -124,12 +165,36 @@ export async function PATCH(
   if (poll.userId !== userId) return NextResponse.json({ error: 'Not your poll.' }, { status: 403 });
 
   const body = (await req.json().catch(() => ({}))) as {
+    title?: string;
     location?: string;
     finalSlot?: string | null;
     closesAt?: string | null;
+    days?: string[];
+    slots?: unknown;
+    /** Either a plaintext (sets/changes the password) or
+     * explicitly null (clears it). Omit to leave as-is. */
+    password?: string | null;
   };
   const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (typeof body.title === 'string' && body.title.trim()) patch.title = body.title.trim().slice(0, 200);
   if (typeof body.location === 'string') patch.location = body.location.slice(0, 500);
+  if (body.password === null) patch.passwordHash = null;
+  else if (typeof body.password === 'string' && body.password.trim()) {
+    patch.passwordHash = await hashPollPassword(body.password.trim());
+  }
+  if (Array.isArray(body.days)) {
+    const days = Array.from(new Set(
+      body.days.map((d) => String(d).trim()).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+    )).sort();
+    if (days.length === 0) {
+      return NextResponse.json({ error: 'Days must be YYYY-MM-DD strings.' }, { status: 400 });
+    }
+    patch.days = days;
+  }
+  if (body.slots !== undefined) {
+    try { patch.slots = validateSlots(body.slots); }
+    catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 400 }); }
+  }
   if (body.finalSlot === null || typeof body.finalSlot === 'string') {
     // Validate "<dayIdx>:<slotIdx>" against the poll's grid so we
     // can't end up with a final slot that doesn't exist.
@@ -162,6 +227,7 @@ export async function PATCH(
     location: updated.location || '',
     finalSlot: updated.finalSlot || null,
     mode: (updated.mode as 'group' | 'book') || 'group',
+    passwordSet: !!updated.passwordHash,
   });
 }
 

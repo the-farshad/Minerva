@@ -785,12 +785,31 @@ def cookies_upload():
     if len(text) < 64:
         return (jsonify({"ok": False, "error": "Cookies file is suspiciously small (<64 B)."}), 400, _cors_dict())
     try:
-        # Atomic-ish write: write to a sibling then rename so the
-        # yt-dlp side never sees a half-written file.
+        # Try atomic write (sibling temp + rename). Fails with
+        # EBUSY when `target` is a single-file bind-mount from
+        # the host — the kernel won't let us unlink a mount
+        # point. In that case fall back to truncate-write in
+        # place; the brief window where the file is mid-write is
+        # acceptable for a config the helper reads at request
+        # time (worst case: one yt-dlp call sees a half-written
+        # cookie jar and retries succeed).
         tmp_path = target + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.replace(tmp_path, target)
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.replace(tmp_path, target)
+        except OSError as exc:
+            # Cleanup the orphan tmp file if the rename failed.
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            if exc.errno in (16,):  # EBUSY: bind-mount target
+                with open(target, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            else:
+                raise
         st = os.stat(target)
         return (jsonify({"ok": True, "path": target, "size": st.st_size, "mtime": int(st.st_mtime)}), 200, _cors_dict())
     except Exception as exc:  # noqa: BLE001

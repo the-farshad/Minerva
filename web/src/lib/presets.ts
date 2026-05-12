@@ -18,6 +18,17 @@ export type SectionPreset = {
 
 export const PRESETS: SectionPreset[] = [
   {
+    slug: 'meets',
+    title: 'Meeting polls',
+    icon: 'calendar',
+    preset: 'meetings',
+    // No row-shaped schema — this section is a thin wrapper over
+    // the polls table (which has its own schema). section-view
+    // detects preset === 'meetings' and renders the polls index
+    // inline instead of the usual rows grid.
+    schema: { headers: [], types: [] },
+  },
+  {
     slug: 'notes',
     title: 'Notes',
     icon: 'book-open',

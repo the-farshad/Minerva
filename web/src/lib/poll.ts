@@ -35,6 +35,10 @@ export type Poll = {
    *  cell, organizer reads the heat-map. 'book' — Calendly-style:
    *  each participant picks exactly one cell, first-come claims it. */
   mode: PollMode;
+  /** True when a password is set on the poll. The plaintext is
+   *  never returned to the client — participants type the password
+   *  separately and the server compares hashes. */
+  passwordSet: boolean;
 };
 
 export type PollResponse = {
@@ -80,6 +84,18 @@ export function newPollToken(): string {
   }
   for (let i = 0; i < buf.length; i++) out += ALPHABET[buf[i] % ALPHABET.length];
   return out;
+}
+
+/** Hash a poll password with SHA-256. Same on the server and the
+ * client so a participant can supply it once and we verify by
+ * digest comparison without ever logging the plaintext. */
+export async function hashPollPassword(plaintext: string): Promise<string> {
+  const bytes = new TextEncoder().encode(plaintext);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return hex;
 }
 
 /** Sanity-check a slots block before persisting. Throws on invalid

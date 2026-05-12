@@ -21,6 +21,7 @@ export default function NewPollPage() {
   const [slotMin, setSlotMin] = useState(30);
   const [location, setLocation] = useState('');
   const [mode, setMode] = useState<'group' | 'book'>('group');
+  const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -44,6 +45,7 @@ export default function NewPollPage() {
           slots: { fromHour, toHour, slotMin, tz },
           location,
           mode,
+          password: password.trim() || undefined,
         }),
       });
       const j = (await r2.json().catch(() => ({}))) as { token?: string; error?: string };
@@ -171,6 +173,20 @@ export default function NewPollPage() {
       <p className="mt-3 text-[11px] text-zinc-500">
         Timezone <span className="font-mono">{tz}</span> — participants pick from this grid in your local time.
       </p>
+
+      <label className="mt-5 block">
+        <div className="text-xs text-zinc-500">Password <span className="text-zinc-400">(optional)</span></div>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Leave empty for open access"
+          className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <div className="mt-1 text-[10px] text-zinc-500">
+          When set, anyone with the share link still has to type this password to see the grid or submit. Stored as a SHA-256 digest — you can&rsquo;t recover it later, only replace it.
+        </div>
+      </label>
 
       <label className="mt-5 block">
         <div className="text-xs text-zinc-500">Location / platform link <span className="text-zinc-400">(optional)</span></div>

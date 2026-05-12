@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { eq, desc, inArray } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
-import { newPollToken, validateSlots, slotsPerDay } from '@/lib/poll';
+import { newPollToken, validateSlots, slotsPerDay, hashPollPassword } from '@/lib/poll';
 
 export async function GET() {
   const session = await auth();
@@ -42,6 +42,7 @@ export async function GET() {
       location: p.location || '',
       finalSlot: p.finalSlot || null,
       mode: (p.mode as 'group' | 'book') || 'group',
+      passwordSet: !!p.passwordHash,
       responseCount: respCounts.get(p.id) || 0,
       createdAt: p.createdAt.toISOString(),
     })),
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
     closesAt?: string | null;
     location?: string;
     mode?: 'group' | 'book';
+    password?: string;
   };
   const title = String(body.title || '').trim();
   if (!title) return NextResponse.json({ error: 'Title is required.' }, { status: 400 });
@@ -83,9 +85,12 @@ export async function POST(req: NextRequest) {
 
   const location = String(body.location || '').slice(0, 500);
   const mode = body.mode === 'book' ? 'book' : 'group';
+  const passwordHash = body.password && body.password.trim()
+    ? await hashPollPassword(body.password.trim())
+    : null;
   const token = newPollToken();
   const [inserted] = await db.insert(schema.polls).values({
-    token, userId, title, days, slots, closesAt, location, mode,
+    token, userId, title, days, slots, closesAt, location, mode, passwordHash,
   }).returning();
 
   return NextResponse.json({
@@ -97,5 +102,6 @@ export async function POST(req: NextRequest) {
     location: inserted.location,
     finalSlot: inserted.finalSlot,
     mode: inserted.mode,
+    passwordSet: !!inserted.passwordHash,
   });
 }
