@@ -305,6 +305,46 @@ export function SectionView({
       return { id: j.id, data: j.data, updatedAt: j.updatedAt };
     }
 
+    // Notes preset: text-bearing files become rows with their
+    // content extracted inline — no Drive round-trip needed. Capped
+    // at 200 KB inline so a pasted log file doesn't bloat the row.
+    // Larger files fall through to the generic Drive+link path.
+    if (effectivePreset === 'notes' && !isImage) {
+      const bareName = file.name.replace(/\.[^.]+$/, '');
+      const ext = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+      const INLINE_MAX = 200_000;
+      const inline = async (type: 'text' | 'md', content: string): Promise<Row | null> => {
+        if (content.length > INLINE_MAX) return null;
+        return createRow({ title: bareName, type, content });
+      };
+      try {
+        if (ext === 'txt' || file.type === 'text/plain') {
+          const text = await file.text();
+          const row = await inline('text', text);
+          if (row) return row;
+        } else if (ext === 'md' || ext === 'markdown' || file.type === 'text/markdown') {
+          const text = await file.text();
+          const row = await inline('md', text);
+          if (row) return row;
+        } else if (ext === 'docx') {
+          // Dynamic import keeps the ~600 KB mammoth bundle out of
+          // the initial page load; we only pull it in when the user
+          // actually drops a Word doc on a notes section.
+          const { default: mammoth } = await import('mammoth/mammoth.browser');
+          const ab = await file.arrayBuffer();
+          const result = await mammoth.convertToMarkdown({ arrayBuffer: ab });
+          const md = result.value || '';
+          const row = await inline('md', md);
+          if (row) return row;
+        }
+      } catch (err) {
+        notify.error(`Couldn't inline ${file.name}: ${(err as Error).message} — uploading as a link instead.`);
+      }
+      // Fall through to the generic Drive-upload path below for
+      // anything else (oversize text, mammoth parse failure, .doc
+      // legacy format, .rtf, …).
+    }
+
     // Generic path — stream to Drive, then create a row whose
     // shape fits the preset.
     const fd = new FormData();
@@ -398,7 +438,7 @@ export function SectionView({
             <p className="mt-1 text-[11px] text-zinc-500">
               {effectivePreset === 'papers' ? 'PDFs get parsed for title / authors / year'
                 : effectivePreset === 'youtube' ? 'Videos get duration + thumbnail'
-                : effectivePreset === 'notes' ? 'Image → sketch note · other → markdown note'
+                : effectivePreset === 'notes' ? 'Image → sketch · txt/md/docx → text content inline · other → linked'
                 : effectivePreset === 'tasks' ? 'New card with the file attached'
                 : 'New row with the file attached'} · uploads to your Drive
             </p>
