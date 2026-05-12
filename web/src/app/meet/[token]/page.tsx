@@ -67,6 +67,20 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
     return yes;
   }, [responses, poll]);
 
+  /** For 1-to-1 booking mode: which cell each previous response
+   * claimed, keyed by cell index → claimant name. Drives the
+   * "taken by X" rendering in the grid. */
+  const claimedBy = useMemo(() => {
+    const out = new Map<number, string>();
+    if (!poll || poll.mode !== 'book') return out;
+    for (const r of responses) {
+      for (let i = 0; i < r.bits.length; i++) {
+        if (r.bits[i] === '1') { out.set(i, r.name); break; }
+      }
+    }
+    return out;
+  }, [responses, poll]);
+
   async function submit() {
     if (!poll) return;
     if (!name.trim()) { notify.error('Enter your name first.'); return; }
@@ -233,6 +247,37 @@ export default function PollViewPage({ params }: { params: Promise<{ token: stri
                   const c = cells[i] ?? '0';
                   const cons = consensus[i] || 0;
                   const heat = maxYes > 0 ? cons / maxYes : 0;
+                  const taker = claimedBy.get(i);
+                  if (poll.mode === 'book') {
+                    return (
+                      <td key={dayIdx} className="px-0.5 py-0.5">
+                        <button
+                          type="button"
+                          disabled={!!taker}
+                          onClick={() => setCells((arr) => {
+                            // Single-pick: clear every other cell first.
+                            const c2 = arr.map(() => '0' as Cell);
+                            c2[i] = arr[i] === '1' ? '0' : '1';
+                            return c2;
+                          })}
+                          className={`relative w-full rounded px-2 py-1.5 text-xs transition ${
+                            taker
+                              ? 'cursor-not-allowed bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-500'
+                              : c === '1'
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-zinc-100 text-zinc-500 hover:bg-emerald-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-emerald-900/50'
+                          } ${finalDay === dayIdx && finalSlotIdx === slotIdx ? 'ring-2 ring-emerald-600' : ''}`}
+                          title={taker
+                            ? `Taken by ${taker}`
+                            : c === '1'
+                              ? 'Your pick — click to clear'
+                              : 'Click to claim this slot'}
+                        >
+                          {taker ? '×' : c === '1' ? '✓' : ''}
+                        </button>
+                      </td>
+                    );
+                  }
                   return (
                     <td key={dayIdx} className="px-0.5 py-0.5">
                       <button

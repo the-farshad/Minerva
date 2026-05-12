@@ -1,0 +1,1 @@
+ALTER TABLE "polls" ADD COLUMN "mode" text DEFAULT 'group' NOT NULL;

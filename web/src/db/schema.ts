@@ -148,6 +148,14 @@ export const bookmarks = pgTable('bookmarks', {
  * SPA encoded the whole poll into a URL token; this server-backed
  * version stores it properly so URLs stay short, responses don't
  * race, and the organizer can revoke or extend a poll later. */
+/** Poll modes:
+ *   'group' — multiple participants, each marks availability across
+ *             the grid; organizer reads the consensus heat-map and
+ *             optionally finalizes a slot.
+ *   'book'  — Calendly-style 1-to-1. Organizer publishes a list of
+ *             candidate slots. First participant who clicks a slot
+ *             claims it; that cell becomes unavailable to everyone
+ *             after. Each response carries exactly one `1` bit. */
 export const polls = pgTable('polls', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   /** Short public slug used in the share URL. */
@@ -169,6 +177,9 @@ export const polls = pgTable('polls', {
    * highlight the final answer prominently. Null while the poll
    * is still open for input. */
   finalSlot: text('finalSlot'),
+  /** 'group' (default) or 'book'. Drives participant-view UX and
+   * server-side response validation. */
+  mode: text('mode').default('group').notNull(),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
   updatedAt: timestamp('updatedAt').defaultNow().notNull(),
 }, (t) => ({

@@ -36,6 +36,7 @@ export async function GET(
       closesAt: poll.closesAt?.toISOString() ?? null,
       location: poll.location || '',
       finalSlot: poll.finalSlot || null,
+      mode: (poll.mode as 'group' | 'book') || 'group',
     },
     responses: responses.map((r) => ({
       id: r.id,
@@ -72,6 +73,31 @@ export async function POST(
     return NextResponse.json({ error: "bits must contain only '0', '1', or '?'." }, { status: 400 });
   }
   const note = String(body.note || '').slice(0, 500);
+
+  // 1-to-1 booking mode: enforce that exactly one cell is picked
+  // AND that nobody else has already claimed it. Atomically — we
+  // re-query existing responses inside the same handler so a near-
+  // simultaneous submission can't double-book the same slot.
+  if (poll.mode === 'book') {
+    const ones: number[] = [];
+    for (let i = 0; i < bits.length; i++) if (bits[i] === '1') ones.push(i);
+    if (ones.length !== 1) {
+      return NextResponse.json({ error: 'Pick exactly one slot.' }, { status: 400 });
+    }
+    if (/[?]/.test(bits)) {
+      return NextResponse.json({ error: 'Tentative cells (?) aren\'t allowed in 1-to-1 booking mode.' }, { status: 400 });
+    }
+    const picked = ones[0];
+    const existing = await db.query.pollResponses.findMany({
+      where: eq(schema.pollResponses.pollId, poll.id),
+      columns: { bits: true },
+    });
+    for (const r of existing) {
+      if (r.bits.charAt(picked) === '1') {
+        return NextResponse.json({ error: 'That slot was just claimed by someone else — refresh and pick another.' }, { status: 409 });
+      }
+    }
+  }
 
   const [inserted] = await db.insert(schema.pollResponses).values({
     pollId: poll.id, name, bits, note,
@@ -135,6 +161,7 @@ export async function PATCH(
     closesAt: updated.closesAt?.toISOString() ?? null,
     location: updated.location || '',
     finalSlot: updated.finalSlot || null,
+    mode: (updated.mode as 'group' | 'book') || 'group',
   });
 }
 

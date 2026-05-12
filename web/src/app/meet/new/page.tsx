@@ -20,6 +20,7 @@ export default function NewPollPage() {
   const [toHour, setToHour] = useState(17);
   const [slotMin, setSlotMin] = useState(30);
   const [location, setLocation] = useState('');
+  const [mode, setMode] = useState<'group' | 'book'>('group');
   const [saving, setSaving] = useState(false);
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -42,6 +43,7 @@ export default function NewPollPage() {
           days,
           slots: { fromHour, toHour, slotMin, tz },
           location,
+          mode,
         }),
       });
       const j = (await r2.json().catch(() => ({}))) as { token?: string; error?: string };
@@ -61,6 +63,30 @@ export default function NewPollPage() {
         <CalendarDays className="h-5 w-5" />
         <h1 className="text-lg font-semibold">New meeting poll</h1>
       </header>
+
+      <fieldset className="mb-5">
+        <legend className="text-xs text-zinc-500">Poll type</legend>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {([
+            { value: 'group', title: 'Group consensus', desc: 'Everyone marks availability. Heat-map shows the best slot. You finalize a winner.' },
+            { value: 'book',  title: '1-to-1 booking',  desc: 'Calendly-style. Each participant claims one slot first-come-first-served — that cell becomes unavailable to the rest.' },
+          ] as const).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setMode(opt.value)}
+              className={`rounded-lg border px-3 py-2 text-left text-xs ${
+                mode === opt.value
+                  ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                  : 'border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800'
+              }`}
+            >
+              <div className="font-medium">{opt.title}</div>
+              <div className={`mt-0.5 text-[10px] ${mode === opt.value ? 'opacity-80' : 'text-zinc-500'}`}>{opt.desc}</div>
+            </button>
+          ))}
+        </div>
+      </fieldset>
 
       <label className="block">
         <div className="text-xs text-zinc-500">Title</div>

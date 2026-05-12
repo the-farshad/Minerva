@@ -36,6 +36,13 @@
       "when": 1778603354342,
       "tag": "0004_whole_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778607464532,
+      "tag": "0005_calm_cloak",
+      "breakpoints": true
     }
   ]
 }

@@ -19,6 +19,8 @@ export type PollSlots = {
   tz: string;
 };
 
+export type PollMode = 'group' | 'book';
+
 export type Poll = {
   token: string;
   title: string;
@@ -29,6 +31,10 @@ export type Poll = {
   location: string;
   /** "<dayIdx>:<slotIdx>" once the organizer locks in a final slot. */
   finalSlot: string | null;
+  /** 'group' (default) — every participant marks a 0/1/? bit per
+   *  cell, organizer reads the heat-map. 'book' — Calendly-style:
+   *  each participant picks exactly one cell, first-come claims it. */
+  mode: PollMode;
 };
 
 export type PollResponse = {

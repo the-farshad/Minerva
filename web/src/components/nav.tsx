@@ -17,6 +17,7 @@ const PRIMARY = [
 const UTILITY = [
   { href: '/pomodoro', label: 'Pomodoro', icon: Timer },
   { href: '/share', label: 'Share', icon: Share2 },
+  { href: '/meet', label: 'Polls', icon: Calendar },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
