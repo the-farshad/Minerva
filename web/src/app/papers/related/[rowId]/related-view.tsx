@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download, Calendar as CalIcon, FileText, BookOpen, ChevronDown, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 
@@ -256,68 +256,121 @@ export function RelatedView({
         </button>
       </div>
 
+      {/* Filter strip — chip-style pills that visibly carry their
+        * own state. Each pill flips to the inverse-colour scheme
+        * when active so users can see at a glance what's narrowed
+        * the list. Sort is a segmented control on the right so it
+        * doesn't compete with the filters' Active/Off duality. */}
       <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
-        <label className="inline-flex items-center gap-1">
-          <span className="text-zinc-500">Year</span>
+        {/* Year range — single rounded pill that holds both inputs
+          * + an em-dash separator. Active style applies when
+          * either bound is set. */}
+        <div
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 transition ${
+            yearFrom || yearTo
+              ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+              : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400'
+          }`}
+        >
+          <CalIcon className="h-3 w-3 opacity-70" />
           <input
             type="number"
             value={yearFrom}
             onChange={(e) => setYearFrom(e.target.value)}
             placeholder="from"
-            className="w-16 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+            aria-label="Year from"
+            className="w-12 border-0 bg-transparent text-center text-xs focus:outline-none focus:ring-0 placeholder:opacity-50"
           />
-          <span className="text-zinc-400">–</span>
+          <span className="opacity-50">–</span>
           <input
             type="number"
             value={yearTo}
             onChange={(e) => setYearTo(e.target.value)}
             placeholder="to"
-            className="w-16 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+            aria-label="Year to"
+            className="w-12 border-0 bg-transparent text-center text-xs focus:outline-none focus:ring-0 placeholder:opacity-50"
           />
-        </label>
+        </div>
 
-        <label className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 px-2.5 py-1 dark:border-zinc-700">
-          <input
-            type="checkbox"
-            checked={pdfOnly}
-            onChange={(e) => setPdfOnly(e.target.checked)}
-            className="h-3 w-3"
-          />
-          <span className="text-zinc-600 dark:text-zinc-400">PDF only</span>
-        </label>
+        {/* PDF-only — real toggle button instead of a checkbox.
+          * Click anywhere on the pill flips it. */}
+        <button
+          type="button"
+          onClick={() => setPdfOnly((v) => !v)}
+          aria-pressed={pdfOnly}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 transition ${
+            pdfOnly
+              ? 'border-emerald-600 bg-emerald-600 text-white dark:border-emerald-500 dark:bg-emerald-500 dark:text-zinc-900'
+              : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800'
+          }`}
+        >
+          <FileText className="h-3 w-3" />
+          PDF only
+          {pdfOnly && <Check className="h-3 w-3" />}
+        </button>
 
+        {/* Venue picker — only shows when the list has more than
+          * one. The pill carries the venue when picked; click to
+          * cycle back to "all". */}
         {allVenues.length > 1 && (
-          <select
-            value={venueFilter}
-            onChange={(e) => setVenueFilter(e.target.value)}
-            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
-            title="Filter by venue"
+          <div
+            className={`relative inline-flex items-center rounded-full border transition ${
+              venueFilter
+                ? 'border-blue-600 bg-blue-600 text-white dark:border-blue-500 dark:bg-blue-500 dark:text-zinc-900'
+                : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400'
+            }`}
           >
-            <option value="">All venues ({allVenues.length})</option>
-            {allVenues.map((v) => (<option key={v} value={v}>{v}</option>))}
-          </select>
+            <BookOpen className="ml-3 h-3 w-3 opacity-70" />
+            <select
+              value={venueFilter}
+              onChange={(e) => setVenueFilter(e.target.value)}
+              aria-label="Filter by venue"
+              className="appearance-none bg-transparent py-1 pl-2 pr-7 text-xs focus:outline-none"
+            >
+              <option value="" className="text-zinc-900 dark:text-zinc-100">All venues ({allVenues.length})</option>
+              {allVenues.map((v) => (
+                <option key={v} value={v} className="text-zinc-900 dark:text-zinc-100">{v}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 opacity-60" />
+          </div>
         )}
 
-        <select
-          value={sortBy}
-          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
-          title="Sort order"
-        >
-          <option value="relevance">Sort: relevance</option>
-          <option value="year-desc">Sort: newest first</option>
-          <option value="year-asc">Sort: oldest first</option>
-          <option value="title">Sort: title A–Z</option>
-        </select>
+        {/* Sort — segmented pill bar. Click cycles between the
+          * four sort options; visual state is unambiguous. */}
+        <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          {([
+            { v: 'relevance', label: 'Relevance' },
+            { v: 'year-desc', label: 'Newest' },
+            { v: 'year-asc',  label: 'Oldest' },
+            { v: 'title',     label: 'A–Z' },
+          ] as const).map((opt) => {
+            const active = sortBy === opt.v;
+            return (
+              <button
+                key={opt.v}
+                type="button"
+                onClick={() => setSortBy(opt.v)}
+                className={`rounded-full px-2.5 py-1 text-xs transition ${
+                  active
+                    ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
 
         {filtersActive && (
           <button
             type="button"
             onClick={clearFilters}
-            className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
             title="Clear all filters"
           >
-            Clear filters
+            <X className="h-3 w-3" /> Clear
           </button>
         )}
       </div>
