@@ -132,7 +132,11 @@ export function SectionView({
       });
       if (!r.ok) throw new Error(`add: ${r.status}`);
       const next = (await r.json()) as Row;
-      setRows((rs) => [next, ...rs]);
+      // Dedupe: the SSE `row.created` event for the same insert
+      // can arrive before the HTTP response on a fast LAN, which
+      // would otherwise mount the row twice and "fix itself" on
+      // the next refresh — exactly what the user reported.
+      setRows((rs) => rs.some((x) => x.id === next.id) ? rs : [next, ...rs]);
       qc.invalidateQueries({ queryKey: ['rows', section.slug] });
       return next;
     } catch (e) {
@@ -373,7 +377,14 @@ export function SectionView({
 
   return (
     <main
-      className="mx-auto w-full max-w-6xl px-6 py-8"
+      // Tasks board uses the full viewport so a many-column
+      // Kanban can stretch wide before falling back to horizontal
+      // scroll. Every other preset keeps the centred reading
+      // width that suits row-list / grid layouts.
+      className={cn(
+        'w-full px-3 py-6 sm:px-6 sm:py-8',
+        section.preset !== 'tasks' && 'mx-auto max-w-6xl',
+      )}
       onDragEnter={onDragEnter}
       onDragOver={(e) => { if (isFileDrag(e)) e.preventDefault(); }}
       onDragLeave={onDragLeave}
@@ -430,7 +441,7 @@ export function SectionView({
           {section.preset === 'notes' ? (
             <AddNote
               section={section}
-              onAdded={(row) => setRows((rs) => [row, ...rs])}
+              onAdded={(row) => setRows((rs) => rs.some((x) => x.id === row.id) ? rs : [row, ...rs])}
             />
           ) : (
             <AddByUrl
@@ -460,11 +471,11 @@ export function SectionView({
             })}
             />
           )}
-          {/* URL-keyed presets only accept rows via Add-by-URL. Other
-            * sections (tasks / notes / projects / habits / inbox /
-            * bookmarks) get a quick-add input so the row lands with a
-            * title already on it — no more blank-row dead weight. */}
-          {section.preset !== 'youtube' && section.preset !== 'papers' && (
+          {/* URL-keyed presets (youtube / papers) only accept rows
+            * via Add-by-URL. Notes has its own typed-creation
+            * dialog. Everything else gets a quick-add input so the
+            * row lands with a title already on it. */}
+          {section.preset !== 'youtube' && section.preset !== 'papers' && section.preset !== 'notes' && (
             <QuickAdd
               titleField={titleField}
               onCreate={async (title) => {
@@ -475,7 +486,7 @@ export function SectionView({
                 });
                 if (!r.ok) { notify.error(`Add failed: ${r.status}`); return; }
                 const row = (await r.json()) as Row;
-                setRows((rs) => [...rs, row]);
+                setRows((rs) => rs.some((x) => x.id === row.id) ? rs : [...rs, row]);
                 qc.invalidateQueries({ queryKey: ['rows', section.slug] });
               }}
             />
