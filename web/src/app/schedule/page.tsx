@@ -1,7 +1,7 @@
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
 import { db, schema } from '@/db';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, asc, desc } from 'drizzle-orm';
 import { Nav } from '@/components/nav';
 import { ScheduleView } from './schedule-view';
 
@@ -12,8 +12,11 @@ export default async function SchedulePage() {
   if (!session?.user) redirect('/sign-in');
   const userId = (session.user as { id: string }).id;
 
+  // Match the section ordering Home/Settings/section pages use so
+  // the top-nav doesn't reshuffle when navigating to Schedule.
   const sections = await db.query.sections.findMany({
     where: and(eq(schema.sections.userId, userId), eq(schema.sections.enabled, true)),
+    orderBy: [asc(schema.sections.order)],
   });
   const rows = await db.query.rows.findMany({
     where: and(eq(schema.rows.userId, userId), eq(schema.rows.deleted, false)),

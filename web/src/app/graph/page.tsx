@@ -1,7 +1,7 @@
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
 import { db, schema } from '@/db';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, asc, desc } from 'drizzle-orm';
 import { Nav } from '@/components/nav';
 import { GraphView } from './graph-view';
 
@@ -12,8 +12,12 @@ export default async function GraphPage() {
   if (!session?.user) redirect('/sign-in');
   const userId = (session.user as { id: string }).id;
 
+  // Order sections explicitly so the top-nav doesn't reshuffle when
+  // navigating between Graph/Schedule and the rest of the app —
+  // Home/Settings/section pages all use the same `order` column.
   const sections = await db.query.sections.findMany({
     where: and(eq(schema.sections.userId, userId), eq(schema.sections.enabled, true)),
+    orderBy: [asc(schema.sections.order)],
   });
   const rows = await db.query.rows.findMany({
     where: and(eq(schema.rows.userId, userId), eq(schema.rows.deleted, false)),
