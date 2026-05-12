@@ -444,15 +444,30 @@ export function GroupedGrid({
                       <button
                         type="button"
                         onClick={async () => {
+                          // Filter out rows that already have a Drive
+                          // copy so a re-run on a half-finished playlist
+                          // doesn't re-download what's already there.
+                          // The server's save-offline also short-circuits
+                          // with `skipped:true` for these, but skipping
+                          // them here avoids the round-trip and gives an
+                          // honest count in the confirm dialog.
+                          const pending = groupRows.filter((gr) => !/drive:[\w-]{20,}/.test(String((gr.data as Record<string, unknown>).offline || '')));
+                          const already = groupRows.length - pending.length;
+                          if (pending.length === 0) {
+                            toast.info(`All ${groupRows.length} items in "${key}" are already offline — nothing to do.`);
+                            return;
+                          }
                           const ok = await appConfirm(
-                            `Save all ${groupRows.length} items in "${key}" offline?`,
-                            { body: 'Downloads each item to your Drive in the background.' },
+                            `Save ${pending.length} new item${pending.length === 1 ? '' : 's'} in "${key}" offline?`,
+                            { body: already > 0
+                              ? `${already} of ${groupRows.length} already have an offline copy and will be skipped.`
+                              : 'Downloads each item to your Drive in the background.' },
                           );
                           if (!ok) return;
                           const kind = section.preset === 'youtube' ? 'video' : 'paper';
-                          toast.info(`Saving ${groupRows.length} items offline…`);
+                          toast.info(`Saving ${pending.length} item${pending.length === 1 ? '' : 's'} offline…`);
                           let done = 0, failed = 0;
-                          await Promise.all(groupRows.map(async (gr) => {
+                          await Promise.all(pending.map(async (gr) => {
                             try {
                               const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/save-offline`, {
                                 method: 'POST',
@@ -463,7 +478,7 @@ export function GroupedGrid({
                               done++;
                             } catch { failed++; }
                           }));
-                          toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}.`);
+                          toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}${already > 0 ? ` · ${already} already offline` : ''}.`);
                         }}
                         className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                         title={`Save every item in "${key}" offline`}
