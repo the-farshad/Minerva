@@ -525,6 +525,7 @@ export function GroupedGrid({
                       row={r}
                       section={section}
                       onDelete={onDelete}
+                      onRowUpdated={onRowUpdated}
                     />
                     <GripVertical className="pointer-events-none absolute left-1 top-1 h-3.5 w-3.5 text-zinc-300 opacity-0 transition group-hover:opacity-100" />
                   </div>
@@ -543,16 +544,54 @@ export function GroupedGrid({
  * second popover with the row's metadata; everything else fires
  * inline. */
 function CardActions({
-  row, section, onDelete,
+  row, section, onDelete, onRowUpdated,
 }: {
   row: Row;
   section: Section;
   onDelete: (rowId: string) => Promise<void>;
+  /** Forward a successful PATCH back to the parent so the row's
+   * category chips, group placement, etc. refresh without a full
+   * page reload. */
+  onRowUpdated?: (row: Row) => void;
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const isOffliable = (section.preset === 'youtube' || section.preset === 'papers')
     && typeof row.data.url === 'string' && !!row.data.url;
   const kind = section.preset === 'youtube' ? 'video' : 'paper';
+  // Categorisable when the section schema declares a `category`
+  // column with a multiselect type. Pulls the picker vocabulary
+  // from the same place the bulk-set group action uses.
+  const catIdx = section.schema.headers.indexOf('category');
+  const catTypeRaw = catIdx >= 0 ? String(section.schema.types?.[catIdx] || '') : '';
+  const catMatch = catTypeRaw.match(/^multiselect\(([^)]*)\)/);
+  const isCategorisable = !!catMatch;
+  const catOptions = catMatch ? catMatch[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+
+  async function setCategory() {
+    const currentRaw = String(row.data.category || '');
+    const initial = currentRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    const next = await appPickMany('Category', catOptions, {
+      body: `Pick one or more for "${String(row.data.title || row.data.name || row.id).slice(0, 60)}".`,
+      initial,
+    });
+    if (next === null) return; // cancelled
+    const value = next.join(', ');
+    try {
+      const r = await fetch(`/api/sections/${section.slug}/rows/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { category: value } }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { id?: string; data?: Record<string, unknown>; updatedAt?: string; error?: string };
+      if (!r.ok) throw new Error(j.error || `PATCH: ${r.status}`);
+      toast.success(next.length === 0 ? 'Category cleared.' : `Category set: ${value}.`);
+      if (j.id && j.data && j.updatedAt && onRowUpdated) {
+        onRowUpdated({ id: j.id, data: j.data, updatedAt: j.updatedAt });
+      }
+    } catch (e) {
+      notify.error((e as Error).message);
+    }
+  }
 
   async function saveOffline() {
     toast.info(kind === 'video' ? 'Downloading + uploading to Drive…' : 'Mirroring PDF to Drive…');
@@ -605,6 +644,14 @@ function CardActions({
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
                 >
                   <Save className="h-3.5 w-3.5" /> Save offline
+                </DropdownMenu.Item>
+              )}
+              {isCategorisable && (
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); void setCategory(); }}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <Tags className="h-3.5 w-3.5" /> Set category
                 </DropdownMenu.Item>
               )}
               <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
