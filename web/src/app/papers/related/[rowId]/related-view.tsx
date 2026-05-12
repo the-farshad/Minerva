@@ -49,14 +49,21 @@ export function RelatedView({
   const [bulkBusy, setBulkBusy] = useState(false);
 
   useEffect(() => {
-    if (!seedRef) {
-      setErr("This paper has no arXiv ID or DOI we can match against — open it once via Add by URL to populate metadata, then try Related papers again.");
+    if (!seedRef && !seedTitle) {
+      setErr("This paper has no title, arXiv ID, or DOI to look up — add some metadata first.");
       return;
     }
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch(`/api/related-papers?ref=${encodeURIComponent(seedRef)}&limit=40`);
+        // Always send the title alongside the ref so the server
+        // can fall back to a title-search when SS doesn't index
+        // the paper under the ref shape (common for non-arXiv,
+        // non-CrossRef DOIs).
+        const params = new URLSearchParams({ limit: '40' });
+        if (seedRef) params.set('ref', seedRef);
+        if (seedTitle) params.set('title', seedTitle);
+        const r = await fetch(`/api/related-papers?${params.toString()}`);
         const j = (await r.json()) as { papers?: Paper[]; error?: string };
         if (cancelled) return;
         if (!r.ok) throw new Error(j.error || `Recommendations: ${r.status}`);
@@ -66,7 +73,7 @@ export function RelatedView({
       }
     })();
     return () => { cancelled = true; };
-  }, [seedRef]);
+  }, [seedRef, seedTitle]);
 
   const filtered = useMemo(() => {
     if (!papers) return [];

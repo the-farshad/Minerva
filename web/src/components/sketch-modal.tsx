@@ -221,11 +221,14 @@ export function SketchModal({
 
   function widthFromPointer(e: React.PointerEvent): number {
     if (e.pointerType === 'pen') {
-      // Pressure 0–1 → 1–10 px width.
-      return 1 + e.pressure * 9;
+      // Pressure 0–1 → 2.5–10 px width. Floor at 2.5 because
+      // browser drivers regularly under-report pressure (e.g.
+      // some Apple Pencil paths report 0 mid-stroke) which
+      // otherwise renders an invisible ~1 px line.
+      return 2.5 + e.pressure * 7.5;
     }
-    if (e.pointerType === 'touch') return 4;
-    return 2.5;
+    if (e.pointerType === 'touch') return 6;
+    return 4.5;
   }
 
   function localPoint(e: React.PointerEvent): { x: number; y: number } {
@@ -572,7 +575,14 @@ export function SketchModal({
               onPointerMove={move}
               onPointerUp={end}
               onPointerCancel={end}
-              onPointerLeave={end}
+              // Deliberately NOT wiring onPointerLeave={end}:
+              // pointer capture should keep events flowing to the
+              // canvas even when the pointer geometrically leaves
+              // its bounding box, but onPointerLeave still fires
+              // on some browsers (Safari iOS, Firefox) and would
+              // prematurely commit the in-progress stroke when
+              // the pen briefly crosses the toolbar / drifts to
+              // the edge.
               className="block h-full w-full touch-none"
               style={{ cursor: tool === 'eraser' ? 'cell' : 'crosshair' }}
             />
