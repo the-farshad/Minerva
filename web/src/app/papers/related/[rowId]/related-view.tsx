@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download, Calendar as CalIcon, FileText, BookOpen, ChevronDown, X, List, GitBranch } from 'lucide-react';
 import { RelatedGraph } from './related-graph';
@@ -49,6 +49,33 @@ export function RelatedView({
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [view, setView] = useState<'list' | 'graph'>('list');
+  const [yearPickerOpen, setYearPickerOpen] = useState(false);
+  const yearPickerRef = useRef<HTMLDivElement>(null);
+
+  // Close the year-picker popover on any outside click. Cheaper
+  // than wiring Radix Popover for a one-off control.
+  useEffect(() => {
+    if (!yearPickerOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (yearPickerRef.current && !yearPickerRef.current.contains(e.target as Node)) {
+        setYearPickerOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [yearPickerOpen]);
+
+  /** Human-readable summary of the current year filter — used as
+   *  the chip label so the active state is obvious at a glance. */
+  function yearLabel(): string {
+    const from = yearFrom ? Number(yearFrom) : null;
+    const to = yearTo ? Number(yearTo) : null;
+    if (!from && !to) return 'Any year';
+    if (from && !to) return `Since ${from}`;
+    if (!from && to) return `Up to ${to}`;
+    if (from === to) return `${from}`;
+    return `${from}–${to}`;
+  }
   // Filters apply on top of the search query. All client-side so
   // they're instant — the result set is small enough (≤ 50 from
   // either backend) that no server round-trip is needed.
@@ -94,6 +121,19 @@ export function RelatedView({
     for (const p of papers) if (p.venue) set.add(p.venue);
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [papers]);
+
+  /** Distinct publication years in the loaded result set, newest
+   *  first. Drives both the year-picker dropdowns and the slider
+   *  bounds so the user can only pick years that actually exist
+   *  in the list. */
+  const allYears = useMemo(() => {
+    if (!papers) return [] as number[];
+    const set = new Set<number>();
+    for (const p of papers) if (p.year) set.add(p.year);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [papers]);
+  const yearMin = allYears.length ? allYears[allYears.length - 1] : null;
+  const yearMax = allYears.length ? allYears[0] : null;
 
   const filtered = useMemo(() => {
     if (!papers) return [];
@@ -251,34 +291,108 @@ export function RelatedView({
         * the list. Sort is a segmented control on the right so it
         * doesn't compete with the filters' Active/Off duality. */}
       <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
-        {/* Year range — single rounded pill that holds both inputs
-          * + an em-dash separator. Active style applies when
-          * either bound is set. */}
-        <div
-          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 transition ${
-            yearFrom || yearTo
-              ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
-              : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400'
-          }`}
-        >
-          <CalIcon className="h-3 w-3 opacity-70" />
-          <input
-            type="number"
-            value={yearFrom}
-            onChange={(e) => setYearFrom(e.target.value)}
-            placeholder="from"
-            aria-label="Year from"
-            className="w-12 border-0 bg-transparent text-center text-xs focus:outline-none focus:ring-0 placeholder:opacity-50"
-          />
-          <span className="opacity-50">–</span>
-          <input
-            type="number"
-            value={yearTo}
-            onChange={(e) => setYearTo(e.target.value)}
-            placeholder="to"
-            aria-label="Year to"
-            className="w-12 border-0 bg-transparent text-center text-xs focus:outline-none focus:ring-0 placeholder:opacity-50"
-          />
+        {/* Year filter — click the chip to open a popover with
+          * one-tap presets ("Since 5 years ago", "Last decade")
+          * plus a custom From/To picker that lists only the years
+          * actually present in the loaded results. The chip's
+          * label summarises the current state so users never
+          * have to expand the popover just to read what's set. */}
+        <div ref={yearPickerRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setYearPickerOpen((v) => !v)}
+            aria-expanded={yearPickerOpen}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 transition ${
+              yearFrom || yearTo
+                ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800'
+            }`}
+          >
+            <CalIcon className="h-3 w-3 opacity-70" />
+            <span className="text-xs">{yearLabel()}</span>
+            <ChevronDown className="h-3 w-3 opacity-60" />
+          </button>
+          {yearPickerOpen && (
+            <div className="absolute left-0 top-full z-30 mt-1 w-64 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+              {(() => {
+                // Quick presets — read off the most recent year in
+                // the result set so "last 5 years" actually means
+                // last 5 years relative to what's loaded, not
+                // wall-clock now (which can drift after the page is
+                // open for a while).
+                const nowYr = yearMax ?? new Date().getFullYear();
+                const presets: { label: string; from: string; to: string }[] = [
+                  { label: 'Any year',         from: '',                 to: '' },
+                  { label: 'Last 5 years',     from: String(nowYr - 4),  to: '' },
+                  { label: 'Last 10 years',    from: String(nowYr - 9),  to: '' },
+                  { label: 'Last 20 years',    from: String(nowYr - 19), to: '' },
+                ];
+                return (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {presets.map((p) => {
+                      const active = yearFrom === p.from && yearTo === p.to;
+                      return (
+                        <button
+                          key={p.label}
+                          type="button"
+                          onClick={() => { setYearFrom(p.from); setYearTo(p.to); }}
+                          className={`rounded-md border px-2 py-1.5 text-xs transition ${
+                            active
+                              ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                              : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+              <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-900">
+                <div className="text-[10px] uppercase tracking-wide text-zinc-500">Custom range</div>
+                <div className="mt-1.5 flex items-center gap-2 text-xs">
+                  <select
+                    value={yearFrom}
+                    onChange={(e) => setYearFrom(e.target.value)}
+                    aria-label="Year from"
+                    className="flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
+                  >
+                    <option value="">Any</option>
+                    {allYears.slice().reverse().map((y) => (
+                      <option key={y} value={String(y)}>{y}</option>
+                    ))}
+                  </select>
+                  <span className="text-zinc-400">–</span>
+                  <select
+                    value={yearTo}
+                    onChange={(e) => setYearTo(e.target.value)}
+                    aria-label="Year to"
+                    className="flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
+                  >
+                    <option value="">Any</option>
+                    {allYears.map((y) => (
+                      <option key={y} value={String(y)}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+                {yearMin != null && yearMax != null && (
+                  <div className="mt-2 text-[10px] text-zinc-500">
+                    Loaded papers span {yearMin}–{yearMax}.
+                  </div>
+                )}
+              </div>
+              {(yearFrom || yearTo) && (
+                <button
+                  type="button"
+                  onClick={() => { setYearFrom(''); setYearTo(''); }}
+                  className="mt-3 w-full rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                >
+                  Clear year filter
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* PDF-only — real toggle button instead of a checkbox.
