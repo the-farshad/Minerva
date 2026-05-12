@@ -104,7 +104,12 @@ export function KanbanView({
 
   // Canonical column order — schema's select(...) options first
   // (so "Backlog → Doing → Done" reads in the right direction),
-  // then any extra values rows are actually using.
+  // then any extra values rows are actually using. The trailing
+  // fallback to ['todo','doing','done'] catches the case where
+  // the section's status column has no select(...) options yet
+  // (legacy section, schema corruption, or every column got
+  // deleted) — without it the board renders empty and the user
+  // has no surface to add cards back from.
   const orderedColumns = useMemo(() => {
     if (!statusField) return ['All'];
     const canonical = schemaOptions(section, statusField);
@@ -115,6 +120,7 @@ export function KanbanView({
       const v = String(r.data[statusField] || '').trim() || '—';
       if (!seen.has(v)) { out.push(v); seen.add(v); }
     }
+    if (out.length === 0) return ['todo', 'doing', 'done'];
     return out;
   }, [rows, statusField, section]);
 
