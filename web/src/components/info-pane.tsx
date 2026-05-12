@@ -19,6 +19,15 @@ import { notify } from '@/lib/notify';
 
 const HIDDEN_KEYS = new Set(['offline', 'notes', 'thumbnail', 'extracted']);
 
+/** Fields that should always appear as editable slots even when the
+ * row hasn't filled them in yet, so users can drop in a DOI / ISBN /
+ * journal without going through "+ new field" each time. Edit mode
+ * unions these with whatever else is already on the row. */
+const SUGGESTED_FIELDS: Record<string, string[]> = {
+  papers: ['title', 'authors', 'year', 'journal', 'volume', 'issue', 'pages', 'doi', 'isbn', 'publisher', 'url'],
+  youtube: ['title', 'channel', 'duration', 'published', 'playlist', 'views', 'likes', 'description', 'url'],
+};
+
 function visible(data: Record<string, unknown>): [string, string][] {
   return Object.entries(data)
     .filter(([k, v]) => v != null && v !== '' && !k.startsWith('_') && !HIDDEN_KEYS.has(k))
@@ -26,11 +35,15 @@ function visible(data: Record<string, unknown>): [string, string][] {
 }
 
 export function InfoPane({
-  rowId, sectionSlug, data, onSaved,
+  rowId, sectionSlug, data, onSaved, sectionPreset,
 }: {
   rowId: string;
   sectionSlug: string;
   data: Record<string, unknown>;
+  /** Drives which suggested fields appear as empty inputs in Edit
+   * mode — e.g. `doi` / `isbn` for papers, `channel` / `duration`
+   * for YouTube. */
+  sectionPreset?: string | null;
   /** Called with the full merged data after a successful save so
    * the modal + parent rows cache stay in sync. */
   onSaved: (next: Record<string, unknown>) => void;
@@ -43,10 +56,15 @@ export function InfoPane({
   useEffect(() => {
     if (editing) {
       const next: Record<string, string> = {};
+      // Suggested slots first (empty by default), then real values
+      // — so the order is predictable AND empty fields don't trip
+      // the diff in save() because they round-trip identically.
+      const suggested = sectionPreset ? (SUGGESTED_FIELDS[sectionPreset] || []) : [];
+      for (const k of suggested) next[k] = '';
       for (const [k, v] of visible(data)) next[k] = v;
       setDraft(next);
     }
-  }, [editing, rowId, data]);
+  }, [editing, rowId, data, sectionPreset]);
 
   async function save() {
     setSaving(true);

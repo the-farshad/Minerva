@@ -811,6 +811,7 @@ export function PreviewModal({
               <InfoPane
                 rowId={view.rowId}
                 sectionSlug={view.sectionSlug}
+                sectionPreset={typeof view.data?._sectionPreset === 'string' ? view.data._sectionPreset : (pdf ? 'papers' : yt ? 'youtube' : null)}
                 data={view.data}
                 onSaved={(next) => setView((prev) => (prev ? { ...prev, data: next, title: String(next.title || prev.title || '') } : prev))}
               />
