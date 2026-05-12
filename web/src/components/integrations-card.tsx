@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, KeyRound, Trash2, Upload, Cookie, Video } from 'lucide-react';
+import { Check, KeyRound, Trash2, Upload, Cookie, Video, Network } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 
@@ -31,6 +31,8 @@ export function IntegrationsCard() {
   const cookiesFileRef = useRef<HTMLInputElement>(null);
   const [ytQuality, setYtQuality] = useState<string>('best');
   const [savingQuality, setSavingQuality] = useState(false);
+  const [relatedProvider, setRelatedProvider] = useState<string>('openalex');
+  const [savingRelated, setSavingRelated] = useState(false);
 
   async function load() {
     try {
@@ -40,6 +42,7 @@ export function IntegrationsCard() {
       setYtKeyPresent(!!j.youtube_api_key);
       const values = (j._values as Record<string, string>) || {};
       if (values.yt_quality) setYtQuality(values.yt_quality);
+      if (values.related_papers_provider) setRelatedProvider(values.related_papers_provider);
     } catch {
       setYtKeyPresent(false);
     }
@@ -47,6 +50,27 @@ export function IntegrationsCard() {
       const r = await fetch('/api/helper/cookies');
       if (r.ok) setCookiesStat(await r.json());
     } catch { /* tolerate */ }
+  }
+
+  async function saveRelatedProvider(next: string) {
+    setSavingRelated(true);
+    try {
+      const r = await fetch('/api/userprefs/server', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'related_papers_provider', value: next || null }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({} as { error?: string }));
+        throw new Error(j.error || String(r.status));
+      }
+      setRelatedProvider(next);
+      toast.success(`Related-papers source: ${next === 'semanticscholar' ? 'Semantic Scholar' : 'OpenAlex'}.`);
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setSavingRelated(false);
+    }
   }
 
   async function saveQuality(next: string) {
@@ -251,6 +275,35 @@ export function IntegrationsCard() {
                 {YT_QUALITIES.find((q) => q.value === ytQuality)?.hint}
               </p>
             )}
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-start gap-3 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+          <Network className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
+          <div className="flex-1">
+            <div className="text-sm font-medium">Related-papers source</div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Backend the <span className="font-medium">Related papers</span> page on a paper
+              uses to find recommendations.{' '}
+              <span className="font-medium">OpenAlex</span> needs no API key and gives 100&nbsp;k
+              requests/day from the polite pool — the right default.{' '}
+              <span className="font-medium">Semantic Scholar</span> returns more candidates per
+              paper (up to 100 vs ~10) but rate-limits shared cloud IPs heavily without a key —
+              set <span className="font-mono">SEMANTIC_SCHOLAR_API_KEY</span> in the droplet env
+              before switching to it.
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <select
+                value={relatedProvider}
+                onChange={(e) => void saveRelatedProvider(e.target.value)}
+                disabled={savingRelated}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              >
+                <option value="openalex">OpenAlex (default)</option>
+                <option value="semanticscholar">Semantic Scholar</option>
+              </select>
+              {savingRelated && <span className="text-[10px] text-zinc-500">Saving…</span>}
+            </div>
           </div>
         </div>
       </div>

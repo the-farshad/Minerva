@@ -19,6 +19,11 @@ const ALLOWED_KEYS = new Set([
    *   'best' | '1080' | '720' | '480' | '360' | 'audio'
    * Translates to a yt-dlp format string in the helper. */
   'yt_quality',
+  /** Connected-papers backend. One of:
+   *   'openalex'        — default, no API key needed
+   *   'semanticscholar' — uses SEMANTIC_SCHOLAR_API_KEY env var
+   * Translates to a dispatch in /api/related-papers. */
+  'related_papers_provider',
 ]);
 
 /** Keys whose actual value is safe to return to the browser. The
@@ -27,6 +32,7 @@ const ALLOWED_KEYS = new Set([
  * Settings UI can show the current selection. */
 const VALUE_VISIBLE_KEYS = new Set([
   'yt_quality',
+  'related_papers_provider',
 ]);
 
 export async function POST(req: NextRequest) {

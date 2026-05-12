@@ -1,125 +1,56 @@
 /**
- * Connected-papers proxy over Semantic Scholar. Two-step
- * resolve so we tolerate rows that don't carry an arXiv ID /
- * DOI in their URL:
+ * Connected-papers proxy. Two backends ship in this codebase
+ * — OpenAlex (default, no key needed) and Semantic Scholar
+ * (opt-in via Settings → Integrations; needs
+ * SEMANTIC_SCHOLAR_API_KEY in the droplet env for real volume).
  *
- *   1. If `ref` (e.g. ARXIV:2401.12345 or DOI:10.x/y) is given
- *      AND it resolves on /paper/{id}, use it directly.
- *   2. Otherwise, if `title` is given, search SS for it and use
- *      the top match's `paperId` to call recommendations.
- *
- *   GET /api/related-papers?ref=ARXIV:2401.12345
+ *   GET /api/related-papers?ref=ARXIV:2401.12345&title=…
  *   GET /api/related-papers?title=Attention+Is+All+You+Need
- *   GET /api/related-papers?ref=DOI:10.x/y&title=fallback
  *
- * Returns: { papers: [...], resolvedVia: 'ref' | 'title' }
+ * The route picks a backend based on the user's
+ * `related_papers_provider` server pref ('openalex' |
+ * 'semanticscholar'), defaulting to 'openalex'. If the chosen
+ * backend fails for non-input reasons (rate-limit / network), we
+ * surface the error directly rather than silently swapping —
+ * the user picked a provider for a reason and a transparent
+ * failure points them at the right knob to turn.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
+import { getServerPref } from '@/lib/server-prefs';
+import { parseRef } from '@/lib/related-papers/types';
+import { fetchRelatedFromOpenAlex } from '@/lib/related-papers/openalex';
+import { fetchRelatedFromSemanticScholar } from '@/lib/related-papers/semanticscholar';
 
 export const dynamic = 'force-dynamic';
-
-const FIELDS = [
-  'externalIds',
-  'title',
-  'authors',
-  'year',
-  'abstract',
-  'openAccessPdf',
-  'venue',
-].join(',');
-
-function ssHeaders(): HeadersInit {
-  const h: Record<string, string> = { Accept: 'application/json' };
-  // The public SS API rate-limits shared cloud IPs aggressively
-  // (DigitalOcean droplets typically see 429s on most requests).
-  // Set SEMANTIC_SCHOLAR_API_KEY in the droplet env to unlock the
-  // partner tier; the route degrades gracefully when it's absent.
-  if (process.env.SEMANTIC_SCHOLAR_API_KEY) {
-    h['x-api-key'] = process.env.SEMANTIC_SCHOLAR_API_KEY;
-  }
-  return h;
-}
-
-async function getRecommendations(paperRef: string, limit: number) {
-  const url = `https://api.semanticscholar.org/recommendations/v1/papers/forpaper/${encodeURIComponent(paperRef)}?limit=${limit}&fields=${encodeURIComponent(FIELDS)}`;
-  const r = await fetch(url, {
-    headers: ssHeaders(),
-    next: { revalidate: 300 },
-  });
-  if (!r.ok) return { ok: false as const, status: r.status, text: await r.text().catch(() => '') };
-  const j = (await r.json()) as { recommendedPapers?: unknown[] };
-  return { ok: true as const, papers: j.recommendedPapers ?? [] };
-}
-
-async function searchByTitle(title: string): Promise<string | null> {
-  const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(title)}&limit=1&fields=paperId,title`;
-  try {
-    const r = await fetch(url, {
-      headers: ssHeaders(),
-      next: { revalidate: 300 },
-    });
-    if (!r.ok) return null;
-    const j = (await r.json()) as { data?: { paperId?: string }[] };
-    return j.data?.[0]?.paperId ?? null;
-  } catch {
-    return null;
-  }
-}
 
 export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const userId = (session.user as { id: string }).id;
 
-  const ref = req.nextUrl.searchParams.get('ref');
+  const ref = parseRef(req.nextUrl.searchParams.get('ref'));
   const title = req.nextUrl.searchParams.get('title');
   if (!ref && !title) {
     return NextResponse.json({ error: '`ref` or `title` is required.' }, { status: 400 });
   }
   const limit = Math.min(50, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 30));
 
+  const provider = (await getServerPref<string>(userId, 'related_papers_provider')) || 'openalex';
+
   try {
-    // Path 1: ref-first. If SS resolves it, we're done.
-    if (ref) {
-      const res = await getRecommendations(ref, limit);
-      if (res.ok) return NextResponse.json({ papers: res.papers, resolvedVia: 'ref' });
-      // 404 on a ref usually means "the paper isn't indexed under
-      // this ID shape" — fall through to title search if we have
-      // one. Other errors bubble up directly.
-      if (res.status !== 404 && !title) {
-        const rateLimited = res.status === 429;
-        return NextResponse.json(
-          {
-            error: rateLimited
-              ? "Semantic Scholar is rate-limiting this shared IP. Set SEMANTIC_SCHOLAR_API_KEY on the droplet to unlock the partner tier, or open the paper in Connected Papers directly using the link above."
-              : `Semantic Scholar returned ${res.status}${res.text ? `: ${res.text.slice(0, 200)}` : ''}`,
-            rateLimited,
-          },
-          { status: res.status },
-        );
-      }
+    const res = provider === 'semanticscholar'
+      ? await fetchRelatedFromSemanticScholar({ ref, title, limit })
+      : await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
+
+    if (res.ok) {
+      return NextResponse.json({ papers: res.papers, resolvedVia: res.resolvedVia, provider });
     }
-    // Path 2: title-search fallback. Look the paper up by title,
-    // grab its canonical paperId, then ask for recommendations.
-    if (title) {
-      const paperId = await searchByTitle(title);
-      if (!paperId) {
-        return NextResponse.json(
-          { error: `Couldn't find this paper in Semantic Scholar by title — try opening it via Add by URL with an arXiv / DOI link so we have a stable ID to recommend against.` },
-          { status: 404 },
-        );
-      }
-      const res = await getRecommendations(paperId, limit);
-      if (res.ok) return NextResponse.json({ papers: res.papers, resolvedVia: 'title' });
-      return NextResponse.json(
-        { error: `Semantic Scholar returned ${res.status}${res.text ? `: ${res.text.slice(0, 200)}` : ''}` },
-        { status: res.status },
-      );
-    }
-    // ref-only path with non-404 already returned above; the
-    // only remaining gap is ref=null which we caught earlier.
-    return NextResponse.json({ error: 'Unable to resolve a paper reference.' }, { status: 404 });
+    return NextResponse.json(
+      { error: res.error, rateLimited: res.rateLimited, provider },
+      { status: res.status },
+    );
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
+    return NextResponse.json({ error: (e as Error).message, provider }, { status: 502 });
   }
 }
