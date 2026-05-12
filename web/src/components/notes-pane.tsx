@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { Paperclip } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { renderMarkdown } from '@/lib/markdown';
 import { readPref, writePref } from '@/lib/prefs';
@@ -34,6 +35,63 @@ export function NotesPane({
   function changeMode(next: 'edit' | 'split' | 'preview') {
     setMode(next);
     writePref('notes.mode', next);
+  }
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  /** Upload a file to the user's Drive and splice a markdown link
+   * (or image embed when it's an image MIME) into the notes at
+   * the current cursor position. Falls back to appending at the
+   * end if the textarea isn't focused yet. */
+  async function uploadFiles(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (!list.length) return;
+    setUploading(true);
+    try {
+      for (const file of list) {
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        fd.append('name', file.name);
+        fd.append('kind', 'misc');
+        const r = await fetch('/api/drive/upload', { method: 'POST', body: fd });
+        const j = (await r.json().catch(() => ({}))) as { fileId?: string; error?: string };
+        if (!r.ok || !j.fileId) throw new Error(j.error || `upload: ${r.status}`);
+        const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
+        const isImage = /^image\//i.test(file.type);
+        const snippet = isImage ? `![${file.name}](${url})\n` : `[${file.name}](${url})\n`;
+        const ta = textareaRef.current;
+        let next: string;
+        if (ta && document.activeElement === ta) {
+          const start = ta.selectionStart;
+          const end = ta.selectionEnd;
+          next = value.slice(0, start) + snippet + value.slice(end);
+          schedule(next);
+          // Restore caret after the inserted snippet on next tick.
+          setTimeout(() => {
+            ta.focus();
+            const pos = start + snippet.length;
+            ta.setSelectionRange(pos, pos);
+          }, 0);
+        } else {
+          next = (value.endsWith('\n') || !value) ? value + snippet : value + '\n' + snippet;
+          schedule(next);
+        }
+      }
+      toast.success(list.length === 1 ? 'File attached.' : `${list.length} files attached.`);
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer.files.length) return;
+    e.preventDefault();
+    void uploadFiles(e.dataTransfer.files);
   }
 
   // Only resync from `initial` when the row itself changes (the
@@ -90,10 +148,30 @@ export function NotesPane({
   const showPreview = mode === 'preview' || mode === 'split';
 
   return (
-    <aside className={`flex h-full ${paneWidth} flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950`}>
+    <aside
+      className={`flex h-full ${paneWidth} flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950`}
+      onDragOver={(e) => { e.preventDefault(); }}
+      onDrop={onDrop}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => { if (e.target.files) void uploadFiles(e.target.files); }}
+      />
       <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 text-xs dark:border-zinc-800">
         <strong>Notes</strong>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="Attach a file (image, PDF, doc, anything) — uploaded to Drive and linked inline"
+            className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+          >
+            <Paperclip className="h-3.5 w-3.5" />
+          </button>
           <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
             {(['edit', 'split', 'preview'] as const).map((m) => (
               <button
@@ -108,20 +186,21 @@ export function NotesPane({
             ))}
           </div>
           <span className="text-zinc-500">
-            {saving === 'pending' ? 'Saving…' : saving === 'saved' ? '✓ Saved' : saving === 'error' ? '⚠ retry' : ''}
+            {uploading ? 'Uploading…' : saving === 'pending' ? 'Saving…' : saving === 'saved' ? '✓ Saved' : saving === 'error' ? '⚠ retry' : ''}
           </span>
         </div>
       </div>
       <div className={`flex flex-1 overflow-hidden ${mode === 'split' ? 'divide-x divide-zinc-200 dark:divide-zinc-800' : ''}`}>
         {showEditor && (
           <textarea
+            ref={textareaRef}
             value={value}
             onChange={(e) => schedule(e.target.value)}
             onBlur={() => {
               if (t.current) { clearTimeout(t.current); t.current = null; }
               if (value !== initial) void save(value);
             }}
-            placeholder="Markdown — autosaves to row.notes"
+            placeholder={'Markdown — autosaves to row.notes.\nDrop files here to attach, or click the 📎.'}
             className="h-full flex-1 resize-none border-0 bg-transparent p-3 font-mono text-xs focus:outline-none"
           />
         )}

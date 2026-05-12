@@ -230,6 +230,104 @@ def _add_cors(resp):
 
 # ---------- yt-dlp downloader ---------------------------------------------
 
+# Public Piped API instances. Ordered by anecdotal reliability —
+# the loop bails out on the first one that yields a usable mp4.
+# Piped's API is a YouTube reverse-frontend: it fetches metadata +
+# stream URLs from YouTube using its own backend infrastructure, so
+# a video YouTube hard-walls against datacenter IPs frequently
+# returns fine through Piped (their hosts have residential-ish
+# reputation, and the requests look like a community mirror, not a
+# scraper).
+PIPED_API_INSTANCES = (
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://api.piped.private.coffee",
+    "https://pipedapi.smnz.de",
+    "https://pipedapi.darkness.services",
+    "https://pipedapi.r4fo.com",
+)
+
+
+def _yt_video_id(url: str) -> str | None:
+    """Pull the 11-character YouTube video id out of any common URL shape."""
+    import re as _re
+    m = _re.search(r"(?:v=|youtu\.be/|/shorts/|/embed/)([A-Za-z0-9_-]{11})", url)
+    return m.group(1) if m else None
+
+
+def _piped_fallback(url: str, tmpdir: str, prev_exc: Exception | None) -> str | None:
+    """Try Piped instances when yt-dlp gave up. Returns the local
+    path of a downloaded .mp4 on success, None on failure (every
+    instance refused or none had a usable mp4 stream). Synchronous
+    HTTP — fine because this is the rare-path fallback, not the
+    hot path.
+    """
+    vid = _yt_video_id(url)
+    if not vid:
+        return None
+    if prev_exc and "Sign in to confirm" not in str(prev_exc) and "bot" not in str(prev_exc).lower():
+        # Don't burn time hitting Piped for non-bot-wall failures
+        # (404, private video, geo-block) — Piped sees the same wall.
+        return None
+    print(f"[piped] yt-dlp gave up on {vid}; trying Piped fallback", flush=True)
+    for base in PIPED_API_INSTANCES:
+        try:
+            r = requests.get(f"{base.rstrip('/')}/streams/{vid}", timeout=20)
+            if r.status_code != 200:
+                print(f"[piped] {base} → HTTP {r.status_code}", flush=True)
+                continue
+            try:
+                payload = r.json()
+            except ValueError:
+                print(f"[piped] {base} returned non-JSON", flush=True)
+                continue
+            # Prefer a single-file mp4 (videoOnly=False — has audio
+            # baked in). Pick the highest available without going
+            # crazy on size — 1080p caps it.
+            streams = payload.get("videoStreams") or []
+            mp4s = [
+                s for s in streams
+                if isinstance(s, dict)
+                and not s.get("videoOnly", True)
+                and "mp4" in (s.get("mimeType") or s.get("format") or "").lower()
+            ]
+            mp4s.sort(key=lambda s: int(s.get("height") or 0), reverse=True)
+            best = next((s for s in mp4s if int(s.get("height") or 0) <= 1080), mp4s[0] if mp4s else None)
+            if not best:
+                print(f"[piped] {base} has no muxed mp4 streams", flush=True)
+                continue
+            stream_url = best.get("url")
+            if not stream_url:
+                continue
+            out_path = os.path.join(tmpdir, f"{vid}.mp4")
+            with requests.get(stream_url, stream=True, timeout=180) as src:
+                if src.status_code != 200:
+                    print(f"[piped] {base} stream URL → HTTP {src.status_code}", flush=True)
+                    continue
+                with open(out_path, "wb") as fh:
+                    for chunk in src.iter_content(chunk_size=1 << 20):
+                        if chunk:
+                            fh.write(chunk)
+            if os.path.getsize(out_path) < 64 * 1024:
+                # Suspiciously small — probably an error page or a
+                # 0-byte response. Skip and try the next instance.
+                print(f"[piped] {base} returned only {os.path.getsize(out_path)} bytes", flush=True)
+                continue
+            # Sanity-check it's actually an MP4 file ('ftyp' box at
+            # offset 4) so we don't ship HTML labelled as video/mp4.
+            with open(out_path, "rb") as fh:
+                head = fh.read(16)
+            if b"ftyp" not in head:
+                print(f"[piped] {base} returned non-MP4 magic: {head!r}", flush=True)
+                continue
+            print(f"[piped] OK via {base} ({os.path.getsize(out_path)} bytes)", flush=True)
+            return out_path
+        except Exception as exc:  # noqa: BLE001
+            print(f"[piped] {base} raised: {exc}", flush=True)
+            continue
+    return None
+
+
 @app.route("/download", methods=["POST", "OPTIONS"])
 def download():
     if request.method == "OPTIONS":
@@ -372,6 +470,35 @@ def download():
             print(f"[yt-dlp] {label} failed: {exc}", flush=True)
             continue
     if info is None:
+        # Last-chance fallback for YouTube: ask a public Piped /
+        # Invidious instance for a pre-muxed mp4 URL. Piped runs its
+        # own backend (different IP, different fingerprint) and often
+        # returns stream URLs for videos that YouTube hard-walls
+        # against datacenter IPs. We try several instances; the first
+        # one that yields a downloadable .mp4 wins.
+        piped_path = None
+        try:
+            piped_path = _piped_fallback(url, tmpdir, last_exc)
+        except Exception as fb_exc:  # noqa: BLE001
+            print(f"[piped] fallback raised: {fb_exc}", flush=True)
+        if piped_path:
+            path = piped_path
+
+            @after_this_request
+            def _cleanup_piped(resp):
+                try:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+                except Exception:
+                    pass
+                return resp
+
+            return send_file(
+                path,
+                as_attachment=True,
+                download_name=os.path.basename(path),
+                conditional=False,
+            )
+
         shutil.rmtree(tmpdir, ignore_errors=True)
         exc = last_exc or Exception("all yt-dlp player-client retries failed")
         msg = f"yt-dlp failed (all {len(PLAYER_CLIENT_RETRIES)} clients): {exc}"

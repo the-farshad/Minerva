@@ -1,0 +1,114 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { Check, KeyRound, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
+
+/**
+ * Settings card for server-only integrations (currently: YouTube
+ * Data API). The key value is NEVER returned to the browser — the
+ * GET /api/userprefs/server response is just `{ key: boolean }`, so
+ * we can show a "✓ Saved" badge without re-fetching the secret. The
+ * input field is empty by default; entering a value replaces the
+ * stored key, and the trash button clears it.
+ */
+export function IntegrationsCard() {
+  const [ytKeyPresent, setYtKeyPresent] = useState<boolean | null>(null);
+  const [ytInput, setYtInput] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    try {
+      const r = await fetch('/api/userprefs/server');
+      if (!r.ok) throw new Error(String(r.status));
+      const j = (await r.json()) as Record<string, boolean>;
+      setYtKeyPresent(!!j.youtube_api_key);
+    } catch {
+      setYtKeyPresent(false);
+    }
+  }
+  useEffect(() => { void load(); }, []);
+
+  async function save(value: string | null) {
+    setSaving(true);
+    try {
+      const r = await fetch('/api/userprefs/server', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'youtube_api_key', value }),
+      });
+      const j = await r.json().catch(() => ({} as { error?: string }));
+      if (!r.ok) throw new Error(j.error || String(r.status));
+      setYtKeyPresent(value !== null && value !== '');
+      setYtInput('');
+      toast.success(value ? 'YouTube API key saved.' : 'YouTube API key cleared.');
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="mt-10">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Integrations</h2>
+      <div className="mt-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-start gap-3">
+          <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              YouTube Data API key
+              {ytKeyPresent === true && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                  <Check className="h-3 w-3" /> Saved
+                </span>
+              )}
+              {ytKeyPresent === false && (
+                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                  Not set
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Enables the <span className="font-medium">Refresh metadata</span> button on
+              YouTube videos (title, channel, duration, view/like counts, thumbnails,
+              playlist name). The key is stored server-side and never returned to the
+              browser. Get one at <a className="underline" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">console.cloud.google.com/apis/credentials</a>.
+              Does NOT affect downloads — the Data API doesn&rsquo;t serve playable streams.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={ytKeyPresent ? '••••••• (paste to replace)' : 'AIza…'}
+                value={ytInput}
+                onChange={(e) => setYtInput(e.target.value)}
+                className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-mono dark:border-zinc-700 dark:bg-zinc-900"
+              />
+              <button
+                type="button"
+                onClick={() => save(ytInput.trim() || null)}
+                disabled={saving || !ytInput.trim()}
+                className="rounded-full bg-zinc-900 px-3 py-1.5 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+              >
+                {saving ? 'Saving…' : 'Save key'}
+              </button>
+              {ytKeyPresent && (
+                <button
+                  type="button"
+                  onClick={() => save(null)}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1 rounded-full border border-zinc-300 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-zinc-700 dark:text-red-400 dark:hover:bg-red-950"
+                  title="Clear the stored API key"
+                >
+                  <Trash2 className="h-3 w-3" /> Clear
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}

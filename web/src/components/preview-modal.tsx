@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote } from 'lucide-react';
+import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote, RefreshCw, FileText } from 'lucide-react';
 import { appConfirm } from './confirm';
 import { CITATION_FORMATS } from '@/lib/citations';
 import { toast } from 'sonner';
@@ -545,6 +545,69 @@ export function PreviewModal({
                 className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
               >
                 <FileCheck2 className="h-3.5 w-3.5" /> {savingAnnot ? 'Saving…' : 'Save'}
+              </button>
+            )}
+            {view.sectionSlug && view.rowId && (yt || pdf) && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!view.sectionSlug || !view.rowId) return;
+                  toast.info('Refreshing metadata…');
+                  try {
+                    const r = await fetch(
+                      `/api/sections/${view.sectionSlug}/rows/${view.rowId}/refresh-metadata`,
+                      { method: 'POST' },
+                    );
+                    const j = (await r.json().catch(() => ({}))) as { error?: string; source?: string; data?: Record<string, unknown> };
+                    if (!r.ok) throw new Error(j.error || `refresh-metadata: ${r.status}`);
+                    if (j.data) {
+                      setView((prev) => (prev ? {
+                        ...prev,
+                        title: String(j.data!.title || prev.title || ''),
+                        data: j.data,
+                      } : prev));
+                    }
+                    toast.success(`Metadata refreshed via ${j.source}.`);
+                  } catch (e) {
+                    notify.error((e as Error).message);
+                  }
+                }}
+                title="Fetch fresh metadata from YouTube / arxiv / CrossRef"
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </button>
+            )}
+            {pdf && view.rowId && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!view.rowId) return;
+                  toast.info('Extracting text…');
+                  try {
+                    const r = await fetch('/api/helper/pdf/extract', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ url: `${window.location.origin}/api/pdf/${view.rowId}` }),
+                    });
+                    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string; content?: string; markdown?: string; text?: string };
+                    if (!r.ok || j.ok === false) throw new Error(j.error || `pdf/extract: ${r.status}`);
+                    const text = j.markdown || j.content || j.text || '';
+                    if (!text.trim()) throw new Error('Loader returned an empty document.');
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      toast.success(`Extracted ${text.length.toLocaleString()} chars — copied to clipboard.`);
+                    } catch {
+                      notify.error('Clipboard blocked. Extracted text:\n' + text.slice(0, 500));
+                    }
+                  } catch (e) {
+                    notify.error((e as Error).message);
+                  }
+                }}
+                title="Run opendataloader-pdf and copy the extracted markdown"
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <FileText className="h-3.5 w-3.5" /> Extract
               </button>
             )}
             {pdf && view.driveFileId && view.originalFileId && view.sectionSlug && view.rowId && (
