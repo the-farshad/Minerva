@@ -1,9 +1,18 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, KeyRound, Trash2, Upload, Cookie } from 'lucide-react';
+import { Check, KeyRound, Trash2, Upload, Cookie, Video } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
+
+const YT_QUALITIES: Array<{ value: string; label: string; hint?: string }> = [
+  { value: 'best',  label: 'Best available', hint: 'Highest mp4 yt-dlp can fetch (default).' },
+  { value: '1080',  label: '1080p cap' },
+  { value: '720',   label: '720p cap', hint: 'Roughly halves the file size vs 1080p.' },
+  { value: '480',   label: '480p cap' },
+  { value: '360',   label: '360p cap', hint: 'Tiny files — fastest downloads, lousy quality.' },
+  { value: 'audio', label: 'Audio only (mp3)', hint: 'Drops the video stream entirely.' },
+];
 
 /**
  * Settings card for server-only integrations (currently: YouTube
@@ -20,13 +29,17 @@ export function IntegrationsCard() {
   const [cookiesStat, setCookiesStat] = useState<{ size?: number; mtime?: number; exists?: boolean } | null>(null);
   const [uploadingCookies, setUploadingCookies] = useState(false);
   const cookiesFileRef = useRef<HTMLInputElement>(null);
+  const [ytQuality, setYtQuality] = useState<string>('best');
+  const [savingQuality, setSavingQuality] = useState(false);
 
   async function load() {
     try {
       const r = await fetch('/api/userprefs/server');
       if (!r.ok) throw new Error(String(r.status));
-      const j = (await r.json()) as Record<string, boolean>;
+      const j = (await r.json()) as Record<string, boolean | Record<string, string>>;
       setYtKeyPresent(!!j.youtube_api_key);
+      const values = (j._values as Record<string, string>) || {};
+      if (values.yt_quality) setYtQuality(values.yt_quality);
     } catch {
       setYtKeyPresent(false);
     }
@@ -34,6 +47,27 @@ export function IntegrationsCard() {
       const r = await fetch('/api/helper/cookies');
       if (r.ok) setCookiesStat(await r.json());
     } catch { /* tolerate */ }
+  }
+
+  async function saveQuality(next: string) {
+    setSavingQuality(true);
+    try {
+      const r = await fetch('/api/userprefs/server', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'yt_quality', value: next || null }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({} as { error?: string }));
+        throw new Error(j.error || String(r.status));
+      }
+      setYtQuality(next);
+      toast.success('Default quality updated.');
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setSavingQuality(false);
+    }
   }
   useEffect(() => { void load(); }, []);
 
@@ -185,6 +219,38 @@ export function IntegrationsCard() {
                 <Upload className="h-3 w-3" /> {uploadingCookies ? 'Uploading…' : 'Upload cookies.txt'}
               </button>
             </div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-start gap-3 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+          <Video className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
+          <div className="flex-1">
+            <div className="text-sm font-medium">Default video quality</div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Applied to every Save-offline that doesn&rsquo;t override. yt-dlp asks YouTube
+              for the best file ≤ the height cap (and falls through if exactly that
+              resolution isn&rsquo;t published — there&rsquo;s no &quot;no result&quot; failure).
+              &quot;Audio only&quot; transcodes the audio stream to mp3 192 kbps and drops video
+              entirely — handy for podcasts / lectures.
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <select
+                value={ytQuality}
+                onChange={(e) => void saveQuality(e.target.value)}
+                disabled={savingQuality}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              >
+                {YT_QUALITIES.map((q) => (
+                  <option key={q.value} value={q.value}>{q.label}</option>
+                ))}
+              </select>
+              {savingQuality && <span className="text-[10px] text-zinc-500">Saving…</span>}
+            </div>
+            {YT_QUALITIES.find((q) => q.value === ytQuality)?.hint && (
+              <p className="mt-2 text-[10px] text-zinc-500">
+                {YT_QUALITIES.find((q) => q.value === ytQuality)?.hint}
+              </p>
+            )}
           </div>
         </div>
       </div>

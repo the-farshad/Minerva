@@ -433,7 +433,28 @@ def download():
         # MIT OCW uploads) — yt-dlp returns "Requested format is not
         # available". The combined expression below succeeds on both
         # progressive-mp4 and DASH-only cases.
-        ydl_opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best"
+        quality = str(data.get("quality") or "").strip().lower()
+        if quality in ("1080", "720", "480", "360"):
+            # Height-capped variant for users who want to bound
+            # filesize before yt-dlp goes "obviously the 4 K version
+            # since it exists". Falls through to best-available at
+            # that height even when no mp4 exists at exactly that cap.
+            ydl_opts["format"] = (
+                f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]"
+                f"/best[height<={quality}][ext=mp4]"
+                f"/bestvideo[height<={quality}]+bestaudio"
+                f"/best[height<={quality}]"
+            )
+        elif quality == "audio":
+            # Quality=audio shortcut — drop the video stream, keep
+            # the audio and transcode to mp3 at 192 kbps so it plays
+            # everywhere without yt-dlp's container guesswork.
+            ydl_opts["format"] = "bestaudio/best"
+            ydl_opts["postprocessors"] = [
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+            ]
+        else:
+            ydl_opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best"
 
     # YouTube ratchets anti-bot per-client. When the default client
     # gets blocked, retrying with `web_safari`, `ios`, or `web_embedded`

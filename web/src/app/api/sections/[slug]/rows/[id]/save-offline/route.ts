@@ -28,6 +28,7 @@ import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { uploadToMinervaDrive, DRIVE_SUBFOLDERS } from '@/lib/drive';
 import { notifyTelegram } from '@/lib/telegram';
+import { getServerPref } from '@/lib/server-prefs';
 
 const HELPER = (process.env.HELPER_BASE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
 
@@ -106,7 +107,7 @@ async function saveOffline(
   });
   if (!row) throw new StatusError('Row not found', 404);
 
-  const body = (await req.json().catch(() => ({}))) as { kind?: 'video' | 'paper' };
+  const body = (await req.json().catch(() => ({}))) as { kind?: 'video' | 'paper'; quality?: string };
   const data = row.data as Record<string, string>;
   const kind = body.kind ?? (
     /\.pdf(\?|#|$)|arxiv\.org\/(?:abs|pdf)\//i.test(data.url || '') ? 'paper' : 'video'
@@ -122,10 +123,16 @@ async function saveOffline(
   let mime: string;
 
   if (kind === 'video') {
+    // Quality precedence: explicit `quality` in the request body
+    // wins (per-click override), else the user's server pref, else
+    // the helper's hard default ("best mp4").
+    const defaultQuality = (await getServerPref<string>(userId, 'yt_quality').catch(() => null)) || 'best';
+    const quality = String(body.quality || defaultQuality || 'best').trim().toLowerCase();
+    const format = quality === 'audio' ? 'mp3' : 'mp4';
     const r = await fetch(`${HELPER}/download`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: data.url, format: 'mp4' }),
+      body: JSON.stringify({ url: data.url, format, quality: quality === 'audio' ? '' : quality }),
     });
     if (!r.ok) {
       const txt = await r.text().catch(() => '');

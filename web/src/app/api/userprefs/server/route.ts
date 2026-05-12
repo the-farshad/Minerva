@@ -15,6 +15,18 @@ import { getServerPref, setServerPref, listServerPrefKeys } from '@/lib/server-p
 
 const ALLOWED_KEYS = new Set([
   'youtube_api_key',
+  /** Default video quality for save-offline. One of:
+   *   'best' | '1080' | '720' | '480' | '360' | 'audio'
+   * Translates to a yt-dlp format string in the helper. */
+  'yt_quality',
+]);
+
+/** Keys whose actual value is safe to return to the browser. The
+ * API-key shaped keys stay opaque (just a boolean "is set"); config
+ * shaped ones like yt_quality need to round-trip their value so the
+ * Settings UI can show the current selection. */
+const VALUE_VISIBLE_KEYS = new Set([
+  'yt_quality',
 ]);
 
 export async function POST(req: NextRequest) {
@@ -40,8 +52,13 @@ export async function GET() {
   const userId = (session.user as { id: string }).id;
   const present = new Set(await listServerPrefKeys(userId));
   const status: Record<string, boolean> = {};
-  for (const key of ALLOWED_KEYS) status[key] = present.has(key);
-  // Defence-in-depth: never return values, only booleans.
-  void getServerPref; // imported but read-only here
-  return NextResponse.json(status);
+  const values: Record<string, string> = {};
+  for (const key of ALLOWED_KEYS) {
+    status[key] = present.has(key);
+    if (VALUE_VISIBLE_KEYS.has(key) && present.has(key)) {
+      const v = await getServerPref<string>(userId, key);
+      if (v) values[key] = v;
+    }
+  }
+  return NextResponse.json({ ...status, _values: values });
 }
