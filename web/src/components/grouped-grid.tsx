@@ -688,6 +688,27 @@ function CardActions({
     }
   }
 
+  const hasOfflineCopy = /drive:[\w-]{20,}/.test(String(row.data.offline || ''));
+
+  async function removeOffline() {
+    const ok = await appConfirm('Remove the offline copy from this row?', {
+      body: "The Drive blob will be deleted (frees space + Drive quota). The row stays — you can Save offline again later. This won't touch the original YouTube / arxiv URL.",
+      dangerLabel: 'Remove',
+    });
+    if (!ok) return;
+    try {
+      const r = await fetch(`/api/sections/${section.slug}/rows/${row.id}/remove-offline`, { method: 'POST' });
+      const j = (await r.json().catch(() => ({}))) as { deleted?: number; error?: string; id?: string; data?: Record<string, unknown>; updatedAt?: string };
+      if (!r.ok) throw new Error(j.error || `remove-offline: ${r.status}`);
+      toast.success(`Removed offline copy${j.deleted ? ` (deleted ${j.deleted} Drive file${j.deleted === 1 ? '' : 's'})` : ''}.`);
+      if (j.id && j.data && j.updatedAt && onRowUpdated) {
+        onRowUpdated({ id: j.id, data: j.data, updatedAt: j.updatedAt });
+      }
+    } catch (e) {
+      notify.error((e as Error).message);
+    }
+  }
+
   const localUploadRef = useRef<HTMLInputElement>(null);
   async function uploadLocal(file: File) {
     toast.info(`Uploading ${file.name}…`);
@@ -764,6 +785,14 @@ function CardActions({
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
                 >
                   <Upload className="h-3.5 w-3.5" /> Upload local MP4
+                </DropdownMenu.Item>
+              )}
+              {hasOfflineCopy && (
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); void removeOffline(); }}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-red-600 outline-none hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                >
+                  <Cloud className="h-3.5 w-3.5" /> Remove offline copy
                 </DropdownMenu.Item>
               )}
               {isCategorisable && (
