@@ -69,6 +69,12 @@ export async function POST(
     set('authors', meta.authors);
     set('year', meta.year);
     set('doi', meta.doi);
+    // PDF page count → used by the reading-time badge + the per-
+    // group and per-section reading-time totals. Stored even when
+    // the schema doesn't list a 'pages' column (it's read straight
+    // off row.data by readingMinutes()), so this never hits the
+    // schema-allowed-headers filter.
+    if (meta.pages && meta.pages > 0) data.pages = meta.pages;
     if (categoryHint) set('category', categoryHint);
     if (allowed.has('offline')) data.offline = `drive:${up.id}`;
     if (allowed.has('url')) data.url = `https://drive.google.com/file/d/${up.id}/view`;

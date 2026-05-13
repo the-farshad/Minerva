@@ -25,12 +25,27 @@ function decodePdfString(raw: string): string {
   return raw;
 }
 
-export type PdfMeta = { title?: string; authors?: string; year?: string; doi?: string };
+export type PdfMeta = { title?: string; authors?: string; year?: string; doi?: string; pages?: number };
 
 export function extractPdfMeta(buf: Uint8Array): PdfMeta {
   const slice = buf.slice(0, Math.min(buf.length, 256 * 1024));
   const text = new TextDecoder('latin1').decode(slice);
   const out: PdfMeta = {};
+  // Page count: `/Type /Pages ... /Count N` is the authoritative
+  // value in the catalog. The catalog usually sits near the END of
+  // the file, so scan both the leading slice and a trailing slice.
+  // Fallback: count `/Type /Page ` (singular Page only) — works on
+  // small PDFs and on linearised PDFs where /Pages is near the top.
+  const trailerSlice = buf.length > 64 * 1024 ? new TextDecoder('latin1').decode(buf.slice(buf.length - 64 * 1024)) : '';
+  const countRe = /\/Type\s*\/Pages\b[^]*?\/Count\s+(\d+)/;
+  const cm = trailerSlice.match(countRe) || text.match(countRe);
+  if (cm) {
+    const n = Number(cm[1]);
+    if (Number.isFinite(n) && n > 0 && n < 100_000) out.pages = n;
+  } else {
+    const matches = text.match(/\/Type\s*\/Page\b(?!s)/g);
+    if (matches && matches.length > 0 && matches.length < 100_000) out.pages = matches.length;
+  }
   const matchField = (key: string): string | null => {
     const re = new RegExp(`/${key}\\s*(\\(([^)]*)\\)|<([0-9A-Fa-f\\s]+)>)`);
     const m = text.match(re);

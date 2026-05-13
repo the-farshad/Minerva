@@ -3,7 +3,8 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen } from 'lucide-react';
+import { readingMinutes, formatReadingMinutes, MINUTES_PER_PAGE, WORDS_PER_MINUTE } from '@/lib/reading-time';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -292,6 +293,12 @@ export function GroupedGrid({
           <PlaylistProgress rows={rows} size="wide" />
         </div>
       )}
+      {section.preset === 'papers' && (
+        <div className="-mt-1 mb-3 flex flex-col items-center gap-1 text-zinc-500">
+          <span className="text-[10px] uppercase tracking-wide">Section total</span>
+          <ReadingTimeTotal rows={rows} size="wide" />
+        </div>
+      )}
       {groupCol && (
         <header className="flex items-center gap-3 text-xs">
           <span className="text-zinc-500">Sort {groupCol}s:</span>
@@ -357,6 +364,37 @@ export function GroupedGrid({
               {section.preset === 'youtube' && (
                 <div className="ml-2"><PlaylistProgress rows={groupRows} /></div>
               )}
+              {section.preset === 'papers' && (
+                <div className="ml-2"><ReadingTimeTotal rows={groupRows} /></div>
+              )}
+              {section.preset === 'youtube' && (() => {
+                /* Find the first YouTube playlist URL in this group
+                 * (rows have data.url like
+                 * `https://youtube.com/watch?v=…&list=PL…`). If any
+                 * row carries one, surface a small clickable link to
+                 * the playlist itself — quick jump to the canonical
+                 * YouTube view without leaving the group context.
+                 * Skipped when no row has `list=` in its URL. */
+                const PL_RE = /[?&]list=([A-Za-z0-9_-]+)/;
+                let listId = '';
+                for (const gr of groupRows) {
+                  const url = String((gr.data as Record<string, unknown>).url || '');
+                  const m = url.match(PL_RE);
+                  if (m) { listId = m[1]; break; }
+                }
+                if (!listId) return null;
+                return (
+                  <a
+                    href={`https://www.youtube.com/playlist?list=${listId}`}
+                    target="_blank"
+                    rel="noopener"
+                    title="Open this playlist on YouTube"
+                    className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                );
+              })()}
               <div className="ml-auto flex flex-wrap items-center gap-1">
               {groupCol && (
                 <>
@@ -652,6 +690,7 @@ export function GroupedGrid({
                       </div>
                     </button>
                     {section.preset === 'youtube' && <WatchedBar row={r} />}
+                    {section.preset === 'papers' && <PaperReadingBadge row={r} />}
                     {/* Single overflow menu — three dots always
                       * visible in the corner. Inside: Info (opens a
                       * popover with full metadata), Save offline (for
@@ -815,6 +854,53 @@ function PlaylistProgress({ rows, size = 'chip' }: { rows: Row[]; size?: 'chip' 
         <div className={`h-full ${fill}`} style={{ width: `${pct * 100}%` }} />
       </div>
       <span>{mm(totalWatched)} / {mm(totalDur)}</span>
+    </div>
+  );
+}
+
+/** Per-card reading-time badge for the Papers preset. Shows "~12 min"
+ *  when the row has a page count or word count we can estimate from;
+ *  silently hides when neither is available (older rows pre-dating
+ *  the page-count extraction, or rows without a Drive mirror). */
+function PaperReadingBadge({ row }: { row: Row }) {
+  const mins = readingMinutes(row.data as Record<string, unknown>);
+  if (!mins) return null;
+  return (
+    <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-zinc-500" title={`Estimated reading time at ${MINUTES_PER_PAGE} min/page (or ${WORDS_PER_MINUTE} wpm when word count is known)`}>
+      <BookOpen className="h-3 w-3" />
+      ~{formatReadingMinutes(mins)}
+    </div>
+  );
+}
+
+/** Total reading time across a set of papers — wide variant for the
+ *  section header, chip variant for the per-group header. Mirrors the
+ *  PlaylistProgress duration/watched layout so the two presets read
+ *  alike. Rows without an estimate are counted in the "of N" tail but
+ *  don't add minutes. */
+function ReadingTimeTotal({ rows, size = 'chip' }: { rows: Row[]; size?: 'chip' | 'wide' }) {
+  let mins = 0;
+  let known = 0;
+  for (const r of rows) {
+    const m = readingMinutes(r.data as Record<string, unknown>);
+    if (m) { mins += m; known += 1; }
+  }
+  if (known === 0) return null;
+  const summary = formatReadingMinutes(mins);
+  if (size === 'wide') {
+    return (
+      <div className="flex w-full max-w-md flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400" title={`${known} of ${rows.length} papers have an estimate`}>
+        <div className="flex items-center justify-between">
+          <span className="font-medium tracking-wide">~{summary} to read</span>
+          <span className="font-mono text-[10px] text-zinc-500">{known} / {rows.length} estimated</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" title={`Total reading time across ${known} estimated paper${known === 1 ? '' : 's'}`}>
+      <BookOpen className="h-3 w-3" />
+      ~{summary}
     </div>
   );
 }

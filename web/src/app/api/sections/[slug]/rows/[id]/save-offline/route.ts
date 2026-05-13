@@ -217,6 +217,16 @@ async function saveOffline(
     mime = 'application/pdf';
     const stem = (data.title || data.id || 'paper').toString().replace(/[^\w.\- ]+/g, '_').slice(0, 100);
     filename = `${stem}.pdf`;
+    // Page count for the reading-time badge. Lazy import so the
+    // module doesn't load on the video branch (which is the common
+    // case for save-offline).
+    if (!data.pages) {
+      try {
+        const { extractPdfMeta } = await import('@/lib/pdf-meta');
+        const pdfMeta = extractPdfMeta(new Uint8Array(bytes));
+        if (pdfMeta.pages && pdfMeta.pages > 0) (data as unknown as Record<string, unknown>).pages = pdfMeta.pages;
+      } catch { /* tolerate — pages stays unset, reading-time falls back to null */ }
+    }
   }
 
   let fileId: string;
