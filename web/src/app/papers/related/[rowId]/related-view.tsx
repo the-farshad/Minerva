@@ -50,6 +50,11 @@ export function RelatedView({
   const [switchingProvider, setSwitchingProvider] = useState(false);
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState<Set<string>>(new Set());
+  /** Paper keys whose Drive-mirror save-offline call is in flight.
+   *  Updated as the NDJSON stream from /save-offline progresses;
+   *  cleared on 'done' or 'error'. */
+  const [mirroring, setMirroring] = useState<Set<string>>(new Set());
+  const [mirrored, setMirrored] = useState<Set<string>>(new Set());
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [view, setView] = useState<'list' | 'graph'>('list');
@@ -229,13 +234,63 @@ export function RelatedView({
         body: JSON.stringify({ data }),
       });
       if (!r.ok) throw new Error(`add: ${r.status}`);
+      const created = (await r.json()) as { id?: string };
       setAdded((s) => new Set(s).add(key));
+      // Fire-and-forget Drive mirror so the user gets an offline
+      // PDF copy on every paper they add. save-offline returns
+      // NDJSON; we read it to flip mirroring → mirrored, but
+      // never await it inside addOne so the caller (and the
+      // add-all loop) stays responsive. Failures are silent
+      // — a paper whose URL is a publisher landing page rather
+      // than a direct PDF will fail, and that's expected.
+      if (created.id) {
+        setMirroring((s) => new Set(s).add(key));
+        void streamSaveOffline(created.id, key);
+      }
       return true;
     } catch (e) {
       notify.error(`${p.title}: ${(e as Error).message}`);
       return false;
     } finally {
       setAdding((s) => { const next = new Set(s); next.delete(key); return next; });
+    }
+  }
+
+  async function streamSaveOffline(rowId: string, key: string) {
+    try {
+      const r = await fetch(`/api/sections/${sectionSlug}/rows/${rowId}/save-offline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'paper' }),
+      });
+      if (!r.ok || !r.body) {
+        setMirroring((s) => { const next = new Set(s); next.delete(key); return next; });
+        return;
+      }
+      // Consume the NDJSON heartbeat stream. We only need the
+      // final line; heartbeats are intentionally ignored.
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let success = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          try {
+            const msg = JSON.parse(line) as { type?: string };
+            if (msg.type === 'done') success = true;
+          } catch { /* malformed line — skip */ }
+        }
+      }
+      setMirroring((s) => { const next = new Set(s); next.delete(key); return next; });
+      if (success) setMirrored((s) => new Set(s).add(key));
+    } catch {
+      setMirroring((s) => { const next = new Set(s); next.delete(key); return next; });
     }
   }
 
@@ -598,6 +653,8 @@ export function RelatedView({
           const url = paperUrl(p);
           const isAdded = added.has(key);
           const isBusy = adding.has(key);
+          const isMirroring = mirroring.has(key);
+          const isMirrored = mirrored.has(key);
           const authors = (p.authors || []).map((a) => a.name || '').filter(Boolean).join(', ');
           return (
             <li
@@ -672,6 +729,26 @@ export function RelatedView({
                         ? <><Check className="h-3 w-3" /> Added</>
                         : <><Plus className="h-3 w-3" /> Add</>}
                   </button>
+                  {/* Drive-mirror status pill — only shows after
+                    * the row's been added. Streams from "Mirroring…"
+                    * (spinner) to "Offline" (cloud check) or
+                    * disappears silently on failure. */}
+                  {isAdded && isMirroring && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                      title="Downloading the PDF to your Drive"
+                    >
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> Mirroring
+                    </span>
+                  )}
+                  {isAdded && !isMirroring && isMirrored && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                      title="PDF is on your Drive"
+                    >
+                      <Download className="h-2.5 w-2.5" /> Offline
+                    </span>
+                  )}
                 </div>
               </div>
             </li>
