@@ -131,27 +131,11 @@ export function SketchModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed]);
 
-  // iPad Safari occasionally drops the first PointerDown for
-  // Apple Pencil unless a native non-passive touchstart listener
-  // on the same element calls preventDefault. React's synthetic
-  // onPointerDown listener registers as passive by default which
-  // is too late to suppress the default touch handling. Wire a
-  // direct addEventListener with passive:false alongside the
-  // React handler — they coexist fine; the React one still
-  // updates state, the native one just blocks the browser from
-  // intercepting the gesture.
-  useEffect(() => {
-    if (!open) return;
-    const c = canvasRef.current;
-    if (!c) return;
-    const block = (e: TouchEvent) => { e.preventDefault(); };
-    c.addEventListener('touchstart', block, { passive: false });
-    c.addEventListener('touchmove', block, { passive: false });
-    return () => {
-      c.removeEventListener('touchstart', block);
-      c.removeEventListener('touchmove', block);
-    };
-  }, [open]);
+  // (Removed the native touchstart preventDefault listener that
+  // previous rounds added — it interacted poorly with iPad's
+  // pointer-capture pipeline and is unnecessary when the canvas
+  // has touch-action:none and we call setPointerCapture in the
+  // React pointerdown handler.)
 
   function redraw() {
     const c = canvasRef.current;
@@ -197,47 +181,20 @@ export function SketchModal({
       ctx.restore();
       return;
     }
-    if (s.points.length === 2) {
-      const [a, b] = s.points;
+    // Raw per-segment lineTo. Reverted from quadratic-curve
+    // smoothing — the smoothing made debug harder when strokes
+    // weren't appearing and didn't visibly help at typical pen
+    // sample rates. Per-segment lineWidth still preserves pen
+    // pressure variation.
+    for (let i = 1; i < s.points.length; i++) {
+      const a = s.points[i - 1];
+      const b = s.points[i];
       ctx.lineWidth = (a.w + b.w) / 2;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
-      ctx.restore();
-      return;
     }
-    // Quadratic-curve smoothing through midpoints — the same
-    // technique iOS Notes uses for clean pen ink. Each
-    // pair of consecutive samples becomes a Bezier segment with
-    // the original sample as the control point, so the strokes
-    // read as smooth curves rather than jagged polyline.
-    // Width is interpolated per-segment to preserve pen pressure
-    // variation without exploding the path count.
-    const pts = s.points;
-    for (let i = 1; i < pts.length - 1; i++) {
-      const prev = pts[i - 1];
-      const cur = pts[i];
-      const next = pts[i + 1];
-      const startX = (prev.x + cur.x) / 2;
-      const startY = (prev.y + cur.y) / 2;
-      const endX = (cur.x + next.x) / 2;
-      const endY = (cur.y + next.y) / 2;
-      ctx.lineWidth = (prev.w + cur.w + next.w) / 3;
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.quadraticCurveTo(cur.x, cur.y, endX, endY);
-      ctx.stroke();
-    }
-    // Tail segment from last midpoint to last point so the stroke
-    // ends where the user actually lifted the pen.
-    const second = pts[pts.length - 2];
-    const last = pts[pts.length - 1];
-    ctx.lineWidth = (second.w + last.w) / 2;
-    ctx.beginPath();
-    ctx.moveTo((second.x + last.x) / 2, (second.y + last.y) / 2);
-    ctx.lineTo(last.x, last.y);
-    ctx.stroke();
     ctx.restore();
   }
 
@@ -259,9 +216,13 @@ export function SketchModal({
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
+  // preventDefault was dropped from these handlers — on iPad it
+  // interacted badly with the pointer-capture pipeline and stopped
+  // the initial pointerdown from establishing a capture. touch-
+  // action:none on the canvas (inline + class) already keeps the
+  // browser from interpreting the gesture as scroll.
   function start(e: React.PointerEvent) {
-    e.preventDefault();
-    canvasRef.current?.setPointerCapture(e.pointerId);
+    try { canvasRef.current?.setPointerCapture(e.pointerId); } catch { /* iPadOS older Safari */ }
     const p = localPoint(e);
     drawing.current = {
       color,
@@ -269,11 +230,11 @@ export function SketchModal({
       points: [{ x: p.x, y: p.y, w: widthFromPointer(e) }],
     };
     redraw();
+    force((n) => n + 1);
   }
 
   function move(e: React.PointerEvent) {
     if (!drawing.current) return;
-    e.preventDefault();
     const p = localPoint(e);
     drawing.current.points.push({ x: p.x, y: p.y, w: widthFromPointer(e) });
     redraw();
@@ -281,7 +242,7 @@ export function SketchModal({
 
   function end(e: React.PointerEvent) {
     if (!drawing.current) return;
-    canvasRef.current?.releasePointerCapture(e.pointerId);
+    try { canvasRef.current?.releasePointerCapture(e.pointerId); } catch { /* ok */ }
     strokesRef.current.push(drawing.current);
     drawing.current = null;
     redraw();
@@ -590,7 +551,17 @@ export function SketchModal({
               </Dialog.Close>
             </div>
           </header>
-          <div ref={wrapRef} className="flex-1 touch-none bg-white dark:bg-zinc-900">
+          <div ref={wrapRef} className="relative flex-1 touch-none bg-white dark:bg-zinc-900">
+            {/* Tiny live status pill — if strokes ever stop
+              * appearing we can immediately see whether the canvas
+              * has zero size, whether pointer events are landing
+              * (stroke count increments), and whether a bg image
+              * is in play. Stays out of the way bottom-right. */}
+            <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/50 px-2 py-0.5 font-mono text-[10px] text-white">
+              {canvasRef.current ? `${canvasRef.current.clientWidth}×${canvasRef.current.clientHeight}` : '?×?'}
+              {' · '}strokes {strokesRef.current.length}{drawing.current ? '+1' : ''}
+              {bgImageRef.current ? ' · bg' : ''}
+            </div>
             <canvas
               ref={canvasRef}
               onPointerDown={start}

@@ -150,37 +150,40 @@ body {
 
 /* iPad Safari uses `cursor: pointer` as a heuristic to synthesize
  * click events from Apple Pencil taps. Tailwind v4's preflight
- * removes the browser default cursor:pointer on <button>, which
- * breaks every button for Pencil users — finger taps still work
- * because the touch path doesn't consult cursor.
+ * doesn't set this on enabled buttons (only `not-allowed` on
+ * disabled ones), so without an explicit rule Pencil taps fire
+ * pointerdown/up but no click — finger taps still work because
+ * the touch path doesn't consult cursor. The rule is
  *
- * !important + @layer base so the rule lives at the same layer
- * as Tailwind's preflight AND beats any utility-level cursor
- * class that gets generated later. The previous unlayered rule
- * SHOULD have won but didn't reach the iPad reliably; this
- * removes the last doubt. */
-@layer base {
-  button:not(:disabled),
-  a[href],
-  [role="button"]:not([aria-disabled="true"]),
-  summary,
-  label[for],
-  input[type="checkbox"],
-  input[type="radio"],
-  input[type="submit"],
-  input[type="button"],
-  select {
-    cursor: pointer !important;
-    touch-action: manipulation;
-  }
-  button:disabled,
-  [aria-disabled="true"] {
-    cursor: not-allowed !important;
-  }
-  /* Suppress the grey rectangle iOS paints over tapped elements;
-   * Tailwind's own `:active` / `:hover` states are the right
-   * feedback channel. */
-  * {
-    -webkit-tap-highlight-color: transparent;
-  }
+ *   - UNLAYERED so it beats every @layer-base / @layer-components
+ *     rule by cascade (unlayered always > any layer)
+ *   - prefixed with `html` to add element specificity for
+ *     anything that does try to override
+ *   - !important as a final safety net
+ *
+ * We've now tried this rule inside @layer base, then in the page
+ * scope; users on iPad still reported some buttons unresponsive.
+ * This version is the cascade-strongest form. */
+html button:not(:disabled),
+html a[href],
+html [role="button"]:not([aria-disabled="true"]),
+html summary,
+html label[for],
+html input[type="checkbox"],
+html input[type="radio"],
+html input[type="submit"],
+html input[type="button"],
+html select {
+  cursor: pointer !important;
+  touch-action: manipulation !important;
+}
+html button:disabled,
+html [aria-disabled="true"] {
+  cursor: not-allowed !important;
+}
+/* Suppress the grey rectangle iOS paints over tapped elements;
+ * Tailwind's own `:active` / `:hover` states are the right
+ * feedback channel. */
+html * {
+  -webkit-tap-highlight-color: transparent;
 }

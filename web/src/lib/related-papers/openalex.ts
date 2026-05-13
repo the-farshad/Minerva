@@ -159,7 +159,11 @@ export async function fetchRelatedFromOpenAlex(opts: {
   // (≤ ~10) that one-per-id is cheaper than fighting the filter
   // syntax. Failed lookups (404, network) drop silently so a
   // single deindexed work doesn't sink the whole page.
-  const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,host_venue,primary_location,referenced_works';
+  // OpenAlex deprecated `host_venue` — it's now a 400 in the
+  // select parameter. The venue lives under
+  // primary_location.source.display_name; we keep the host_venue
+  // type field on OAWork for compatibility but never request it.
+  const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,primary_location,referenced_works';
   const lookups = related.map(async (u) => {
     const wid = u.replace(/^https:\/\/openalex\.org\//, '');
     try {

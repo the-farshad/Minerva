@@ -395,33 +395,40 @@ export function RelatedView({
               <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-900">
                 <div className="text-[10px] uppercase tracking-wide text-zinc-500">Custom range</div>
                 <div className="mt-1.5 flex items-center gap-2 text-xs">
-                  <select
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1800}
+                    max={2100}
                     value={yearFrom}
                     onChange={(e) => setYearFrom(e.target.value)}
+                    placeholder={yearMin != null ? String(yearMin) : 'from'}
                     aria-label="Year from"
-                    className="flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
-                  >
-                    <option value="">Any</option>
-                    {allYears.slice().reverse().map((y) => (
-                      <option key={y} value={String(y)}>{y}</option>
-                    ))}
-                  </select>
+                    className="flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-center dark:border-zinc-700 dark:bg-zinc-900"
+                  />
                   <span className="text-zinc-400">–</span>
-                  <select
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1800}
+                    max={2100}
                     value={yearTo}
                     onChange={(e) => setYearTo(e.target.value)}
+                    placeholder={yearMax != null ? String(yearMax) : 'to'}
                     aria-label="Year to"
-                    className="flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
-                  >
-                    <option value="">Any</option>
-                    {allYears.map((y) => (
-                      <option key={y} value={String(y)}>{y}</option>
-                    ))}
-                  </select>
+                    className="flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-center dark:border-zinc-700 dark:bg-zinc-900"
+                  />
                 </div>
                 {yearMin != null && yearMax != null && (
-                  <div className="mt-2 text-[10px] text-zinc-500">
-                    Loaded papers span {yearMin}–{yearMax}.
+                  <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-500">
+                    <span>Loaded papers span {yearMin}–{yearMax}.</span>
+                    <button
+                      type="button"
+                      onClick={() => { setYearFrom(String(yearMin)); setYearTo(String(yearMax)); }}
+                      className="text-zinc-600 underline-offset-2 hover:underline dark:text-zinc-400"
+                    >
+                      Use full range
+                    </button>
                   </div>
                 )}
               </div>
