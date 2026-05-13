@@ -104,15 +104,38 @@ export async function POST(
    *  invalidate their cached row list once instead of N times. */
   const touched: string[] = [];
 
+  // CRITICAL: only multiselect-typed columns get comma-split into a
+  // membership list. A plain text column (`playlist` is typed as
+  // text) whose VALUE happens to contain a comma — e.g.
+  // "MIT 18.086 Mathematical Methods for Engineers II, Spring '06"
+  // — must be matched as a single string, not split into fragments,
+  // or the rename will report "0 rows" every time the title has a
+  // comma in it. The earlier UI-side comma-split fix never made it
+  // into this server route.
+  const colIdx = sch.headers.indexOf(column);
+  const colType = String(sch.types?.[colIdx] || '');
+  const isMulti = /^multiselect\(/.test(colType) || /^select\(/.test(colType);
+
   // Compare against both the raw `from` and its HTML-decoded form
   // so callers can ship either flavour and still hit rows whose DB
   // value uses the other encoding.
   const fromDecoded = decodeEntities(from);
+  const matchesFrom = (v: string): boolean =>
+    v === from || v === fromDecoded || decodeEntities(v) === from || decodeEntities(v) === fromDecoded;
+
   for (const r of rows) {
     const data = r.data as Record<string, unknown>;
-    const list = splitList(data[column]);
-    const matchedAs = list.find((v) => v === from || v === fromDecoded || decodeEntities(v) === from || decodeEntities(v) === fromDecoded);
+    const raw = String(data[column] ?? '');
+    // For multiselect / select columns we split on commas and match
+    // any token; for single-valued columns we compare the entire
+    // value as a string. `list` is filled accordingly so the
+    // downstream rewrite logic stays identical.
+    const list = isMulti
+      ? raw.split(',').map((s) => s.trim()).filter(Boolean)
+      : (raw.trim() ? [raw.trim()] : []);
+    const matchedAs = list.find(matchesFrom);
     if (!matchedAs) continue;
+
     // Strip `from`, optionally swap in `to`, dedupe preserving order.
     const next: string[] = [];
     for (const v of list) {
@@ -120,7 +143,9 @@ export async function POST(
       if (!next.includes(v)) next.push(v);
     }
     if (to && !next.includes(to)) next.push(to);
-    const joined = next.join(', ');
+    // Single-valued columns get the literal `to` (or empty) written
+    // back; multiselect columns get the comma-joined list.
+    const joined = isMulti ? next.join(', ') : (next[0] ?? '');
     if (next.length === 0 && deleteOrphaned) {
       await db.update(schema.rows)
         .set({ deleted: true, updatedAt: new Date() })
