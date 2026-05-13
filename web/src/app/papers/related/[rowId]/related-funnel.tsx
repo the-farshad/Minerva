@@ -1,6 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
+// CSS for the lib — the bare SVG it emits is structurally invisible
+// without these. Imported here so they ride with the dynamic chunk
+// the FunnelView component lives in (no global cost when nobody
+// opens the Funnel view).
+import 'funnel-graph-js-xl/dist/css/main.min.css';
+import 'funnel-graph-js-xl/dist/css/theme.min.css';
 
 /** funnel-graph-js-xl is a vanilla-DOM SVG renderer — it instantiates
  *  against a container element and mutates it. We import it

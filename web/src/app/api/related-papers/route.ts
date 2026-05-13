@@ -21,6 +21,7 @@ import { getServerPref } from '@/lib/server-prefs';
 import { parseRef } from '@/lib/related-papers/types';
 import { fetchRelatedFromOpenAlex } from '@/lib/related-papers/openalex';
 import { fetchRelatedFromSemanticScholar } from '@/lib/related-papers/semanticscholar';
+import { getCached, setCached } from '@/lib/related-papers/cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +39,23 @@ export async function GET(req: NextRequest) {
 
   const provider = (await getServerPref<string>(userId, 'related_papers_provider')) || 'openalex';
 
+  /** Cache key: provider + the most stable identifier we have.
+   *  Falls back to title if no ref was supplied — title queries are
+   *  inherently fuzzy and rare, but cacheable for the 6 h window. */
+  const cacheKey = `${provider}:${ref ? `${ref.kind}:${ref.id}` : `title:${title}`}:${limit}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    if (cached.ok) {
+      return NextResponse.json({
+        papers: cached.papers,
+        resolvedVia: cached.resolvedVia,
+        dropped: 'dropped' in cached ? cached.dropped : 0,
+        provider,
+        cached: true,
+      });
+    }
+  }
+
   try {
     if (provider === 'semanticscholar') {
       const ss = await fetchRelatedFromSemanticScholar({ ref, title, limit });
@@ -51,6 +69,11 @@ export async function GET(req: NextRequest) {
       if (ss.ok && ss.papers.length === 0) {
         const oa = await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
         if (oa.ok) {
+          // Cache the OpenAlex fallback under the OpenAlex key so a
+          // later openalex-provider query picks it up. Not cached
+          // under the SS key — SS empty results should re-check next
+          // time the user explicitly picks SS.
+          setCached(cacheKey.replace(/^semanticscholar:/, 'openalex:'), oa);
           return NextResponse.json({
             papers: oa.papers,
             resolvedVia: oa.resolvedVia,
@@ -64,6 +87,7 @@ export async function GET(req: NextRequest) {
         // the SS path was the requested one.
       }
       if (ss.ok) {
+        setCached(cacheKey, ss);
         return NextResponse.json({
           papers: ss.papers,
           resolvedVia: ss.resolvedVia,
@@ -79,6 +103,7 @@ export async function GET(req: NextRequest) {
 
     const oa = await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
     if (oa.ok) {
+      setCached(cacheKey, oa);
       return NextResponse.json({
         papers: oa.papers,
         resolvedVia: oa.resolvedVia,
