@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { uploadToMinervaDrive, paperFolderSegments } from '@/lib/drive';
+import { uploadToMinervaDrive, paperFolderSegments, syncPaperShortcuts } from '@/lib/drive';
 import { extractPdfMeta } from '@/lib/pdf-meta';
 import { bus } from '@/lib/event-bus';
 
@@ -52,9 +52,10 @@ export async function POST(
     const ab = await file.arrayBuffer();
     const meta = extractPdfMeta(new Uint8Array(ab));
 
+    const driveFilename = (meta.title || name).replace(/[^\w.\- ]+/g, '_').slice(0, 100) + '.pdf';
     const up = await uploadToMinervaDrive(
       userId, ab,
-      (meta.title || name).replace(/[^\w.\- ]+/g, '_').slice(0, 100) + '.pdf',
+      driveFilename,
       'application/pdf',
       paperFolderSegments({ category: categoryHint }),
     );
@@ -71,6 +72,21 @@ export async function POST(
     if (categoryHint) set('category', categoryHint);
     if (allowed.has('offline')) data.offline = `drive:${up.id}`;
     if (allowed.has('url')) data.url = `https://drive.google.com/file/d/${up.id}/view`;
+
+    // Multi-category papers: the real PDF lives in the primary
+    // category folder; every other category gets a Drive shortcut
+    // pointing at the same file. Shortcut IDs are recorded on
+    // row.data._shortcuts so a later delete / rewrite-tag can keep
+    // them in step with the row's current category list.
+    const cats = categoryHint.split(',').map((c) => c.trim()).filter(Boolean);
+    if (cats.length > 1) {
+      try {
+        const shortcuts = await syncPaperShortcuts(userId, up.id, driveFilename, cats[0], cats, {});
+        if (Object.keys(shortcuts).length > 0) data._shortcuts = shortcuts;
+      } catch (e) {
+        console.warn('[upload-paper] shortcuts:', (e as Error).message);
+      }
+    }
 
     const [row] = await db.insert(schema.rows).values({
       userId, sectionId: sec.id, data,

@@ -66,7 +66,10 @@ export async function POST(
           const d = r.data as Record<string, unknown>;
           const offlineIds = Array.from(String(d.offline || '').matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]);
           const origId = String(d.originalFileId || '').trim();
-          return origId ? [...offlineIds, origId] : offlineIds;
+          const shortcutIds = Object.values((d._shortcuts as Record<string, string> | undefined) || {});
+          const ids = [...offlineIds, ...shortcutIds];
+          if (origId) ids.push(origId);
+          return ids;
         });
       const res = await db.update(schema.rows)
         .set({ deleted: true, updatedAt: new Date() })
@@ -136,7 +139,10 @@ export async function POST(
           const d = r.data || {};
           const offlineIds = Array.from(String(d.offline || '').matchAll(/drive:([\w-]{20,})/g)).map((m) => m[1]);
           const origId = String(d.originalFileId || '').trim();
-          return origId ? [...offlineIds, origId] : offlineIds;
+          const shortcutIds = Object.values((d._shortcuts as Record<string, string> | undefined) || {});
+          const ids = [...offlineIds, ...shortcutIds];
+          if (origId) ids.push(origId);
+          return ids;
         });
 
       if (toDelete.length > 0) {

@@ -234,6 +234,84 @@ export async function copyDriveFile(
   return (await r.json()) as { id: string };
 }
 
+/** Create a Drive shortcut (`application/vnd.google-apps.shortcut`)
+ *  pointing at an existing file. Used by the multi-category papers
+ *  flow: the real PDF lives in `papers/<primary-category>/` and
+ *  every other category gets a shortcut in `papers/<other>/`. Drive
+ *  itself handles "add to multiple folders" the same way.
+ *
+ *  Returns the created shortcut file's ID so the caller can record
+ *  it for later cleanup (delete-on-row-delete, etc.). */
+export async function createDriveShortcut(
+  userId: string,
+  targetFileId: string,
+  parentFolderId: string,
+  name: string,
+): Promise<{ id: string }> {
+  const token = await getGoogleAccessToken(userId);
+  const body = {
+    name,
+    mimeType: 'application/vnd.google-apps.shortcut',
+    parents: [parentFolderId],
+    shortcutDetails: { targetId: targetFileId },
+  };
+  const created = (await authedJson(token, `${DRIVE}/files?fields=id`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })) as { id: string };
+  return created;
+}
+
+/** Walk a category list and (re)materialise shortcuts so the real
+ *  file appears in every category folder. Returns the new shortcuts
+ *  map keyed by category name → shortcut file ID. The caller should
+ *  persist this on `row.data._shortcuts` so subsequent updates can
+ *  diff against the prior state.
+ *
+ *  `primaryCategory` is the category whose folder holds the actual
+ *  bytes — no shortcut is created there. Every OTHER category in
+ *  the list gets a shortcut. Existing shortcuts in `existing` are
+ *  preserved when the same category is still in the list; ones for
+ *  removed categories are deleted; new ones are created.
+ *
+ *  Tolerant: a failed shortcut create / delete is logged and
+ *  swallowed so the call site (upload-paper, rewrite-tag) never
+ *  fails the user's main action over a Drive hiccup. */
+export async function syncPaperShortcuts(
+  userId: string,
+  targetFileId: string,
+  filename: string,
+  primaryCategory: string,
+  allCategories: string[],
+  existing: Record<string, string>,
+): Promise<Record<string, string>> {
+  const others = allCategories
+    .map((c) => c.trim())
+    .filter((c) => c && c !== primaryCategory);
+  const next: Record<string, string> = {};
+  const minerva = await ensureMinervaFolder(userId);
+  const papersFolder = await ensureFolder(userId, 'papers', minerva);
+  // Create / preserve shortcuts for every non-primary category.
+  for (const cat of others) {
+    if (existing[cat]) { next[cat] = existing[cat]; continue; }
+    try {
+      const sanitised = sanitizeForDriveFolder(cat) || cat;
+      const folder = await ensureFolder(userId, sanitised, papersFolder);
+      const sc = await createDriveShortcut(userId, targetFileId, folder, filename);
+      next[cat] = sc.id;
+    } catch (e) {
+      console.warn(`[shortcuts] create failed for "${cat}":`, (e as Error).message);
+    }
+  }
+  // Delete shortcuts whose category is no longer in the list.
+  for (const [cat, scId] of Object.entries(existing)) {
+    if (next[cat]) continue;
+    await deleteDriveFile(userId, scId).catch(() => { /* tolerate */ });
+  }
+  return next;
+}
+
 /** Stream a Drive file's bytes server-side. Returns the full
  * ArrayBuffer + mime — small for PDFs, ok to buffer. */
 export async function fetchDriveFileBytes(

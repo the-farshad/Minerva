@@ -75,6 +75,12 @@ export async function DELETE(
   );
   const original = String(data.originalFileId || '').trim();
   if (original) driveIds.add(original);
+  // Multi-category shortcuts: each non-primary category folder has
+  // a vnd.google-apps.shortcut pointing at the real PDF. Delete
+  // them too so the user's Drive doesn't accumulate dangling
+  // shortcut placeholders after a paper is removed.
+  const shortcuts = (data._shortcuts as Record<string, string> | undefined) || {};
+  for (const scId of Object.values(shortcuts)) driveIds.add(scId);
   await Promise.all(Array.from(driveIds).map((fid) => deleteDriveFile(userId, fid)));
 
   await db.update(schema.rows)

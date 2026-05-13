@@ -27,12 +27,29 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { bus } from '@/lib/event-bus';
+import { syncPaperShortcuts } from '@/lib/drive';
 
 function splitList(v: unknown): string[] {
   return String(v || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** Normalise HTML entities so "Spring &#39;06" (the way YouTube's
+ *  older metadata endpoints encode apostrophes) matches the literal
+ *  "Spring '06" the user may have typed back into the rename input.
+ *  Without this, rewrite-tag found 0 rows on titles imported from
+ *  YouTube even when the user copy-pasted the visible group name. */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
 }
 
 export async function POST(
@@ -87,14 +104,19 @@ export async function POST(
    *  invalidate their cached row list once instead of N times. */
   const touched: string[] = [];
 
+  // Compare against both the raw `from` and its HTML-decoded form
+  // so callers can ship either flavour and still hit rows whose DB
+  // value uses the other encoding.
+  const fromDecoded = decodeEntities(from);
   for (const r of rows) {
     const data = r.data as Record<string, unknown>;
     const list = splitList(data[column]);
-    if (!list.includes(from)) continue;
+    const matchedAs = list.find((v) => v === from || v === fromDecoded || decodeEntities(v) === from || decodeEntities(v) === fromDecoded);
+    if (!matchedAs) continue;
     // Strip `from`, optionally swap in `to`, dedupe preserving order.
     const next: string[] = [];
     for (const v of list) {
-      if (v === from) continue;
+      if (v === matchedAs) continue;
       if (!next.includes(v)) next.push(v);
     }
     if (to && !next.includes(to)) next.push(to);
@@ -105,7 +127,28 @@ export async function POST(
         .where(eq(schema.rows.id, r.id));
       deleted += 1;
     } else {
-      const nextData = { ...data, [column]: joined };
+      const nextData: Record<string, unknown> = { ...data, [column]: joined };
+      // Papers + the category column → keep Drive shortcuts in step
+      // with the rewritten category list. The real PDF lives in the
+      // primary (first) category folder; every other category gets
+      // a shortcut, and removed categories get their shortcuts
+      // deleted. Tolerant: a Drive hiccup logs + continues.
+      if (sec.preset === 'papers' && column === 'category' && next.length > 0) {
+        const offline = String(data.offline || '');
+        const m = offline.match(/drive:([\w-]{20,})/);
+        if (m) {
+          const fileId = m[1];
+          const fileLeaf = String(data.title || 'paper').replace(/[^\w.\- ]+/g, '_').slice(0, 100) + '.pdf';
+          const existing = (data._shortcuts as Record<string, string> | undefined) || {};
+          try {
+            const shortcuts = await syncPaperShortcuts(userId, fileId, fileLeaf, next[0], next, existing);
+            if (Object.keys(shortcuts).length > 0) nextData._shortcuts = shortcuts;
+            else delete nextData._shortcuts;
+          } catch (e) {
+            console.warn('[rewrite-tag] shortcuts:', (e as Error).message);
+          }
+        }
+      }
       await db.update(schema.rows)
         .set({ data: nextData, updatedAt: new Date() })
         .where(eq(schema.rows.id, r.id));

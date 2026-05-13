@@ -26,7 +26,7 @@ import { NextRequest } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { uploadToMinervaDrive, DRIVE_SUBFOLDERS, paperFolderSegments } from '@/lib/drive';
+import { uploadToMinervaDrive, DRIVE_SUBFOLDERS, paperFolderSegments, syncPaperShortcuts } from '@/lib/drive';
 import { notifyTelegram } from '@/lib/telegram';
 import { getServerPref } from '@/lib/server-prefs';
 import { bus } from '@/lib/event-bus';
@@ -251,7 +251,28 @@ async function saveOffline(
   const parts = prevOffline ? prevOffline.split(' · ').filter(Boolean) : [];
   const without = parts.filter((p) => !p.startsWith('drive:'));
   without.push(`drive:${fileId}`);
-  const nextData = { ...data, offline: without.join(' · ') };
+  const nextData: Record<string, unknown> = { ...data, offline: without.join(' · ') };
+
+  // Multi-category papers: drop a shortcut in every non-primary
+  // category folder so the PDF browses in all its tagged folders
+  // without bytes duplication. Preserves any prior shortcut IDs
+  // recorded on row.data._shortcuts and reconciles against the
+  // current category list.
+  if (kind === 'paper') {
+    const cats = String(data.category || '').split(',').map((c) => c.trim()).filter(Boolean);
+    if (cats.length > 1) {
+      try {
+        const fileLeaf = filename.split('/').pop() || filename;
+        const existing = ((data._shortcuts as unknown) as Record<string, string> | undefined) || {};
+        const shortcuts = await syncPaperShortcuts(userId, fileId, fileLeaf, cats[0], cats, existing);
+        if (Object.keys(shortcuts).length > 0) nextData._shortcuts = shortcuts;
+        else delete nextData._shortcuts;
+      } catch (e) {
+        console.warn('[save-offline] shortcuts:', (e as Error).message);
+      }
+    }
+  }
+
   await db.update(schema.rows)
     .set({ data: nextData, updatedAt: new Date() })
     .where(eq(schema.rows.id, row.id));
