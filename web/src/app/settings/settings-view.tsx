@@ -13,6 +13,7 @@ import { ThemeCard } from '@/components/theme-card';
 import { FeedsCard } from '@/components/feeds-card';
 import { BookmarkletCard } from '@/components/bookmarklet-card';
 import { TelegramCard } from '@/components/telegram-card';
+import { NotificationsCard } from '@/components/notifications-card';
 import { BackupCard } from '@/components/backup-card';
 import { IntegrationsCard } from '@/components/integrations-card';
 import { SystemCard } from '@/components/system-card';
@@ -159,6 +160,7 @@ export function SettingsView({
         <FeedsCard />
         <BookmarkletCard />
         <TelegramCard />
+        <NotificationsCard />
         <BackupCard />
       </section>
 

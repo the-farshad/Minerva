@@ -15,6 +15,43 @@ export type ServerEvent =
 
 type Handler = (e: ServerEvent) => void;
 
+const NOTIF_ENABLED_KEY = 'minerva.v2.browserNotifications';
+
+/** Surface a browser Notification for a Minerva event when the
+ *  user has opted in via Settings → Browser notifications AND
+ *  granted OS permission. Background-tab events trigger the OS
+ *  banner; foreground events stay silent (the page UI updates
+ *  via the same SSE handler so a duplicate banner is noise). */
+function maybeShowBrowserNotification(event: ServerEvent) {
+  if (typeof Notification === 'undefined') return;
+  if (Notification.permission !== 'granted') return;
+  try {
+    if (localStorage.getItem(NOTIF_ENABLED_KEY) !== '1') return;
+  } catch { return; }
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
+  let title = 'Minerva';
+  let body = '';
+  if (event.kind === 'row.created') {
+    title = `New in ${event.sectionSlug}`;
+    body = String(event.data?.title || event.data?.name || event.rowId);
+  } else if (event.kind === 'row.updated') {
+    title = `Updated in ${event.sectionSlug}`;
+    body = String(event.data?.title || event.data?.name || event.rowId);
+  } else if (event.kind === 'row.deleted') {
+    title = `Deleted from ${event.sectionSlug}`;
+    body = event.rowId;
+  } else if (event.kind === 'poll.changed') {
+    title = 'Poll updated';
+    body = event.token;
+  } else {
+    return;
+  }
+  try {
+    const n = new Notification(title, { body, icon: '/icon.svg', tag: `minerva-${event.kind}` });
+    setTimeout(() => { try { n.close(); } catch { /* tolerate */ } }, 6000);
+  } catch { /* notification blocked by browser policy — silent */ }
+}
+
 /** Subscribe to the per-user SSE stream once at app mount. The
  *  optional `onEvent` callback fires synchronously for every
  *  event so callers can patch their local state (Kanban list,
@@ -39,6 +76,11 @@ export function useServerEvents(onEvent?: Handler) {
       const dispatch = (raw: MessageEvent) => {
         try {
           const event = JSON.parse(raw.data) as ServerEvent;
+          // Browser notification (background-tab pings) fires
+          // regardless of whether a callback consumed the event,
+          // so the user sees a banner even when the page isn't
+          // doing local-state patching.
+          maybeShowBrowserNotification(event);
           if (onEvent) {
             onEvent(event);
           } else if (event.kind.startsWith('row.')) {

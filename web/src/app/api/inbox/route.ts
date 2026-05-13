@@ -55,9 +55,15 @@ export async function POST(req: NextRequest) {
       notes: '',
     },
   }).returning();
+  // HTML parse-mode + escaped href / link text. Some URLs the
+  // bookmarklet sends contain `_` and `&` which used to silently
+  // 400 the Markdown path; HTML mode is forgiving as long as we
+  // escape <, >, & in the content.
+  const { escapeTelegramHtml: esc } = await import('@/lib/telegram');
+  const label = (body.title || url).slice(0, 80);
   void notifyTelegram(
     userId,
-    `*Inbox:* [${(body.title || url).slice(0, 80)}](${url})`,
+    `<b>Inbox:</b> <a href="${esc(url)}">${esc(label)}</a>`,
   );
   return NextResponse.json({ ok: true, id: created.id }, { headers: CORS });
 }

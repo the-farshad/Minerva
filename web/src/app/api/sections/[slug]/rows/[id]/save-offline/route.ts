@@ -246,9 +246,13 @@ async function saveOffline(
   await db.update(schema.rows)
     .set({ data: nextData, updatedAt: new Date() })
     .where(eq(schema.rows.id, row.id));
+  // HTML parse-mode + escaped dynamic content. Section titles
+  // and filenames routinely contain `_`, `(`, `&` etc. that
+  // would 400 the Markdown path.
+  const { escapeTelegramHtml: esc } = await import('@/lib/telegram');
   void notifyTelegram(
     userId,
-    `*[${sec.title}]* offline copy ready: ${filename}`,
+    `<b>[${esc(sec.title)}]</b> offline copy ready: ${esc(filename)}`,
   );
   return { fileId, kind, filename };
 }
