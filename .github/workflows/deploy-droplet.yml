@@ -78,7 +78,15 @@ jobs:
             "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}" \
             "set -e
              cd /opt/minerva
-             git pull --rebase
+             # Sync to origin/main forcefully — discards any local
+             # edits to tracked files (a one-time sudo sed for a
+             # hot-patch was enough to wedge git pull --rebase with
+             # 'unstaged changes' and silently break every subsequent
+             # CI deploy until someone SSH'd in to discard). Untracked
+             # files (docker-compose.override.yml lives there
+             # intentionally) are preserved by reset --hard.
+             git fetch origin main
+             git reset --hard origin/main
              cd docs
              # Pull any newer minerva-web image that web-publish
              # just pushed to Docker Hub. Capture the local image
