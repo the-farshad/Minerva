@@ -148,16 +148,29 @@ export function GroupedGrid({
     return Array.from(set);
   }, [rows, groupCol]);
 
+  // Only `multiselect(...)` columns get the comma-split-into-N-
+  // groups treatment. Single-valued columns like `playlist`
+  // (where a YouTube playlist literally named "Workout, Cardio"
+  // is one real playlist) keep the whole value as the group key.
+  // Without this guard, a row tagged with such a name showed up
+  // in TWO groups pointing to the same record, and bulk-deleting
+  // either group wiped the underlying row from both.
+  const groupColIsMulti = useMemo(() => {
+    if (!groupCol) return false;
+    const idx = section.schema.headers.indexOf(groupCol);
+    if (idx < 0) return false;
+    return /^multiselect\(/.test(String(section.schema.types?.[idx] || ''));
+  }, [groupCol, section.schema]);
+
   const groups = useMemo(() => {
     const byKey = new Map<string, Row[]>();
     const order: string[] = [];
     for (const r of rows) {
       const raw = groupCol ? String(r.data[groupCol] || '').trim() : '';
-      // Multi-category: a row tagged "method, review" shows up in
-      // BOTH the "method" and "review" groups. Empty / missing →
-      // "(uncategorised)".
       const keys = raw
-        ? raw.split(',').map((s) => s.trim()).filter(Boolean)
+        ? (groupColIsMulti
+            ? raw.split(',').map((s) => s.trim()).filter(Boolean)
+            : [raw])
         : ['(uncategorised)'];
       for (const key of (keys.length ? keys : ['(uncategorised)'])) {
         if (!byKey.has(key)) { byKey.set(key, []); order.push(key); }
@@ -274,9 +287,9 @@ export function GroupedGrid({
         />
       )}
       {section.preset === 'youtube' && (
-        <div className="-mt-2 mb-1 flex items-center gap-2 text-xs text-zinc-500">
-          <span>Section total:</span>
-          <PlaylistProgress rows={rows} />
+        <div className="-mt-1 mb-3 flex flex-col items-center gap-1 text-zinc-500">
+          <span className="text-[10px] uppercase tracking-wide">Section total</span>
+          <PlaylistProgress rows={rows} size="wide" />
         </div>
       )}
       {groupCol && (
@@ -304,7 +317,33 @@ export function GroupedGrid({
         return (
           <section key={key}>
             <header className="mb-2 flex flex-wrap items-center gap-2">
-              <div className="group inline-flex items-center gap-1">
+              {/* Name on the left — double-click to edit (or the
+                * old pencil-button equivalent via dblclick on the
+                * name itself). All the controls below get pushed
+                * to the right via ml-auto. */}
+              {groupCol && key !== '(uncategorised)' ? (
+                <GroupNameEditor
+                  name={key}
+                  count={groupRows.length}
+                  isCollapsed={isCollapsed}
+                  onToggle={() => toggleCollapsed(key)}
+                  onRename={async (to) => {
+                    try {
+                      const r = await fetch(`/api/sections/${section.slug}/rewrite-tag`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ column: groupCol, from: key, to }),
+                      });
+                      const j = (await r.json().catch(() => ({}))) as { rewrote?: number; error?: string };
+                      if (!r.ok) throw new Error(j.error || `rewrite-tag: ${r.status}`);
+                      toast.success(`Renamed "${key}" → "${to}" on ${j.rewrote ?? 0} row${j.rewrote === 1 ? '' : 's'}.`);
+                      router.refresh();
+                    } catch (e) {
+                      notify.error((e as Error).message);
+                    }
+                  }}
+                />
+              ) : (
                 <button
                   type="button"
                   onClick={() => toggleCollapsed(key)}
@@ -314,35 +353,11 @@ export function GroupedGrid({
                   {groupCol ? key : section.title}
                   <span className="text-xs font-normal text-zinc-500">· {groupRows.length}</span>
                 </button>
-                {section.preset === 'youtube' && <PlaylistProgress rows={groupRows} />}
-                {groupCol && key !== '(uncategorised)' && (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const next = await appPrompt(`Rename "${key}"`, { okLabel: 'Rename', initial: key });
-                      const to = (next || '').trim();
-                      if (!to || to === key) return;
-                      try {
-                        const r = await fetch(`/api/sections/${section.slug}/rewrite-tag`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ column: groupCol, from: key, to }),
-                        });
-                        const j = (await r.json().catch(() => ({}))) as { rewrote?: number; error?: string };
-                        if (!r.ok) throw new Error(j.error || `rewrite-tag: ${r.status}`);
-                        toast.success(`Renamed "${key}" → "${to}" on ${j.rewrote ?? 0} row${j.rewrote === 1 ? '' : 's'}.`);
-                        router.refresh();
-                      } catch (e) {
-                        notify.error((e as Error).message);
-                      }
-                    }}
-                    title={`Rename "${key}" (updates every row in this group)`}
-                    className="opacity-0 transition group-hover:opacity-70 hover:!opacity-100"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+              )}
+              {section.preset === 'youtube' && (
+                <div className="ml-2"><PlaylistProgress rows={groupRows} /></div>
+              )}
+              <div className="ml-auto flex flex-wrap items-center gap-1">
               {groupCol && (
                 <>
                   <select
@@ -571,6 +586,7 @@ export function GroupedGrid({
                   )}
                 </>
               )}
+              </div>
             </header>
             {!isCollapsed && (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
@@ -671,7 +687,78 @@ function WatchedBar({ row }: { row: Row }) {
 /** Aggregate progress across a playlist group — sums duration and
  * watched seconds across all videos, renders one bar + a "x of y"
  * caption. Hidden when no row carries a duration. */
-function PlaylistProgress({ rows }: { rows: Row[] }) {
+/** Double-click-to-edit group name. Renders the name as plain
+ *  text; on dblclick swaps in a borderless input with only a
+ *  bottom border — the iOS-Notes "lined" look — so it reads as
+ *  something you can write into. Enter / blur commits via the
+ *  same rewrite-tag endpoint the old pencil-icon button used;
+ *  Escape discards. */
+function GroupNameEditor({
+  name, onRename, isCollapsed, onToggle, count,
+}: {
+  name: string;
+  onRename: (next: string) => void | Promise<void>;
+  isCollapsed: boolean;
+  onToggle: () => void;
+  count: number;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  useEffect(() => { setDraft(name); }, [name]);
+  const cancelled = useRef(false);
+
+  if (editing) {
+    return (
+      <div className="inline-flex items-center gap-1">
+        <button type="button" onClick={onToggle} className="text-zinc-500" tabIndex={-1}>
+          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </button>
+        <input
+          autoFocus
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={() => {
+            setEditing(false);
+            if (cancelled.current) { cancelled.current = false; setDraft(name); return; }
+            const t = draft.trim();
+            if (t && t !== name) void onRename(t);
+            else setDraft(name);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+            if (e.key === 'Escape') { cancelled.current = true; (e.target as HTMLInputElement).blur(); }
+          }}
+          className="border-0 border-b border-zinc-400 bg-transparent px-0.5 py-0 text-sm font-medium focus:border-zinc-900 focus:outline-none focus:ring-0 dark:border-zinc-500 dark:focus:border-zinc-100"
+          style={{ minWidth: '6ch', width: `${Math.max(8, draft.length + 1)}ch` }}
+        />
+        <span className="text-xs font-normal text-zinc-500">· {count}</span>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="group inline-flex items-center gap-1"
+      onDoubleClick={() => setEditing(true)}
+      title="Double-click to rename"
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="inline-flex items-center gap-1 text-sm font-medium"
+      >
+        {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        <span className="border-b border-transparent group-hover:border-zinc-300 dark:group-hover:border-zinc-700">
+          {name}
+        </span>
+        <span className="text-xs font-normal text-zinc-500">· {count}</span>
+      </button>
+    </div>
+  );
+}
+
+function PlaylistProgress({ rows, size = 'chip' }: { rows: Row[]; size?: 'chip' | 'wide' }) {
   let totalDur = 0;
   let totalWatched = 0;
   let known = 0;
@@ -690,13 +777,26 @@ function PlaylistProgress({ rows }: { rows: Row[] }) {
     const m = Math.floor((s % 3600) / 60);
     return h > 0 ? `${h}h${m}m` : `${m}m`;
   };
+  const fill = pct >= 0.95 ? 'bg-emerald-500' : pct >= 0.5 ? 'bg-amber-500' : 'bg-blue-500';
+  // Two presentations from the same data: an inline chip (per
+  // group header) and a wider strip used for the section total.
+  if (size === 'wide') {
+    return (
+      <div className="flex w-full max-w-md flex-col gap-1.5 text-xs text-zinc-600 dark:text-zinc-400" title={`${known} of ${rows.length} videos have durations`}>
+        <div className="flex items-center justify-between">
+          <span className="font-medium tracking-wide">{mm(totalWatched)} watched</span>
+          <span className="font-mono text-[10px] text-zinc-500">of {mm(totalDur)} · {Math.round(pct * 100)}%</span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+          <div className={`h-full ${fill} transition-[width] duration-300`} style={{ width: `${pct * 100}%` }} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-1.5 text-[10px] text-zinc-500" title={`${known} of ${rows.length} videos have durations`}>
       <div className="h-1 w-24 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-        <div
-          className={pct >= 0.95 ? 'h-full bg-emerald-500' : pct >= 0.5 ? 'h-full bg-amber-500' : 'h-full bg-blue-500'}
-          style={{ width: `${pct * 100}%` }}
-        />
+        <div className={`h-full ${fill}`} style={{ width: `${pct * 100}%` }} />
       </div>
       <span>{mm(totalWatched)} / {mm(totalDur)}</span>
     </div>

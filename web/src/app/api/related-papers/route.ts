@@ -44,7 +44,12 @@ export async function GET(req: NextRequest) {
       : await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
 
     if (res.ok) {
-      return NextResponse.json({ papers: res.papers, resolvedVia: res.resolvedVia, provider });
+      return NextResponse.json({
+        papers: res.papers,
+        resolvedVia: res.resolvedVia,
+        dropped: 'dropped' in res ? res.dropped : 0,
+        provider,
+      });
     }
     return NextResponse.json(
       { error: res.error, rateLimited: res.rateLimited, provider },

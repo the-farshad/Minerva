@@ -45,6 +45,7 @@ export function RelatedView({
   const [papers, setPapers] = useState<Paper[] | null>(null);
   const [provider, setProvider] = useState<string>('openalex');
   const [resolvedVia, setResolvedVia] = useState<string>('');
+  const [dropped, setDropped] = useState<number>(0);
   const [err, setErr] = useState<string | null>(null);
   const [switchingProvider, setSwitchingProvider] = useState(false);
   const [q, setQ] = useState('');
@@ -89,7 +90,8 @@ export function RelatedView({
       if (seedRef) params.set('ref', seedRef);
       if (seedTitle) params.set('title', seedTitle);
       const r2 = await fetch(`/api/related-papers?${params.toString()}`);
-      const j = (await r2.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string };
+      const j = (await r2.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string; dropped?: number };
+      setDropped(j.dropped ?? 0);
       if (j.provider) setProvider(j.provider);
       if (j.resolvedVia) setResolvedVia(j.resolvedVia);
       if (!r2.ok) throw new Error(j.error || `Recommendations: ${r2.status}`);
@@ -135,10 +137,11 @@ export function RelatedView({
         if (seedRef) params.set('ref', seedRef);
         if (seedTitle) params.set('title', seedTitle);
         const r = await fetch(`/api/related-papers?${params.toString()}`);
-        const j = (await r.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string };
+        const j = (await r.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string; dropped?: number };
         if (cancelled) return;
         if (j.provider) setProvider(j.provider);
         if (j.resolvedVia) setResolvedVia(j.resolvedVia);
+        setDropped(j.dropped ?? 0);
         if (!r.ok) throw new Error(j.error || `Recommendations: ${r.status}`);
         setPapers(j.papers || []);
       } catch (e) {
@@ -261,11 +264,19 @@ export function RelatedView({
       <header className="mb-4 flex items-start gap-3">
         <Network className="mt-1 h-5 w-5 shrink-0 text-zinc-500" />
         <div className="flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="text-xs uppercase tracking-wide text-zinc-500">Related papers</div>
             {papers && (
               <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" title={`Resolved via ${resolvedVia || 'ref'}`}>
                 {provider === 'semanticscholar' ? 'Semantic Scholar' : 'OpenAlex'}
+              </span>
+            )}
+            {papers && dropped > 0 && (
+              <span
+                className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] tracking-wide text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                title="Some related-work IDs OpenAlex pointed at are no longer resolvable — typically deindexed papers"
+              >
+                {papers.length} readable · {dropped} dropped
               </span>
             )}
           </div>
@@ -595,17 +606,31 @@ export function RelatedView({
             >
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
-                  {url ? (
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noopener"
-                      className="text-sm font-medium hover:underline"
-                    >
-                      {p.title || '(untitled)'}
-                    </a>
+                  {p.title ? (
+                    url ? (
+                      <a href={url} target="_blank" rel="noopener" className="text-sm font-medium hover:underline">
+                        {p.title}
+                      </a>
+                    ) : (
+                      <span className="text-sm font-medium">{p.title}</span>
+                    )
                   ) : (
-                    <span className="text-sm font-medium">{p.title || '(untitled)'}</span>
+                    /* Untitled — OpenAlex sometimes has a record
+                       with no `title` field. Surface the paperId
+                       so the user can still recognise it (and
+                       follow the link) instead of seeing a wall
+                       of "(untitled)" entries that look broken. */
+                    url ? (
+                      <a href={url} target="_blank" rel="noopener" className="text-sm italic text-zinc-500 hover:underline dark:text-zinc-400">
+                        Untitled work
+                        {p.paperId && <span className="ml-1 font-mono text-[10px] text-zinc-400">{p.paperId}</span>}
+                      </a>
+                    ) : (
+                      <span className="text-sm italic text-zinc-500 dark:text-zinc-400">
+                        Untitled work
+                        {p.paperId && <span className="ml-1 font-mono text-[10px] text-zinc-400">{p.paperId}</span>}
+                      </span>
+                    )
                   )}
                   <div className="mt-0.5 text-[11px] text-zinc-500">
                     {authors}

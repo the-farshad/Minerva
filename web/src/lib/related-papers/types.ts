@@ -27,7 +27,7 @@ export type RelatedPaper = {
 };
 
 export type RelatedResult =
-  | { ok: true; papers: RelatedPaper[]; resolvedVia: 'ref' | 'title' }
+  | { ok: true; papers: RelatedPaper[]; resolvedVia: 'ref' | 'title'; dropped?: number }
   | { ok: false; status: number; error: string; rateLimited?: boolean };
 
 export function parseRef(ref: string | null): ResolvedRef | null {

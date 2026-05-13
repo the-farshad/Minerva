@@ -174,7 +174,13 @@ export async function fetchRelatedFromOpenAlex(opts: {
       return null;
     }
   });
-  const works = (await Promise.all(lookups)).filter((w): w is OAWork => w != null);
+  const raw = await Promise.all(lookups);
+  const works = raw.filter((w): w is OAWork => w != null);
   const papers = works.map(workToPaper);
-  return { ok: true, papers, resolvedVia: opts.ref ? 'ref' : 'title' };
+  // Number of related_works[] pointers that didn't resolve to a
+  // live OpenAlex record on this fetch. Surfaced so the UI can
+  // tell the user "20 found, 18 readable" instead of pretending
+  // the list is complete.
+  const dropped = raw.length - works.length;
+  return { ok: true, papers, resolvedVia: opts.ref ? 'ref' : 'title', dropped };
 }

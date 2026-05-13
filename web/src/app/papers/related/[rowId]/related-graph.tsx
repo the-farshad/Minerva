@@ -32,6 +32,10 @@ type GraphNode = {
   // d3-force sets these post-mount; the lib mutates the original
   // object so we never read them, just declare for the types.
   x?: number; y?: number;
+  // fy is honored by d3-force as a vertical anchor; we set it
+  // when the user turns Year-axis layout on so nodes lay out
+  // along a timeline.
+  fy?: number;
 };
 
 type GraphLink = { source: string; target: string; weight: number };
@@ -62,43 +66,76 @@ export function RelatedGraph({
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 540 });
   const [focused, setFocused] = useState<Paper | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [yearAxis, setYearAxis] = useState(false);
 
   // Resize the canvas to the container so the layout fills its
-  // wrapper and stays sharp across reflows.
+  // wrapper and stays sharp across reflows. Fullscreen mode uses
+  // the entire viewport.
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
     const sync = () => {
       const rect = el.getBoundingClientRect();
-      setSize({ w: rect.width, h: Math.max(360, rect.width * 0.6) });
+      setSize({ w: rect.width, h: rect.height });
     };
     sync();
     const ro = new ResizeObserver(sync);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [fullscreen]);
 
-  /** Nodes: seed + every related paper. Links: bibliographic-
-   *  coupling edges (papers sharing references → linked, weight =
-   *  shared count). Every related paper also gets a faint seed
-   *  link so disconnected nodes still anchor to the centre. */
+  // Escape exits fullscreen mode for keyboard users.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
+
+  /** Year axis: when enabled, fix each node's vertical position
+   *  proportional to publication year — newest at the top, oldest
+   *  at the bottom, seed pinned to the centre y. d3-force respects
+   *  the `fy` field, so the simulation just lays out x freely and
+   *  the graph reads as a timeline along y. */
+  const yearBounds = useMemo(() => {
+    const years = papers.map((p) => p.year || 0).filter((y) => y > 0);
+    if (years.length === 0) return { min: 0, max: 0 };
+    return { min: Math.min(...years), max: Math.max(...years) };
+  }, [papers]);
+
   const graphData = useMemo(() => {
+    // Vertical lane height per node — tuned to the current canvas
+    // size so the timeline doesn't crash into the toolbar in
+    // small layouts. When year-axis is off, no fy is set and
+    // d3-force lays out freely.
+    const laneH = Math.max(240, size.h - 40);
+    const yFor = (year: number | undefined): number | undefined => {
+      if (!yearAxis) return undefined;
+      if (!year || yearBounds.max === yearBounds.min) return 0;
+      const t = (year - yearBounds.min) / (yearBounds.max - yearBounds.min);
+      // t = 0 → oldest → bottom; t = 1 → newest → top.
+      return (0.5 - t) * laneH;
+    };
     const nodes: GraphNode[] = [
       {
         id: '__seed__',
         label: seedTitle.length > 60 ? seedTitle.slice(0, 57) + '…' : seedTitle,
         isSeed: true,
         refCount: papers.length,
+        ...(yearAxis ? { fy: yFor(Number(seedYear)) ?? 0 } : {}),
       },
     ];
     for (const p of papers) {
       const id = paperKey(p);
       if (!id) continue;
+      const fy = yFor(p.year);
       nodes.push({
         id,
         label: (p.title || '').length > 50 ? (p.title || '').slice(0, 47) + '…' : (p.title || ''),
         paper: p,
         refCount: p.referencedWorks?.length || 0,
+        ...(fy !== undefined ? { fy } : {}),
       });
     }
     const links: GraphLink[] = [];
@@ -225,12 +262,52 @@ export function RelatedGraph({
     );
   }
 
+  // Layout — fullscreen mode pins to the viewport, otherwise the
+  // canvas occupies a fixed-ratio strip in the page flow.
+  const outerClass = fullscreen
+    ? 'fixed inset-0 z-50 flex flex-col bg-white dark:bg-zinc-950'
+    : 'relative';
+  const containerStyle = fullscreen
+    ? { height: 'calc(100vh - 3rem)' }
+    : { height: Math.max(360, size.w * 0.6) };
+
   return (
-    <div className="relative">
+    <div className={outerClass}>
+      {/* Tool strip — fullscreen toggle + year-axis toggle. In
+        * fullscreen we add a small header strip so the user has
+        * a clear "exit" affordance. */}
+      <div className={`mb-2 flex flex-wrap items-center gap-2 ${fullscreen ? 'border-b border-zinc-200 px-4 py-2 dark:border-zinc-800' : ''}`}>
+        <button
+          type="button"
+          onClick={() => setYearAxis((v) => !v)}
+          aria-pressed={yearAxis}
+          title="Lay out nodes vertically by publication year"
+          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition ${
+            yearAxis
+              ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+              : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800'
+          }`}
+        >
+          {yearAxis ? '🗓 Year axis on' : '🗓 Year axis'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setFullscreen((v) => !v)}
+          title={fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        </button>
+        {fullscreen && (
+          <span className="ml-auto text-[10px] text-zinc-500">Press Esc to exit</span>
+        )}
+      </div>
       <div
         ref={containerRef}
-        className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
-        style={{ height: size.h }}
+        className={fullscreen
+          ? 'flex-1 overflow-hidden bg-zinc-50 dark:bg-zinc-900'
+          : 'overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900'}
+        style={containerStyle}
       >
         <ForceGraph2D
           width={size.w}
