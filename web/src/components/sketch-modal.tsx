@@ -46,6 +46,7 @@ import { createPortal } from 'react-dom';
 import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
+  ChevronLeft, ChevronRight, Plus as PlusIcon, FileX,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
@@ -85,6 +86,31 @@ const PALETTE = [
 type Point = { x: number; y: number; w: number };
 type Stroke = { tool: Tool; color: string; alpha: number; points: Point[] };
 
+/** Multi-page document model. Each page holds its own stroke
+ *  history + optional background image; the editor flips between
+ *  pages by changing `pageIndex`, with `strokesRef` / `bgImageRef`
+ *  aliased to the current page's slots. */
+type SketchPage = { strokes: Stroke[]; bg: HTMLImageElement | null };
+
+/** Paper format presets — affect the PDF export dimensions only.
+ *  The on-screen canvas always fills the viewport regardless of
+ *  format so the user gets maximum drawing area; `auto` exports
+ *  at the actual canvas dimensions instead of forcing a standard
+ *  paper aspect ratio. */
+type PageFormat = 'auto' | 'a4-portrait' | 'a4-landscape' | 'letter-portrait' | 'letter-landscape' | 'square';
+
+const PAGE_FORMATS: { id: PageFormat; label: string; pxW: number; pxH: number }[] = [
+  // pxW/pxH are CSS-px dimensions used for the PDF page size; the
+  // SVG export uses them verbatim. Roughly 96 dpi so a 595x842 A4
+  // page exports at print-typical scale.
+  { id: 'auto',             label: 'Auto (canvas)',  pxW: 0,   pxH: 0   },
+  { id: 'a4-portrait',      label: 'A4 portrait',    pxW: 595, pxH: 842 },
+  { id: 'a4-landscape',     label: 'A4 landscape',   pxW: 842, pxH: 595 },
+  { id: 'letter-portrait',  label: 'Letter portrait', pxW: 612, pxH: 792 },
+  { id: 'letter-landscape', label: 'Letter landscape', pxW: 792, pxH: 612 },
+  { id: 'square',           label: 'Square',         pxW: 720, pxH: 720 },
+];
+
 function getToolSpec(t: Tool): ToolSpec {
   return TOOLS.find((x) => x.id === t) ?? TOOLS[0];
 }
@@ -109,7 +135,13 @@ export function SketchModal({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const strokesRef = useRef<Stroke[]>([]);
+  /** Source of truth for the document. Each page owns its own stroke
+   *  history; `strokesRef` and `bgImageRef` below are kept as aliases
+   *  into the current page so the rest of the file (which already
+   *  reads / mutates those refs in dozens of places) doesn't have to
+   *  thread a page index through every callsite. */
+  const pagesRef = useRef<SketchPage[]>([{ strokes: [], bg: null }]);
+  const strokesRef = useRef<Stroke[]>(pagesRef.current[0].strokes);
   const redoRef = useRef<Stroke[]>([]);
   const drawingRef = useRef<Stroke | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
@@ -125,6 +157,13 @@ export function SketchModal({
   const [uploading, setUploading] = useState(false);
   const [debug, setDebug] = useState('idle');
   const [, force] = useState(0);
+  /** Which page is currently visible / drawn into. `pageCount`
+   *  mirrors `pagesRef.current.length` for the UI to rerender when
+   *  pages are added / removed (pagesRef itself is a ref so React
+   *  doesn't see length changes). */
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageCount, setPageCount] = useState(1);
+  const [pageFormat, setPageFormat] = useState<PageFormat>('auto');
 
   /* Mount marker for createPortal — typeof document is undefined
    * during SSR; we only render the portal on the client tick. */
@@ -155,6 +194,26 @@ export function SketchModal({
     };
   }, [open]);
 
+  /* Sync the strokesRef / bgImageRef aliases to the current page
+   * whenever pageIndex changes. The rest of the file (pointer
+   * handlers, undo/redo/clear, save/export, debug strip) reads
+   * those refs directly, so this single effect is the only place
+   * page-switching logic needs to live. Resets redo history on
+   * switch — redo doesn't cross page boundaries. */
+  useEffect(() => {
+    if (!open) return;
+    const page = pagesRef.current[pageIndex];
+    if (!page) return;
+    strokesRef.current = page.strokes;
+    bgImageRef.current = page.bg;
+    redoRef.current = [];
+    drawingRef.current = null;
+    activeInputRef.current = null;
+    redraw();
+    force((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageIndex, open]);
+
   /* Canvas size, DPR, redraw on open + seed image load. */
   useEffect(() => {
     if (!open) return;
@@ -162,7 +221,15 @@ export function SketchModal({
     const wrap = wrapRef.current;
     if (!c || !wrap) return;
 
-    strokesRef.current = [];
+    // Reset the document to a fresh single page on open. The
+    // multi-page state is in-memory only; closing + reopening
+    // starts from a single blank page (or the seed background
+    // loaded into page 0 below).
+    pagesRef.current = [{ strokes: [], bg: null }];
+    setPageCount(1);
+    setPageIndex(0);
+    setPageFormat('auto');
+    strokesRef.current = pagesRef.current[0].strokes;
     redoRef.current = [];
     bgImageRef.current = null;
     drawingRef.current = null;
@@ -203,7 +270,16 @@ export function SketchModal({
             blobUrl = src;
           }
           const img = new Image();
-          img.onload = () => { bgImageRef.current = img; redraw(); force((n) => n + 1); };
+          img.onload = () => {
+            // Seed lives on page 0 — owned by the page so switching
+            // pages and back restores it cleanly via the alias-sync
+            // effect. Page 0 is also the current page on open, so
+            // mirror to bgImageRef now for immediate redraw.
+            pagesRef.current[0].bg = img;
+            bgImageRef.current = img;
+            redraw();
+            force((n) => n + 1);
+          };
           img.onerror = () => { bgImageRef.current = null; force((n) => n + 1); };
           img.src = src;
         } catch {
@@ -476,11 +552,50 @@ export function SketchModal({
     force((n) => n + 1);
   }
   function clearAll() {
-    strokesRef.current = [];
-    redoRef.current = [];
+    // Mutate in place so the alias from pagesRef stays bound — a
+    // fresh [] would orphan the page object's strokes array and
+    // subsequent pushes would land in the alias-only array,
+    // disappearing on the next page switch.
+    strokesRef.current.length = 0;
+    redoRef.current.length = 0;
     drawingRef.current = null;
     redraw();
     force((n) => n + 1);
+  }
+
+  // ----- Multi-page navigation ----------------------------------
+
+  /** Commit any in-flight stroke to the page before switching so a
+   *  partially-drawn line isn't lost on a page change mid-gesture. */
+  function commitInFlight() {
+    if (drawingRef.current) {
+      strokesRef.current.push(drawingRef.current);
+      drawingRef.current = null;
+    }
+  }
+  function goToPage(idx: number) {
+    if (idx < 0 || idx >= pagesRef.current.length) return;
+    commitInFlight();
+    setPageIndex(idx);
+  }
+  function addPage() {
+    commitInFlight();
+    pagesRef.current.push({ strokes: [], bg: null });
+    setPageCount(pagesRef.current.length);
+    setPageIndex(pagesRef.current.length - 1);
+  }
+  function deleteCurrentPage() {
+    if (pagesRef.current.length <= 1) {
+      // Last page — clear it instead of removing the document.
+      clearAll();
+      return;
+    }
+    commitInFlight();
+    pagesRef.current.splice(pageIndex, 1);
+    setPageCount(pagesRef.current.length);
+    // Stay on the same visual slot, or step back if we deleted the
+    // last page. The alias-sync effect handles the rebind.
+    setPageIndex(Math.max(0, Math.min(pageIndex, pagesRef.current.length - 1)));
   }
 
   // Cmd-Z / Cmd-Shift-Z / Esc keyboard shortcuts.
@@ -544,7 +659,20 @@ export function SketchModal({
         const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
         onSaved(url, name);
       }
-      toast.success('Sketch saved.');
+      // Save persists ONLY the visible canvas (current page) as a
+      // PNG. If the user has drawn on other pages too, surface a
+      // toast so they know to use Export → PDF for the multi-page
+      // version. Single-page workflow (the common case) is
+      // unaffected.
+      const otherPagesWithContent = pagesRef.current.reduce(
+        (n, p, i) => n + (i !== pageIndex && (p.strokes.length > 0 || !!p.bg) ? 1 : 0),
+        0,
+      );
+      if (otherPagesWithContent > 0) {
+        toast.success(`Sketch saved (current page only — ${otherPagesWithContent} other page${otherPagesWithContent === 1 ? '' : 's'} in this document; use Export → PDF for all).`);
+      } else {
+        toast.success('Sketch saved.');
+      }
       clearAll();
       onClose();
     } catch (e) {
@@ -596,65 +724,124 @@ export function SketchModal({
   }
 
   async function exportPdf() {
-    if (strokesRef.current.length === 0 && !bgImageRef.current) {
+    const totalPages = pagesRef.current.length;
+    const hasAnything = pagesRef.current.some((p) => p.strokes.length > 0 || p.bg);
+    if (!hasAnything) {
       notify.error('Sketch is empty.'); return;
     }
-    const { w, h } = canvasSizeCss();
-    const pdf = new jsPDF({ orientation: w >= h ? 'l' : 'p', unit: 'px', format: [w, h], hotfixes: ['px_scaling'] });
-    if (bgImageRef.current) {
-      try {
-        const off = document.createElement('canvas');
-        off.width = bgImageRef.current.naturalWidth;
-        off.height = bgImageRef.current.naturalHeight;
-        const octx = off.getContext('2d');
-        if (octx) {
-          octx.drawImage(bgImageRef.current, 0, 0);
-          const dataUrl = off.toDataURL('image/png');
-          const iw = bgImageRef.current.naturalWidth;
-          const ih = bgImageRef.current.naturalHeight;
-          const r = Math.min(w / iw, h / ih);
-          pdf.addImage(dataUrl, 'PNG', (w - iw * r) / 2, (h - ih * r) / 2, iw * r, ih * r);
-        }
-      } catch { /* skip */ }
-    }
+    // PDF dimensions: when the user picked a standard paper format
+    // every page gets those dimensions; `auto` uses the current
+    // canvas aspect ratio (back-compat with the single-page flow).
+    const { w: canvasW, h: canvasH } = canvasSizeCss();
+    const fmt = PAGE_FORMATS.find((f) => f.id === pageFormat) ?? PAGE_FORMATS[0];
+    const pageW = fmt.pxW > 0 ? fmt.pxW : canvasW;
+    const pageH = fmt.pxH > 0 ? fmt.pxH : canvasH;
+    const pdf = new jsPDF({
+      orientation: pageW >= pageH ? 'l' : 'p',
+      unit: 'px',
+      format: [pageW, pageH],
+      hotfixes: ['px_scaling'],
+    });
     pdf.setLineCap('round'); pdf.setLineJoin('round');
-    for (const s of strokesRef.current) {
-      if (s.points.length === 0) continue;
-      const avg = s.points.reduce((a, p) => a + p.w, 0) / s.points.length;
-      const stroke = s.tool === 'eraser' ? '#ffffff' : s.color;
-      pdf.setDrawColor(stroke);
-      pdf.setLineWidth(avg);
-      if (s.points.length === 1) {
-        const p = s.points[0];
-        pdf.setFillColor(stroke);
-        pdf.circle(p.x, p.y, avg / 2, 'F');
-        continue;
+
+    // Each page from pagesRef becomes a PDF page. Strokes were
+    // drawn against the canvas coordinate system (canvasW x canvasH);
+    // scale them to the PDF page so the layout reads the same.
+    const sx = pageW / canvasW;
+    const sy = pageH / canvasH;
+    for (let i = 0; i < totalPages; i++) {
+      if (i > 0) pdf.addPage([pageW, pageH], pageW >= pageH ? 'l' : 'p');
+      const page = pagesRef.current[i];
+      if (page.bg) {
+        try {
+          const off = document.createElement('canvas');
+          off.width = page.bg.naturalWidth;
+          off.height = page.bg.naturalHeight;
+          const octx = off.getContext('2d');
+          if (octx) {
+            octx.drawImage(page.bg, 0, 0);
+            const dataUrl = off.toDataURL('image/png');
+            const iw = page.bg.naturalWidth;
+            const ih = page.bg.naturalHeight;
+            const r = Math.min(pageW / iw, pageH / ih);
+            pdf.addImage(dataUrl, 'PNG', (pageW - iw * r) / 2, (pageH - ih * r) / 2, iw * r, ih * r);
+          }
+        } catch { /* skip */ }
       }
-      const lines: [number, number][] = [];
-      for (let i = 1; i < s.points.length; i++) {
-        lines.push([s.points[i].x - s.points[i - 1].x, s.points[i].y - s.points[i - 1].y]);
+      for (const s of page.strokes) {
+        if (s.points.length === 0) continue;
+        const avg = s.points.reduce((a, p) => a + p.w, 0) / s.points.length;
+        const stroke = s.tool === 'eraser' ? '#ffffff' : s.color;
+        pdf.setDrawColor(stroke);
+        pdf.setLineWidth(avg * Math.max(sx, sy));
+        if (s.points.length === 1) {
+          const p = s.points[0];
+          pdf.setFillColor(stroke);
+          pdf.circle(p.x * sx, p.y * sy, (avg / 2) * Math.max(sx, sy), 'F');
+          continue;
+        }
+        const lines: [number, number][] = [];
+        for (let k = 1; k < s.points.length; k++) {
+          lines.push([(s.points[k].x - s.points[k - 1].x) * sx, (s.points[k].y - s.points[k - 1].y) * sy]);
+        }
+        pdf.lines(lines, s.points[0].x * sx, s.points[0].y * sy, [1, 1], 'S');
       }
-      pdf.lines(lines, s.points[0].x, s.points[0].y, [1, 1], 'S');
     }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     pdf.save(`sketch-${stamp}.pdf`);
-    toast.success('PDF downloaded.');
+    toast.success(`PDF downloaded (${totalPages} page${totalPages === 1 ? '' : 's'}, ${fmt.label}).`);
   }
 
   if (!mounted || !open) return null;
 
   const activeSpec = getToolSpec(tool);
   const effectiveWidth = widthOverride ?? (activeSpec.minWidth + activeSpec.maxWidth) / 2;
-  const hasContent = strokesRef.current.length > 0 || !!bgImageRef.current;
+  // Save/Export are enabled when ANY page has content — multi-page
+  // PDF export ships whatever pages have strokes or a background.
+  const hasContent = pagesRef.current.some((p) => p.strokes.length > 0 || !!p.bg);
 
   return createPortal(
     <div
       className="pointer-events-auto fixed inset-0 z-[80] flex flex-col bg-zinc-50 dark:bg-zinc-950"
       style={{ pointerEvents: 'auto' }}
     >
-      {/* Top bar: title + Undo/Redo/Clear/Save/Export/Close ----- */}
+      {/* Top bar: title + page-nav + Undo/Redo/Clear/Save/Export/Close */}
       <header className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
         <strong className="text-sm">Sketch</strong>
+        {/* Page navigator: prev / [n of m] / next / add. Sits next
+          * to the title so the page state reads immediately; the
+          * "+" button adds a blank page after the current one. The
+          * Trash chip removes the current page (or clears the last
+          * remaining page in place). */}
+        <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-1 py-0.5 text-[11px] dark:bg-zinc-800">
+          <SketchIconButton
+            label="Previous page"
+            icon={<ChevronLeft className="h-3.5 w-3.5" />}
+            disabled={pageIndex === 0 || uploading}
+            onActivate={() => goToPage(pageIndex - 1)}
+          />
+          <span className="select-none font-mono text-[10px] text-zinc-500" title={`Page ${pageIndex + 1} of ${pageCount}`}>
+            {pageIndex + 1} / {pageCount}
+          </span>
+          <SketchIconButton
+            label="Next page"
+            icon={<ChevronRight className="h-3.5 w-3.5" />}
+            disabled={pageIndex >= pageCount - 1 || uploading}
+            onActivate={() => goToPage(pageIndex + 1)}
+          />
+          <SketchIconButton
+            label="Add page"
+            icon={<PlusIcon className="h-3.5 w-3.5" />}
+            disabled={uploading}
+            onActivate={addPage}
+          />
+          <SketchIconButton
+            label="Delete this page"
+            icon={<FileX className="h-3.5 w-3.5" />}
+            disabled={uploading}
+            onActivate={deleteCurrentPage}
+          />
+        </div>
         <div className="ml-auto flex flex-wrap items-center gap-1">
           <SketchIconButton
             label="Undo (⌘Z)"
@@ -827,6 +1014,23 @@ export function SketchModal({
           />
           <span className="w-7 font-mono text-[10px] text-zinc-500">{effectiveWidth.toFixed(1)}</span>
         </div>
+        {/* Paper format — affects PDF export dimensions only. The
+          * canvas itself always fills the viewport so the user gets
+          * max drawing room regardless of choice. `auto` exports at
+          * the actual canvas size (back-compat with the single-page
+          * default). */}
+        <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Paper format used when exporting to PDF">
+          <span>Paper</span>
+          <select
+            value={pageFormat}
+            onChange={(e) => setPageFormat(e.target.value as PageFormat)}
+            className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            {PAGE_FORMATS.map((f) => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+        </label>
       </footer>
     </div>,
     document.body,
