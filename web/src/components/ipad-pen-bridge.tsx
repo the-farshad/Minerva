@@ -92,34 +92,46 @@ export function IpadPenBridge() {
       if (dist > TAP_MAX_DISTANCE) return;
       if (dur > TAP_MAX_DURATION) return;
 
-      const downTarget = p.target;
-      // Skip canvases / contenteditable — those want raw pointer
-      // input, not a synthesized click.
-      if (downTarget.closest('canvas, [contenteditable="true"], [contenteditable=""]')) return;
-      // Find the nearest clickable ancestor — buttons, links, role,
-      // form controls. Bare divs aren't synthesized.
-      const clickable = downTarget.closest(
-        'button, a[href], [role="button"], [role="menuitem"], [role="tab"], [role="option"], [role="switch"], [role="checkbox"], [role="radio"], summary, label[for], input[type="checkbox"], input[type="radio"], input[type="submit"], input[type="button"], input[type="file"], select',
-      ) as HTMLElement | null;
-      if (!clickable) return;
-      if ((clickable as HTMLButtonElement).disabled) return;
-      if (clickable.getAttribute('aria-disabled') === 'true') return;
+      const downTarget = p.target as HTMLElement;
+      // Skip surfaces that read raw pointer input directly — canvases
+      // (drawing), contenteditable (caret placement), range/color
+      // inputs (drag-to-value), and file inputs (the browser already
+      // gestures-a-click into them on touch). Also skip text inputs
+      // and textareas — they focus on tap natively; firing a synthetic
+      // click does nothing useful and may interfere with selection.
+      if (
+        downTarget.closest(
+          'canvas, [contenteditable="true"], [contenteditable=""], [data-pen-bridge="off"], input[type="range"], input[type="color"], input[type="text"], input[type="number"], input[type="email"], input[type="password"], input[type="search"], input[type="url"], input[type="tel"], textarea',
+        )
+      ) return;
+
+      // Walk up checking for any disabled ancestor. If the user tapped
+      // inside a disabled button (or anything with aria-disabled), the
+      // tap should be inert — same as a mouse click on the same
+      // element. Important because dispatchEvent bypasses the
+      // browser's own disabled-button suppression.
+      let cur: Element | null = downTarget;
+      while (cur && cur !== document.body) {
+        if ((cur as HTMLButtonElement).disabled) return;
+        if (cur.getAttribute && cur.getAttribute('aria-disabled') === 'true') return;
+        cur = cur.parentElement;
+      }
 
       // Wait briefly to see if the browser fires its own click. If
-      // so, do nothing. If not, synthesize one.
-      const downTargetAtSchedule = clickable;
+      // it does (the gesture stayed inside Safari's click-vs-drag
+      // threshold), our work is done. If not, synthesize one on the
+      // original target. Click events bubble, so whichever ancestor
+      // has the actual onClick / onPointerUp handler will get it.
       setTimeout(() => {
         if (
           recentRealClickTarget &&
-          (recentRealClickTarget === downTargetAtSchedule ||
-            downTargetAtSchedule.contains(recentRealClickTarget) ||
-            recentRealClickTarget.contains(downTargetAtSchedule)) &&
+          (recentRealClickTarget === downTarget ||
+            downTarget.contains(recentRealClickTarget) ||
+            recentRealClickTarget.contains(downTarget)) &&
           Date.now() - recentRealClickAt < 200
         ) {
           return;
         }
-        // Synthesize. Use MouseEvent so React's synthetic-event
-        // delegation picks it up correctly.
         const evt = new MouseEvent('click', {
           bubbles: true,
           cancelable: true,
@@ -128,7 +140,7 @@ export function IpadPenBridge() {
           clientY: e.clientY,
           button: 0,
         });
-        downTargetAtSchedule.dispatchEvent(evt);
+        downTarget.dispatchEvent(evt);
       }, 70);
     };
 
