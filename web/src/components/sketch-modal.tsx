@@ -1,33 +1,84 @@
 'use client';
 
+/**
+ * Apple-Notes-style sketch modal — rebuilt from scratch after
+ * multiple incremental patches failed to make Apple Pencil work
+ * reliably on iPad. Architecture choices (all deliberate):
+ *
+ *   1. No Radix Dialog. Renders via React's createPortal into
+ *      document.body, with a plain `fixed inset-0` overlay.
+ *      Radix Dialog's pointer/focus pipeline kept stepping on
+ *      iPad's Pencil + pointer-capture combo.
+ *
+ *   2. Native `addEventListener` on the canvas, not React's
+ *      synthetic `onPointerDown` etc. React delegates pointer
+ *      events from `document`, which is interferred with by
+ *      iOS Safari's gesture recognition layer when Apple
+ *      Pencil is the input device. Direct listeners bypass it.
+ *
+ *   3. Both `pointer*` and `touch*` listeners with a dedupe
+ *      ref. Whichever fires first wins; the other ignores.
+ *      Belt-and-suspenders against the iPadOS path where one
+ *      family mysteriously stays silent.
+ *
+ *   4. `touch-action: none` inline, `preventDefault` on touch
+ *      events (passive:false) so the browser can't claim the
+ *      gesture for scroll / pinch.
+ *
+ *   5. Five tools (pen / pencil / marker / highlighter /
+ *      eraser), each with its own width range and alpha. Pen is
+ *      pressure-variable when the input is an actual pen; every
+ *      other tool uses a uniform width.
+ *
+ *   6. Quadratic-curve smoothing through midpoints for iOS-
+ *      Notes-quality ink. Per-segment lineWidth so pressure
+ *      variation shows even on the smoothed path.
+ *
+ *   7. Diagnostic strip baked in (bottom-right): shows the last
+ *      event type, pointer type, pressure, and current stroke
+ *      count. If the canvas STILL feels unresponsive on iPad
+ *      after this rewrite, the strip will reveal which layer
+ *      isn't firing — Pencil events, our handlers, or render.
+ */
+
 import { useEffect, useRef, useState } from 'react';
-import * as Dialog from '@radix-ui/react-dialog';
-import { X, Trash2, Eraser, Pen, Save as SaveIcon, Loader2, Undo2, FileDown } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import {
+  X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
+  Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown,
+} from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { jsPDF } from 'jspdf';
 
-/**
- * Pen-pressure-aware sketching canvas backed by Pointer Events.
- * On Save → exports the canvas to a PNG, uploads to the user's
- * Drive via the existing /api/drive/upload route, and resolves with
- * `{ url, name }` so callers can splice an attachment link into
- * whatever markdown surface is hosting them.
- *
- * Apple Pencil / Wacom / Surface Pen all report `pressure` on
- * `PointerEvent`; mice report 0.5 (the default). When `pointerType
- * === 'pen'`, we use pressure to modulate stroke width
- * (1px–10px range); for mouse/touch we fall back to a flat width.
- *
- * Stroke storage is per-stroke point arrays so we can implement
- * undo (one stroke at a time) without redrawing pixel-by-pixel.
- */
+type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser';
+
+type ToolSpec = {
+  id: Tool;
+  label: string;
+  Icon: typeof Pen;
+  minWidth: number;
+  maxWidth: number;
+  alpha: number;
+};
+
+const TOOLS: ToolSpec[] = [
+  { id: 'pen',         label: 'Pen',         Icon: Pen,         minWidth: 2,  maxWidth: 8,  alpha: 1    },
+  { id: 'pencil',      label: 'Pencil',      Icon: PencilIcon,  minWidth: 1,  maxWidth: 4,  alpha: 0.85 },
+  { id: 'marker',      label: 'Marker',      Icon: Brush,       minWidth: 6,  maxWidth: 16, alpha: 0.6  },
+  { id: 'highlighter', label: 'Highlighter', Icon: Highlighter, minWidth: 12, maxWidth: 28, alpha: 0.35 },
+  { id: 'eraser',      label: 'Eraser',      Icon: Eraser,      minWidth: 8,  maxWidth: 32, alpha: 1    },
+];
+
+const PALETTE = ['#1f1f1f', '#e11d48', '#ea580c', '#ca8a04', '#16a34a', '#0284c7', '#7c3aed', '#ffffff'];
 
 type Point = { x: number; y: number; w: number };
-type Stroke = { color: string; points: Point[]; eraser: boolean };
+type Stroke = { tool: Tool; color: string; alpha: number; points: Point[] };
 
-const PALETTE = ['#1f1f1f', '#e11d48', '#ea580c', '#ca8a04', '#16a34a', '#0284c7', '#7c3aed'];
+function getToolSpec(t: Tool): ToolSpec {
+  return TOOLS.find((x) => x.id === t) ?? TOOLS[0];
+}
 
 export function SketchModal({
   open, onClose, onSaved, seed,
@@ -35,38 +86,54 @@ export function SketchModal({
   open: boolean;
   onClose: () => void;
   onSaved: (url: string, name: string) => void;
-  /** When set, the canvas opens with this image painted as a
-   * non-erasable background layer. Used by the Notes preset to
-   * "Edit sketch" — the previous PNG is loaded so the user can
-   * keep refining instead of starting from scratch. */
+  /** Existing sketch URL to preload as a non-erasable background. */
   seed?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const bgImageRef = useRef<HTMLImageElement | null>(null);
   const strokesRef = useRef<Stroke[]>([]);
-  const drawing = useRef<Stroke | null>(null);
-  const [color, setColor] = useState(PALETTE[0]);
-  const [tool, setTool] = useState<'pen' | 'eraser'>('pen');
-  const [, force] = useState(0);
-  const [uploading, setUploading] = useState(false);
+  const redoRef = useRef<Stroke[]>([]);
+  const drawingRef = useRef<Stroke | null>(null);
+  const bgImageRef = useRef<HTMLImageElement | null>(null);
+  /** Which event family started the current stroke — used to
+   *  dedupe so we don't process pointermove AND touchmove for the
+   *  same gesture. */
+  const activeInputRef = useRef<'pointer' | 'touch' | null>(null);
 
-  // Resize the backing canvas to match its CSS box so strokes don't
-  // appear blurry on hi-DPI displays. The window-resize listener
-  // alone wasn't enough — Radix Dialog animates its content in,
-  // and the first effect-tick frequently catches a 0×0 wrap which
-  // left the canvas un-clickable until you resized the window.
-  // ResizeObserver watches the wrap itself and re-syncs the moment
-  // it grows from 0 to its real size.
+  const [mounted, setMounted] = useState(false);
+  const [tool, setTool] = useState<Tool>('pen');
+  const [color, setColor] = useState(PALETTE[0]);
+  const [widthOverride, setWidthOverride] = useState<number | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [debug, setDebug] = useState('idle');
+  const [, force] = useState(0);
+
+  /* Mount marker for createPortal — typeof document is undefined
+   * during SSR; we only render the portal on the client tick. */
+  useEffect(() => setMounted(true), []);
+
+  /* Lock body scroll while open so the page underneath can't
+   * scroll into view on iPad when the user gestures. */
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
+  /* Canvas size, DPR, redraw on open + seed image load. */
   useEffect(() => {
     if (!open) return;
     const c = canvasRef.current;
     const wrap = wrapRef.current;
     if (!c || !wrap) return;
-    // Fresh open → drop any prior strokes / bg so re-opening doesn't
-    // stack last session's drawing under the new one.
+
     strokesRef.current = [];
+    redoRef.current = [];
     bgImageRef.current = null;
+    drawingRef.current = null;
+    activeInputRef.current = null;
+
     const sync = () => {
       const dpr = window.devicePixelRatio || 1;
       const rect = wrap.getBoundingClientRect();
@@ -84,38 +151,26 @@ export function SketchModal({
       }
     };
     sync();
-    const ro = new ResizeObserver(() => sync());
+    const ro = new ResizeObserver(sync);
     ro.observe(wrap);
     window.addEventListener('resize', sync);
+
     let blobUrl: string | null = null;
     if (seed) {
-      // Drive URLs (/api/drive/file?id=...) sometimes 302 to
-      // googleusercontent.com which doesn't honour our Origin
-      // header on a cross-origin Image load — the canvas then
-      // becomes "tainted" and toBlob() returns null on Save, so
-      // the next Save silently fails. Fetch the bytes through
-      // our same-origin /api proxy and hand the image element a
-      // Blob URL: the canvas stays clean and export works.
       const useBlobLoad = seed.startsWith('/');
-      const loadVia = async () => {
-        if (useBlobLoad) {
-          const r = await fetch(seed);
-          if (!r.ok) throw new Error(`seed: ${r.status}`);
-          const blob = await r.blob();
-          return URL.createObjectURL(blob);
-        }
-        return seed;
-      };
       (async () => {
         try {
-          const src = await loadVia();
-          if (useBlobLoad) blobUrl = src;
+          let src = seed;
+          if (useBlobLoad) {
+            const r = await fetch(seed);
+            if (!r.ok) throw new Error(`seed: ${r.status}`);
+            const blob = await r.blob();
+            src = URL.createObjectURL(blob);
+            blobUrl = src;
+          }
           const img = new Image();
           img.onload = () => { bgImageRef.current = img; redraw(); force((n) => n + 1); };
-          img.onerror = () => {
-            bgImageRef.current = null;
-            force((n) => n + 1);
-          };
+          img.onerror = () => { bgImageRef.current = null; force((n) => n + 1); };
           img.src = src;
         } catch {
           bgImageRef.current = null;
@@ -131,11 +186,132 @@ export function SketchModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed]);
 
-  // (Removed the native touchstart preventDefault listener that
-  // previous rounds added — it interacted poorly with iPad's
-  // pointer-capture pipeline and is unnecessary when the canvas
-  // has touch-action:none and we call setPointerCapture in the
-  // React pointerdown handler.)
+  /* Native input listeners — the heart of the iPad fix. */
+  useEffect(() => {
+    if (!open) return;
+    const c = canvasRef.current;
+    if (!c) return;
+
+    const widthFor = (basePressure: number, pointerType: string): number => {
+      if (widthOverride != null) return widthOverride;
+      const spec = getToolSpec(tool);
+      if (tool === 'pen' && pointerType === 'pen' && basePressure > 0) {
+        return spec.minWidth + (spec.maxWidth - spec.minWidth) * Math.max(0.1, basePressure);
+      }
+      // Sensible default in the middle of the range for non-
+      // pressure inputs (mouse, finger) and non-pen tools.
+      return (spec.minWidth + spec.maxWidth) / 2;
+    };
+
+    const rectOf = () => c.getBoundingClientRect();
+
+    const beginStroke = (clientX: number, clientY: number, pressure: number, ptype: string) => {
+      const r = rectOf();
+      const x = clientX - r.left;
+      const y = clientY - r.top;
+      const spec = getToolSpec(tool);
+      drawingRef.current = {
+        tool,
+        color: tool === 'eraser' ? '#000' : color,
+        alpha: spec.alpha,
+        points: [{ x, y, w: widthFor(pressure, ptype) }],
+      };
+      redoRef.current = []; // any new stroke invalidates redo history
+      setDebug(`down · ${ptype} · p=${pressure.toFixed(2)}`);
+      redraw();
+      force((n) => n + 1);
+    };
+    const continueStroke = (clientX: number, clientY: number, pressure: number, ptype: string) => {
+      if (!drawingRef.current) return;
+      const r = rectOf();
+      drawingRef.current.points.push({
+        x: clientX - r.left,
+        y: clientY - r.top,
+        w: widthFor(pressure, ptype),
+      });
+      setDebug(`move · ${ptype} · p=${pressure.toFixed(2)} · pts=${drawingRef.current.points.length}`);
+      redraw();
+    };
+    const endStroke = (ptype: string) => {
+      if (!drawingRef.current) return;
+      strokesRef.current.push(drawingRef.current);
+      drawingRef.current = null;
+      setDebug(`up · ${ptype} · strokes=${strokesRef.current.length}`);
+      redraw();
+      force((n) => n + 1);
+    };
+
+    // --- Pointer Events (pen + mouse + most touch on modern browsers)
+    const onPointerDown = (e: PointerEvent) => {
+      if (activeInputRef.current === 'touch') return; // touch path already engaged
+      activeInputRef.current = 'pointer';
+      e.preventDefault();
+      try { c.setPointerCapture(e.pointerId); } catch { /* old Safari */ }
+      const p = e.pressure > 0 ? e.pressure : (e.pointerType === 'pen' ? 0.5 : 1);
+      beginStroke(e.clientX, e.clientY, p, e.pointerType);
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (activeInputRef.current !== 'pointer') return;
+      if (!drawingRef.current) return;
+      e.preventDefault();
+      const p = e.pressure > 0 ? e.pressure : (e.pointerType === 'pen' ? 0.5 : 1);
+      continueStroke(e.clientX, e.clientY, p, e.pointerType);
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (activeInputRef.current !== 'pointer') return;
+      try { c.releasePointerCapture(e.pointerId); } catch { /* ok */ }
+      endStroke(e.pointerType);
+      activeInputRef.current = null;
+    };
+
+    // --- Touch Events fallback (iOS Safari < 13, and the cases
+    // where pointer events mysteriously don't fire for the first
+    // tap on a fresh canvas)
+    const onTouchStart = (e: TouchEvent) => {
+      if (activeInputRef.current === 'pointer') return;
+      activeInputRef.current = 'touch';
+      e.preventDefault();
+      const t = e.touches[0];
+      if (!t) return;
+      const pressure = typeof t.force === 'number' && t.force > 0 ? t.force : 0.5;
+      beginStroke(t.clientX, t.clientY, pressure, 'touch');
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (activeInputRef.current !== 'touch') return;
+      e.preventDefault();
+      const t = e.touches[0];
+      if (!t) return;
+      const pressure = typeof t.force === 'number' && t.force > 0 ? t.force : 0.5;
+      continueStroke(t.clientX, t.clientY, pressure, 'touch');
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (activeInputRef.current !== 'touch') return;
+      e.preventDefault();
+      endStroke('touch');
+      activeInputRef.current = null;
+    };
+
+    c.addEventListener('pointerdown', onPointerDown);
+    c.addEventListener('pointermove', onPointerMove);
+    c.addEventListener('pointerup', onPointerUp);
+    c.addEventListener('pointercancel', onPointerUp);
+    c.addEventListener('touchstart', onTouchStart, { passive: false });
+    c.addEventListener('touchmove',  onTouchMove,  { passive: false });
+    c.addEventListener('touchend',   onTouchEnd,   { passive: false });
+    c.addEventListener('touchcancel', onTouchEnd,  { passive: false });
+
+    return () => {
+      c.removeEventListener('pointerdown', onPointerDown);
+      c.removeEventListener('pointermove', onPointerMove);
+      c.removeEventListener('pointerup', onPointerUp);
+      c.removeEventListener('pointercancel', onPointerUp);
+      c.removeEventListener('touchstart', onTouchStart);
+      c.removeEventListener('touchmove', onTouchMove);
+      c.removeEventListener('touchend', onTouchEnd);
+      c.removeEventListener('touchcancel', onTouchEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, tool, color, widthOverride]);
 
   function redraw() {
     const c = canvasRef.current;
@@ -148,9 +324,6 @@ export function SketchModal({
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.scale(dpr, dpr);
     if (bgImageRef.current) {
-      // Paint the seed image fit-to-canvas, preserving aspect ratio,
-      // centered. The CSS box is what the user sees so we draw in
-      // CSS pixels (the ctx.scale above already maps to DPR).
       const cw = c.clientWidth || c.width / dpr;
       const ch = c.clientHeight || c.height / dpr;
       const iw = bgImageRef.current.naturalWidth;
@@ -160,132 +333,100 @@ export function SketchModal({
       const h = ih * r;
       ctx.drawImage(bgImageRef.current, (cw - w) / 2, (ch - h) / 2, w, h);
     }
-    for (const s of strokesRef.current) {
-      drawStroke(ctx, s);
-    }
-    if (drawing.current) drawStroke(ctx, drawing.current);
+    for (const s of strokesRef.current) drawStroke(ctx, s);
+    if (drawingRef.current) drawStroke(ctx, drawingRef.current);
     ctx.restore();
   }
 
   function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
     if (s.points.length === 0) return;
     ctx.save();
-    ctx.globalCompositeOperation = s.eraser ? 'destination-out' : 'source-over';
-    ctx.strokeStyle = s.color;
+    if (s.tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = '#000';
+      ctx.fillStyle = '#000';
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = s.alpha;
+      ctx.strokeStyle = s.color;
+      ctx.fillStyle = s.color;
+    }
     if (s.points.length === 1) {
       const p = s.points[0];
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.w / 2, 0, Math.PI * 2);
-      ctx.fillStyle = s.color;
       ctx.fill();
       ctx.restore();
       return;
     }
-    // Raw per-segment lineTo. Reverted from quadratic-curve
-    // smoothing — the smoothing made debug harder when strokes
-    // weren't appearing and didn't visibly help at typical pen
-    // sample rates. Per-segment lineWidth still preserves pen
-    // pressure variation.
-    for (let i = 1; i < s.points.length; i++) {
-      const a = s.points[i - 1];
-      const b = s.points[i];
+    if (s.points.length === 2) {
+      const [a, b] = s.points;
       ctx.lineWidth = (a.w + b.w) / 2;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
+      ctx.restore();
+      return;
     }
+    // Quadratic smoothing through midpoints — iOS-Notes feel.
+    for (let i = 1; i < s.points.length - 1; i++) {
+      const prev = s.points[i - 1];
+      const cur = s.points[i];
+      const next = s.points[i + 1];
+      const sx = (prev.x + cur.x) / 2;
+      const sy = (prev.y + cur.y) / 2;
+      const ex = (cur.x + next.x) / 2;
+      const ey = (cur.y + next.y) / 2;
+      ctx.lineWidth = (prev.w + cur.w + next.w) / 3;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.quadraticCurveTo(cur.x, cur.y, ex, ey);
+      ctx.stroke();
+    }
+    const second = s.points[s.points.length - 2];
+    const last = s.points[s.points.length - 1];
+    ctx.lineWidth = (second.w + last.w) / 2;
+    ctx.beginPath();
+    ctx.moveTo((second.x + last.x) / 2, (second.y + last.y) / 2);
+    ctx.lineTo(last.x, last.y);
+    ctx.stroke();
     ctx.restore();
   }
 
-  function widthFromPointer(e: React.PointerEvent): number {
-    if (e.pointerType === 'pen') {
-      // Pressure 0–1 → 2.5–10 px width. Floor at 2.5 because
-      // browser drivers regularly under-report pressure (e.g.
-      // some Apple Pencil paths report 0 mid-stroke) which
-      // otherwise renders an invisible ~1 px line.
-      return 2.5 + e.pressure * 7.5;
-    }
-    if (e.pointerType === 'touch') return 6;
-    return 4.5;
-  }
-
-  function localPoint(e: React.PointerEvent): { x: number; y: number } {
-    const c = canvasRef.current!;
-    const rect = c.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  }
-
-  // preventDefault was dropped from these handlers — on iPad it
-  // interacted badly with the pointer-capture pipeline and stopped
-  // the initial pointerdown from establishing a capture. touch-
-  // action:none on the canvas (inline + class) already keeps the
-  // browser from interpreting the gesture as scroll.
-  function start(e: React.PointerEvent) {
-    try { canvasRef.current?.setPointerCapture(e.pointerId); } catch { /* iPadOS older Safari */ }
-    const p = localPoint(e);
-    drawing.current = {
-      color,
-      eraser: tool === 'eraser',
-      points: [{ x: p.x, y: p.y, w: widthFromPointer(e) }],
-    };
-    redraw();
-    force((n) => n + 1);
-  }
-
-  function move(e: React.PointerEvent) {
-    if (!drawing.current) return;
-    const p = localPoint(e);
-    drawing.current.points.push({ x: p.x, y: p.y, w: widthFromPointer(e) });
-    redraw();
-  }
-
-  function end(e: React.PointerEvent) {
-    if (!drawing.current) return;
-    try { canvasRef.current?.releasePointerCapture(e.pointerId); } catch { /* ok */ }
-    strokesRef.current.push(drawing.current);
-    drawing.current = null;
-    redraw();
-    force((n) => n + 1);
-  }
-
   function undo() {
-    strokesRef.current.pop();
+    const popped = strokesRef.current.pop();
+    if (popped) redoRef.current.push(popped);
     redraw();
     force((n) => n + 1);
   }
-  function clear() {
+  function redo() {
+    const popped = redoRef.current.pop();
+    if (popped) strokesRef.current.push(popped);
+    redraw();
+    force((n) => n + 1);
+  }
+  function clearAll() {
     strokesRef.current = [];
-    drawing.current = null;
+    redoRef.current = [];
+    drawingRef.current = null;
     redraw();
     force((n) => n + 1);
   }
 
-  /** Trigger a browser download for a blob. Used by SVG / PDF
-   *  export so users get a file on disk, not just a Drive URL. */
-  function downloadBlob(blob: Blob, filename: string) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
+  // Cmd-Z / Cmd-Shift-Z / Esc keyboard shortcuts.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return; }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
+      if ((e.metaKey || e.ctrlKey) &&  e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
 
-  /** Average the per-point widths inside a stroke and emit one
-   *  SVG polyline / PDF path. Width-varying strokes would need
-   *  per-segment elements (or `<path>` with stroke-width gradient
-   *  via SVG 2 — not implementable cross-browser); the averaged
-   *  width is close enough for ink that lives on a 2D page and
-   *  matches the canvas render at typical zoom levels. */
-  function strokeAvgWidth(s: Stroke): number {
-    if (s.points.length === 0) return 2;
-    let sum = 0;
-    for (const p of s.points) sum += p.w;
-    return sum / s.points.length;
-  }
+  // ----- Save / Export -------------------------------------------
 
   function canvasSizeCss(): { w: number; h: number } {
     const c = canvasRef.current;
@@ -295,120 +436,15 @@ export function SketchModal({
       h: c.clientHeight || c.height / (window.devicePixelRatio || 1),
     };
   }
-
-  /** Build an SVG snapshot of the current sketch. Seed image (if
-   *  any) goes in as a base64 data URL behind the strokes so the
-   *  exported file stays self-contained. */
-  async function buildSvg(): Promise<string> {
-    const { w, h } = canvasSizeCss();
-    const parts: string[] = [];
-    parts.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`);
-    // White paper background for legibility outside dark UIs.
-    parts.push(`<rect width="${w}" height="${h}" fill="#ffffff"/>`);
-    // Seed image as base64. The image was loaded via HTMLImageElement
-    // earlier; convert it to a data URL via an offscreen canvas so
-    // the result embeds without re-fetching.
-    const bg = bgImageRef.current;
-    if (bg) {
-      try {
-        const off = document.createElement('canvas');
-        off.width = bg.naturalWidth;
-        off.height = bg.naturalHeight;
-        const octx = off.getContext('2d');
-        if (octx) {
-          octx.drawImage(bg, 0, 0);
-          const dataUrl = off.toDataURL('image/png');
-          const iw = bg.naturalWidth;
-          const ih = bg.naturalHeight;
-          const r = Math.min(w / iw, h / ih);
-          const dw = iw * r;
-          const dh = ih * r;
-          parts.push(`<image href="${dataUrl}" x="${(w - dw) / 2}" y="${(h - dh) / 2}" width="${dw}" height="${dh}"/>`);
-        }
-      } catch { /* tainted canvas or out of memory — skip the bg */ }
-    }
-    for (const s of strokesRef.current) {
-      if (s.points.length === 0) continue;
-      const width = strokeAvgWidth(s);
-      const color = s.eraser ? '#ffffff' : s.color;
-      if (s.points.length === 1) {
-        const p = s.points[0];
-        parts.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="${(width / 2).toFixed(2)}" fill="${color}"/>`);
-        continue;
-      }
-      const d = s.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
-      parts.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`);
-    }
-    parts.push('</svg>');
-    return parts.join('');
-  }
-
-  async function exportSvg() {
-    if (strokesRef.current.length === 0 && !bgImageRef.current) {
-      notify.error('Sketch is empty — draw something first.');
-      return;
-    }
-    const svg = await buildSvg();
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `sketch-${stamp}.svg`);
-    toast.success('SVG downloaded.');
-  }
-
-  async function exportPdf() {
-    if (strokesRef.current.length === 0 && !bgImageRef.current) {
-      notify.error('Sketch is empty — draw something first.');
-      return;
-    }
-    const { w, h } = canvasSizeCss();
-    // jsPDF expects user units; default unit is 'pt'. We feed it CSS
-    // pixels directly (since the canvas units are CSS px) and let
-    // the orientation match the natural canvas aspect.
-    const orientation = w >= h ? 'l' : 'p';
-    const pdf = new jsPDF({ orientation, unit: 'px', format: [w, h], hotfixes: ['px_scaling'] });
-    // Background image first so strokes land on top.
-    const bg = bgImageRef.current;
-    if (bg) {
-      try {
-        const off = document.createElement('canvas');
-        off.width = bg.naturalWidth;
-        off.height = bg.naturalHeight;
-        const octx = off.getContext('2d');
-        if (octx) {
-          octx.drawImage(bg, 0, 0);
-          const dataUrl = off.toDataURL('image/png');
-          const iw = bg.naturalWidth;
-          const ih = bg.naturalHeight;
-          const r = Math.min(w / iw, h / ih);
-          const dw = iw * r;
-          const dh = ih * r;
-          pdf.addImage(dataUrl, 'PNG', (w - dw) / 2, (h - dh) / 2, dw, dh);
-        }
-      } catch { /* skip bg if tainted */ }
-    }
-    pdf.setLineCap('round');
-    pdf.setLineJoin('round');
-    for (const s of strokesRef.current) {
-      if (s.points.length === 0) continue;
-      const width = strokeAvgWidth(s);
-      const color = s.eraser ? '#ffffff' : s.color;
-      pdf.setDrawColor(color);
-      pdf.setLineWidth(width);
-      if (s.points.length === 1) {
-        const p = s.points[0];
-        pdf.setFillColor(color);
-        pdf.circle(p.x, p.y, width / 2, 'F');
-        continue;
-      }
-      // Multi-point: stitch consecutive segments with lines().
-      const lines: [number, number][] = [];
-      for (let i = 1; i < s.points.length; i++) {
-        lines.push([s.points[i].x - s.points[i - 1].x, s.points[i].y - s.points[i - 1].y]);
-      }
-      pdf.lines(lines, s.points[0].x, s.points[0].y, [1, 1], 'S');
-    }
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    pdf.save(`sketch-${stamp}.pdf`);
-    toast.success('PDF downloaded.');
+  function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   async function save() {
@@ -434,7 +470,7 @@ export function SketchModal({
       const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
       onSaved(url, name);
       toast.success('Sketch saved.');
-      clear();
+      clearAll();
       onClose();
     } catch (e) {
       notify.error((e as Error).message);
@@ -443,157 +479,368 @@ export function SketchModal({
     }
   }
 
-  return (
-    <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[55] bg-black/60 backdrop-blur-sm" />
-        <Dialog.Content className="fixed inset-0 z-[55] flex flex-col border-0 bg-white shadow-xl dark:bg-zinc-950 sm:inset-2 sm:rounded-xl sm:border sm:border-zinc-200 sm:dark:border-zinc-800">
-          <header className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-            <Dialog.Title className="text-sm font-medium">Sketch</Dialog.Title>
-            <div className="ml-3 inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800">
+  async function exportSvg() {
+    if (strokesRef.current.length === 0 && !bgImageRef.current) {
+      notify.error('Sketch is empty.'); return;
+    }
+    const { w, h } = canvasSizeCss();
+    const parts: string[] = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`];
+    parts.push(`<rect width="${w}" height="${h}" fill="#ffffff"/>`);
+    if (bgImageRef.current) {
+      try {
+        const off = document.createElement('canvas');
+        off.width = bgImageRef.current.naturalWidth;
+        off.height = bgImageRef.current.naturalHeight;
+        const octx = off.getContext('2d');
+        if (octx) {
+          octx.drawImage(bgImageRef.current, 0, 0);
+          const dataUrl = off.toDataURL('image/png');
+          const iw = bgImageRef.current.naturalWidth;
+          const ih = bgImageRef.current.naturalHeight;
+          const r = Math.min(w / iw, h / ih);
+          parts.push(`<image href="${dataUrl}" x="${(w - iw * r) / 2}" y="${(h - ih * r) / 2}" width="${iw * r}" height="${ih * r}"/>`);
+        }
+      } catch { /* tainted — skip */ }
+    }
+    for (const s of strokesRef.current) {
+      if (s.points.length === 0) continue;
+      const avg = s.points.reduce((a, p) => a + p.w, 0) / s.points.length;
+      const stroke = s.tool === 'eraser' ? '#ffffff' : s.color;
+      if (s.points.length === 1) {
+        const p = s.points[0];
+        parts.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="${(avg / 2).toFixed(2)}" fill="${stroke}" fill-opacity="${s.alpha}"/>`);
+        continue;
+      }
+      const d = s.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
+      parts.push(`<path d="${d}" fill="none" stroke="${stroke}" stroke-opacity="${s.alpha}" stroke-width="${avg.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`);
+    }
+    parts.push('</svg>');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    downloadBlob(new Blob([parts.join('')], { type: 'image/svg+xml' }), `sketch-${stamp}.svg`);
+    toast.success('SVG downloaded.');
+  }
+
+  async function exportPdf() {
+    if (strokesRef.current.length === 0 && !bgImageRef.current) {
+      notify.error('Sketch is empty.'); return;
+    }
+    const { w, h } = canvasSizeCss();
+    const pdf = new jsPDF({ orientation: w >= h ? 'l' : 'p', unit: 'px', format: [w, h], hotfixes: ['px_scaling'] });
+    if (bgImageRef.current) {
+      try {
+        const off = document.createElement('canvas');
+        off.width = bgImageRef.current.naturalWidth;
+        off.height = bgImageRef.current.naturalHeight;
+        const octx = off.getContext('2d');
+        if (octx) {
+          octx.drawImage(bgImageRef.current, 0, 0);
+          const dataUrl = off.toDataURL('image/png');
+          const iw = bgImageRef.current.naturalWidth;
+          const ih = bgImageRef.current.naturalHeight;
+          const r = Math.min(w / iw, h / ih);
+          pdf.addImage(dataUrl, 'PNG', (w - iw * r) / 2, (h - ih * r) / 2, iw * r, ih * r);
+        }
+      } catch { /* skip */ }
+    }
+    pdf.setLineCap('round'); pdf.setLineJoin('round');
+    for (const s of strokesRef.current) {
+      if (s.points.length === 0) continue;
+      const avg = s.points.reduce((a, p) => a + p.w, 0) / s.points.length;
+      const stroke = s.tool === 'eraser' ? '#ffffff' : s.color;
+      pdf.setDrawColor(stroke);
+      pdf.setLineWidth(avg);
+      if (s.points.length === 1) {
+        const p = s.points[0];
+        pdf.setFillColor(stroke);
+        pdf.circle(p.x, p.y, avg / 2, 'F');
+        continue;
+      }
+      const lines: [number, number][] = [];
+      for (let i = 1; i < s.points.length; i++) {
+        lines.push([s.points[i].x - s.points[i - 1].x, s.points[i].y - s.points[i - 1].y]);
+      }
+      pdf.lines(lines, s.points[0].x, s.points[0].y, [1, 1], 'S');
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    pdf.save(`sketch-${stamp}.pdf`);
+    toast.success('PDF downloaded.');
+  }
+
+  if (!mounted || !open) return null;
+
+  const activeSpec = getToolSpec(tool);
+  const effectiveWidth = widthOverride ?? (activeSpec.minWidth + activeSpec.maxWidth) / 2;
+  const hasContent = strokesRef.current.length > 0 || !!bgImageRef.current;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex flex-col bg-zinc-50 dark:bg-zinc-950">
+      {/* Top bar: title + Undo/Redo/Clear/Save/Export/Close ----- */}
+      <header className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+        <strong className="text-sm">Sketch</strong>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          <SketchIconButton
+            label="Undo (⌘Z)"
+            icon={<Undo2 className="h-4 w-4" />}
+            disabled={strokesRef.current.length === 0 || uploading}
+            onActivate={undo}
+          />
+          <SketchIconButton
+            label="Redo (⌘⇧Z)"
+            icon={<Redo2 className="h-4 w-4" />}
+            disabled={redoRef.current.length === 0 || uploading}
+            onActivate={redo}
+          />
+          <SketchIconButton
+            label="Clear"
+            icon={<Trash2 className="h-4 w-4" />}
+            disabled={!hasContent || uploading}
+            onActivate={clearAll}
+          />
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
               <button
                 type="button"
-                onClick={() => setTool('pen')}
-                className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${tool === 'pen' ? 'bg-white shadow-sm dark:bg-zinc-950' : 'opacity-60 hover:opacity-100'}`}
-                title="Pen"
+                disabled={!hasContent || uploading}
+                title="Download a vector copy"
+                className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+                style={{ cursor: 'pointer' }}
               >
-                <Pen className="h-3.5 w-3.5" /> Pen
+                <FileDown className="h-3.5 w-3.5" /> Export
               </button>
-              <button
-                type="button"
-                onClick={() => setTool('eraser')}
-                className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${tool === 'eraser' ? 'bg-white shadow-sm dark:bg-zinc-950' : 'opacity-60 hover:opacity-100'}`}
-                title="Eraser"
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end" sideOffset={4}
+                className="z-[90] min-w-[8rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
               >
-                <Eraser className="h-3.5 w-3.5" /> Eraser
-              </button>
-            </div>
-            <div className="ml-2 flex items-center gap-1">
-              {PALETTE.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => { setColor(c); setTool('pen'); }}
-                  className={`h-5 w-5 rounded-full border ${color === c && tool === 'pen' ? 'border-zinc-900 dark:border-white' : 'border-transparent'}`}
-                  style={{ backgroundColor: c }}
-                  title={c}
-                />
-              ))}
-            </div>
-            <div className="ml-auto flex items-center gap-1">
-              <button
-                type="button"
-                onClick={undo}
-                disabled={strokesRef.current.length === 0 || uploading}
-                title="Undo last stroke"
-                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
-              >
-                <Undo2 className="h-3.5 w-3.5" /> Undo
-              </button>
-              <button
-                type="button"
-                onClick={clear}
-                disabled={strokesRef.current.length === 0 || uploading}
-                title="Clear the canvas"
-                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
-              >
-                <Trash2 className="h-3.5 w-3.5" /> Clear
-              </button>
-              {/* Download exports — SVG (true vector) and PDF (vector
-                * via jsPDF). Both land on the user's machine; the
-                * primary Save still goes to Drive as a PNG. */}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <button
-                    type="button"
-                    disabled={uploading || (strokesRef.current.length === 0 && !bgImageRef.current)}
-                    title="Download a vector copy"
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
-                  >
-                    <FileDown className="h-3.5 w-3.5" /> Export
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    align="end" sideOffset={4}
-                    className="z-[60] min-w-[8rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
-                  >
-                    <DropdownMenu.Item
-                      onSelect={(e) => { e.preventDefault(); void exportSvg(); }}
-                      className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    >
-                      SVG (vector)
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      onSelect={(e) => { e.preventDefault(); void exportPdf(); }}
-                      className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    >
-                      PDF (vector)
-                    </DropdownMenu.Item>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-              <button
-                type="button"
-                onClick={save}
-                disabled={uploading || (strokesRef.current.length === 0 && !bgImageRef.current)}
-                className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
-              >
-                {uploading
-                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</>
-                  : <><SaveIcon className="h-3.5 w-3.5" /> Save</>}
-              </button>
-              <Dialog.Close
-                aria-label="Close"
-                className="rounded-full p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              >
-                <X className="h-4 w-4" />
-              </Dialog.Close>
-            </div>
-          </header>
-          <div ref={wrapRef} className="relative flex-1 touch-none bg-white dark:bg-zinc-900">
-            {/* Tiny live status pill — if strokes ever stop
-              * appearing we can immediately see whether the canvas
-              * has zero size, whether pointer events are landing
-              * (stroke count increments), and whether a bg image
-              * is in play. Stays out of the way bottom-right. */}
-            <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/50 px-2 py-0.5 font-mono text-[10px] text-white">
-              {canvasRef.current ? `${canvasRef.current.clientWidth}×${canvasRef.current.clientHeight}` : '?×?'}
-              {' · '}strokes {strokesRef.current.length}{drawing.current ? '+1' : ''}
-              {bgImageRef.current ? ' · bg' : ''}
-            </div>
-            <canvas
-              ref={canvasRef}
-              onPointerDown={start}
-              onPointerMove={move}
-              onPointerUp={end}
-              onPointerCancel={end}
-              // Deliberately NOT wiring onPointerLeave={end}:
-              // pointer capture should keep events flowing to the
-              // canvas even when the pointer geometrically leaves
-              // its bounding box, but onPointerLeave still fires
-              // on some browsers (Safari iOS, Firefox) and would
-              // prematurely commit the in-progress stroke when
-              // the pen briefly crosses the toolbar / drifts to
-              // the edge.
-              className="block h-full w-full"
-              style={{
-                cursor: tool === 'eraser' ? 'cell' : 'crosshair',
-                // Inline touch-action wins over any cascade —
-                // iPad Safari needs `none` to deliver continuous
-                // pointer events instead of scrolling the page
-                // out from under the stroke.
-                touchAction: 'none',
-                // Belt-and-suspenders against the Pencil callout
-                // bubble that iPad sometimes pops when the user
-                // long-presses on a canvas thinking it's text.
-                WebkitUserSelect: 'none',
-                WebkitTouchCallout: 'none',
-              }}
-            />
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); void exportSvg(); }}
+                  className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  SVG (vector)
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); void exportPdf(); }}
+                  className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  PDF (vector)
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+          <SketchButton
+            label={uploading ? 'Saving…' : 'Save'}
+            icon={uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SaveIcon className="h-3.5 w-3.5" />}
+            primary
+            disabled={!hasContent || uploading}
+            onActivate={save}
+          />
+          <SketchIconButton
+            label="Close (Esc)"
+            icon={<X className="h-4 w-4" />}
+            onActivate={onClose}
+          />
+        </div>
+      </header>
+
+      {/* Canvas — fills remaining vertical space, never scrolls. */}
+      <div
+        ref={wrapRef}
+        className="relative flex-1 overflow-hidden bg-white dark:bg-zinc-950"
+      >
+        <canvas
+          ref={canvasRef}
+          className="block h-full w-full"
+          style={{
+            cursor: tool === 'eraser' ? 'cell' : 'crosshair',
+            touchAction: 'none',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+            WebkitTouchCallout: 'none',
+          }}
+        />
+        {/* Live diagnostic — proves whether events are arriving
+          * and which family. Stays small + bottom-right so it
+          * doesn't distract while drawing. */}
+        <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 font-mono text-[10px] text-white">
+          {canvasRef.current ? `${canvasRef.current.clientWidth}×${canvasRef.current.clientHeight}` : '?×?'}
+          {' · '}{debug}
+          {' · '}strokes={strokesRef.current.length}{drawingRef.current ? '+1' : ''}
+          {bgImageRef.current ? ' · bg' : ''}
+        </div>
+      </div>
+
+      {/* Bottom toolbar — Apple-Notes feel: tools / colors /
+        * width slider. Bottom placement so Pencil reach is short
+        * on iPad. */}
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+        {/* Tool selector */}
+        <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
+          {TOOLS.map((t) => {
+            const active = tool === t.id;
+            return (
+              <SketchToolButton
+                key={t.id}
+                label={t.label}
+                icon={<t.Icon className="h-4 w-4" />}
+                active={active}
+                onActivate={() => { setTool(t.id); setWidthOverride(null); }}
+              />
+            );
+          })}
+        </div>
+
+        {/* Color palette (hidden when eraser is active) */}
+        {tool !== 'eraser' && (
+          <div className="flex items-center gap-1.5">
+            {PALETTE.map((c) => (
+              <SketchColorButton
+                key={c}
+                color={c}
+                active={color === c}
+                onActivate={() => setColor(c)}
+              />
+            ))}
+            <label className="ml-1 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-dashed border-zinc-300 text-[10px] text-zinc-500 dark:border-zinc-600">
+              +
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="sr-only"
+              />
+            </label>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        )}
+
+        {/* Width slider */}
+        <label className="inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <span>Width</span>
+          <input
+            type="range"
+            min={activeSpec.minWidth}
+            max={activeSpec.maxWidth}
+            step={0.5}
+            value={effectiveWidth}
+            onChange={(e) => setWidthOverride(Number(e.target.value))}
+            className="w-32 cursor-pointer accent-zinc-900 dark:accent-white"
+          />
+          <span className="w-7 font-mono text-[10px] text-zinc-500">{effectiveWidth.toFixed(1)}</span>
+        </label>
+      </footer>
+    </div>,
+    document.body,
+  );
+}
+
+/* ------- Small button helpers ------- */
+/* Every interactive control here has both onClick AND
+ * onPointerUp wired, with a debounce ref to keep them from
+ * firing twice. iPad Apple Pencil sometimes fails to synthesize
+ * the click event from pointerup; onPointerUp guarantees a code
+ * path that runs regardless. */
+
+function useDualActivate(onActivate: () => void) {
+  const lastFiredRef = useRef(0);
+  return {
+    onClick: () => {
+      const now = Date.now();
+      if (now - lastFiredRef.current < 250) return;
+      lastFiredRef.current = now;
+      onActivate();
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      // Only fire on pen so we don't double-fire for mouse/touch
+      // (where the click event is reliable).
+      if (e.pointerType !== 'pen') return;
+      const now = Date.now();
+      if (now - lastFiredRef.current < 250) return;
+      lastFiredRef.current = now;
+      onActivate();
+    },
+  };
+}
+
+function SketchIconButton({ label, icon, disabled, onActivate }: {
+  label: string; icon: React.ReactNode; disabled?: boolean; onActivate: () => void;
+}) {
+  const handlers = useDualActivate(onActivate);
+  return (
+    <button
+      type="button"
+      title={label}
+      disabled={disabled}
+      {...handlers}
+      style={{ cursor: 'pointer' }}
+      className="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800"
+    >
+      {icon}
+    </button>
+  );
+}
+
+function SketchButton({ label, icon, primary, disabled, onActivate }: {
+  label: string; icon: React.ReactNode; primary?: boolean; disabled?: boolean; onActivate: () => void;
+}) {
+  const handlers = useDualActivate(onActivate);
+  return (
+    <button
+      type="button"
+      title={label}
+      disabled={disabled}
+      {...handlers}
+      style={{ cursor: 'pointer' }}
+      className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-50 ${
+        primary
+          ? 'bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200'
+          : 'border border-zinc-200 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800'
+      }`}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function SketchToolButton({ label, icon, active, onActivate }: {
+  label: string; icon: React.ReactNode; active: boolean; onActivate: () => void;
+}) {
+  const handlers = useDualActivate(onActivate);
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-pressed={active}
+      {...handlers}
+      style={{ cursor: 'pointer' }}
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+        active
+          ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white'
+          : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+      }`}
+    >
+      {icon}
+      <span className="hidden sm:inline">{label}</span>
+    </button>
+  );
+}
+
+function SketchColorButton({ color, active, onActivate }: {
+  color: string; active: boolean; onActivate: () => void;
+}) {
+  const handlers = useDualActivate(onActivate);
+  return (
+    <button
+      type="button"
+      title={color}
+      aria-pressed={active}
+      {...handlers}
+      style={{
+        backgroundColor: color,
+        cursor: 'pointer',
+        boxShadow: active ? '0 0 0 2px white, 0 0 0 4px #18181b' : 'none',
+      }}
+      className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-700"
+    />
   );
 }

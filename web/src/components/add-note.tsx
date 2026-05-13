@@ -125,6 +125,10 @@ export function AddNote({
                 key={t.v}
                 type="button"
                 onClick={() => setType(t.v)}
+                /* iPad Pencil dual-fire fallback — see sketch
+                 * modal for the full explanation. */
+                onPointerUp={(e) => { if (e.pointerType === 'pen') setType(t.v); }}
+                style={{ cursor: 'pointer' }}
                 className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-xs transition ${type === t.v
                   ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
                   : 'border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800'}`}
