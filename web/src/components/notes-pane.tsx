@@ -159,6 +159,19 @@ export function NotesPane({
   // every `initial` change clobbers the user's in-flight edits the
   // moment any parent re-render happens with a stale value.
   useEffect(() => { setValue(initial); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [rowId]);
+  // Sync to a fresh `initial` even when the rowId stays the same.
+  // For sketches (where the editor is a modal, not a textarea) the
+  // user can't be "mid-edit" against a stale value the way they can
+  // be with markdown — pulling the latest from the parent on every
+  // change is safe and means SSE-driven row.updated (saving from a
+  // different tab) shows the new drawing instantly. Gated to sketch
+  // type so we don't clobber an in-flight markdown debounce.
+  useEffect(() => {
+    if (noteType === 'sketch' && initial !== value && !sketchOpen) {
+      setValue(initial);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial, noteType, sketchOpen]);
 
   // Flush an in-flight edit on unmount. If the user closes the
   // preview modal mid-debounce (within the 1.2 s window after
@@ -492,7 +505,29 @@ export function NotesPane({
         saveMode={effType === 'sketch' ? 'inline' : 'upload'}
         onSaved={(url, name) => {
           if (effType === 'sketch') {
-            schedule(url);
+            // Sketches are discrete, user-initiated saves — bypass
+            // the 1.2 s keystroke-debounce that the markdown path
+            // uses. Closing the modal would otherwise race with the
+            // pending timer; the bytes would never reach PG and the
+            // next open would look "blank" exactly like a new
+            // sketch. Direct PATCH eliminates that race.
+            setValue(url);
+            setSaving('pending');
+            if (t.current) { clearTimeout(t.current); t.current = null; }
+            void (async () => {
+              try {
+                const r = await fetch(`/api/sections/${sectionSlug}/rows/${rowId}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ data: { [contentField]: url } }),
+                });
+                setSaving(r.ok ? 'saved' : 'error');
+                if (!r.ok) toast.error(`Sketch save failed: ${r.status}`);
+              } catch (e) {
+                setSaving('error');
+                toast.error(`Sketch save failed: ${(e as Error).message}`);
+              }
+            })();
           } else {
             spliceAtCaret(`![${name}](${url})\n`);
           }

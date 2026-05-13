@@ -45,13 +45,13 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
-  Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown,
+  Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { jsPDF } from 'jspdf';
 
-type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser';
+type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line';
 
 type ToolSpec = {
   id: Tool;
@@ -67,6 +67,7 @@ const TOOLS: ToolSpec[] = [
   { id: 'pencil',      label: 'Pencil',      Icon: PencilIcon,  minWidth: 1,  maxWidth: 4,  alpha: 0.85 },
   { id: 'marker',      label: 'Marker',      Icon: Brush,       minWidth: 6,  maxWidth: 16, alpha: 0.6  },
   { id: 'highlighter', label: 'Highlighter', Icon: Highlighter, minWidth: 12, maxWidth: 28, alpha: 0.35 },
+  { id: 'line',        label: 'Line',        Icon: Slash,       minWidth: 2,  maxWidth: 8,  alpha: 1    },
   { id: 'eraser',      label: 'Eraser',      Icon: Eraser,      minWidth: 8,  maxWidth: 32, alpha: 1    },
 ];
 
@@ -259,12 +260,26 @@ export function SketchModal({
       const r = rectOf();
       const nx = clientX - r.left;
       const ny = clientY - r.top;
+      const pts = drawingRef.current.points;
+      // Line tool: replace the SECOND point on every move so the
+      // stroke stays as a straight segment from down-point to current.
+      // The user sees a live preview as they drag; release commits
+      // exactly two points (anchor + tip) — perfect ruler-line.
+      if (drawingRef.current.tool === 'line') {
+        if (pts.length === 1) {
+          pts.push({ x: nx, y: ny, w: widthFor(pressure, ptype) });
+        } else {
+          pts[1] = { x: nx, y: ny, w: widthFor(pressure, ptype) };
+        }
+        setDebug(`line · ${ptype} · pts=2`);
+        redraw();
+        return;
+      }
       // Drop noise: Pencil fires ~120 Hz so successive samples may
       // land sub-pixel apart. Skip points closer than 1.2 CSS px from
       // the previous one — keeps the path smooth and shrinks the
       // serialized point array by ~40%, which matters for SVG/PDF
       // export size and per-frame redraw cost on long strokes.
-      const pts = drawingRef.current.points;
       if (pts.length > 0) {
         const last = pts[pts.length - 1];
         const dx = nx - last.x;
@@ -771,9 +786,35 @@ export function SketchModal({
           </div>
         )}
 
-        {/* Width slider */}
-        <label className="inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+        {/* Width: five tap-able tiers + a fine-tune slider beside.
+          * Native range inputs were unresponsive to Apple Pencil
+          * taps on iPad — the tier buttons are full SketchButton
+          * pills that go through the same useDualActivate handler
+          * the rest of the toolbar uses, so they fire reliably. The
+          * slider is kept for users on a mouse who want continuous
+          * control. */}
+        <div className="inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
           <span>Width</span>
+          {(() => {
+            const min = activeSpec.minWidth;
+            const max = activeSpec.maxWidth;
+            const TIERS = [min, min + (max - min) * 0.25, (min + max) / 2, min + (max - min) * 0.75, max];
+            return (
+              <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
+                {TIERS.map((w, i) => {
+                  const active = Math.abs(effectiveWidth - w) < 0.5;
+                  return (
+                    <SketchWidthButton
+                      key={i}
+                      width={w}
+                      active={active}
+                      onActivate={() => setWidthOverride(w)}
+                    />
+                  );
+                })}
+              </div>
+            );
+          })()}
           <input
             type="range"
             min={activeSpec.minWidth}
@@ -781,10 +822,11 @@ export function SketchModal({
             step={0.5}
             value={effectiveWidth}
             onChange={(e) => setWidthOverride(Number(e.target.value))}
-            className="w-32 cursor-pointer accent-zinc-900 dark:accent-white"
+            className="w-24 cursor-pointer accent-zinc-900 dark:accent-white"
+            title="Fine-tune (drag, mouse-only)"
           />
           <span className="w-7 font-mono text-[10px] text-zinc-500">{effectiveWidth.toFixed(1)}</span>
-        </label>
+        </div>
       </footer>
     </div>,
     document.body,
@@ -898,7 +940,38 @@ function SketchColorButton({ color, active, onActivate }: {
         cursor: 'pointer',
         boxShadow: active ? '0 0 0 2px white, 0 0 0 4px #18181b' : 'none',
       }}
-      className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-700"
+      className="h-9 w-9 rounded-full border border-zinc-200 dark:border-zinc-700"
     />
+  );
+}
+
+/* Width-tier button — visually a circle whose diameter scales with
+ * the stroke width it sets. Tapping it sets the effective stroke
+ * width to that tier; reading the row left-to-right gives a sense
+ * of thin → thick. Uses the same useDualActivate handler the rest
+ * of the toolbar uses so Apple Pencil taps fire reliably. */
+function SketchWidthButton({ width, active, onActivate }: {
+  width: number; active: boolean; onActivate: () => void;
+}) {
+  const handlers = useDualActivate(onActivate);
+  const dot = Math.max(4, Math.min(20, width * 1.4));
+  return (
+    <button
+      type="button"
+      title={`Width ${width.toFixed(1)}`}
+      aria-pressed={active}
+      {...handlers}
+      style={{ cursor: 'pointer' }}
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
+        active
+          ? 'bg-white shadow-sm dark:bg-zinc-950'
+          : 'hover:bg-white/60 dark:hover:bg-zinc-950/60'
+      }`}
+    >
+      <span
+        className="block rounded-full bg-zinc-900 dark:bg-white"
+        style={{ width: dot, height: dot }}
+      />
+    </button>
   );
 }
