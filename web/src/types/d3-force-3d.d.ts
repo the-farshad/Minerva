@@ -6,11 +6,13 @@ declare module 'd3-force-3d' {
     strength(s: number): CollideForce;
     iterations(i: number): CollideForce;
   }
-  interface YForce {
-    y(y: Accessor<number>): YForce;
-    strength(s: Accessor<number>): YForce;
+  interface PositionalForce {
+    x?(x: Accessor<number>): PositionalForce;
+    y?(y: Accessor<number>): PositionalForce;
+    strength(s: Accessor<number>): PositionalForce;
   }
 
   export function forceCollide(radius?: Accessor<number>): CollideForce;
-  export function forceY(y?: Accessor<number>): YForce;
+  export function forceX(x?: Accessor<number>): PositionalForce;
+  export function forceY(y?: Accessor<number>): PositionalForce;
 }

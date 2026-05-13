@@ -9,7 +9,7 @@ import type { ForceGraphMethods } from 'react-force-graph-2d';
 // package guarantees the force objects match the shape the lib's
 // `d3Force(name, force)` setter expects. Declared as a direct dep so
 // a clean install can't hoist it away.
-import { forceCollide, forceY } from 'd3-force-3d';
+import { forceCollide, forceX } from 'd3-force-3d';
 
 /** react-force-graph-2d is a 100% client / canvas component —
  *  importing it server-side throws (no `document`). Dynamic-
@@ -39,10 +39,10 @@ type GraphNode = {
   // d3-force sets these post-mount; the lib mutates the original
   // object so we never read them, just declare for the types.
   x?: number; y?: number;
-  // fy is honored by d3-force as a vertical anchor; we set it
+  // fx is honored by d3-force as a horizontal anchor; we set it
   // when the user turns Year-axis layout on so nodes lay out
-  // along a timeline.
-  fy?: number;
+  // along a horizontal timeline (oldest left → newest right).
+  fx?: number;
 };
 
 type GraphLink = { source: string; target: string; weight: number };
@@ -76,6 +76,10 @@ export function RelatedGraph({
   const [focused, setFocused] = useState<Paper | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [yearAxis, setYearAxis] = useState(false);
+  /** Extra padding (CSS px) added to each node's collision radius.
+   *  User-controllable via a slider so layouts can be tightened or
+   *  spread out without remounting the simulation. */
+  const [spacing, setSpacing] = useState(10);
 
   // Resize the canvas to the container so the layout fills its
   // wrapper and stays sharp across reflows. Fullscreen mode uses
@@ -130,39 +134,41 @@ export function RelatedGraph({
         requestAnimationFrame(apply);
         return;
       }
-      // Collide: full strength, two iterations, padded by 8 px so
-      // labels (drawn below each node) don't visually crash.
+      // Collide: full strength, two iterations, padded by the
+      // user's spacing slider so labels (drawn below each node)
+      // don't visually crash.
       g.d3Force(
         'collide',
-        forceCollide((n: unknown) => nodeRadius(n as GraphNode) + 8)
+        forceCollide((n: unknown) => nodeRadius(n as GraphNode) + spacing)
           .strength(1)
           .iterations(2),
       );
-      // Year axis: an explicit forceY at each node's target Y, so
-      // even without honoring `fy` the simulation pulls everything
-      // into a timeline.
+      // Year axis: a forceX that pulls each node to its target X
+      // (computed from publication year in graphData below). The
+      // fx field on each node acts as the hard anchor; this force
+      // is belt-and-suspenders against remount races where the
+      // simulation samples nodes before fx is in place.
       if (yearAxis) {
         g.d3Force(
-          'yearY',
-          forceY((n: unknown) => (n as GraphNode).fy ?? 0).strength(
-            (n: unknown) => ((n as GraphNode).fy != null ? 0.9 : 0),
+          'yearX',
+          forceX((n: unknown) => (n as GraphNode).fx ?? 0).strength(
+            (n: unknown) => ((n as GraphNode).fx != null ? 0.9 : 0),
           ),
         );
       } else {
-        // Wipe any leftover forceY from the previous yearAxis run.
-        g.d3Force('yearY', null);
+        g.d3Force('yearX', null);
       }
       g.d3ReheatSimulation?.();
     };
     apply();
     return () => { cancelled = true; };
-  }, [yearAxis, fullscreen]);
+  }, [yearAxis, fullscreen, spacing]);
 
-  /** Year axis: when enabled, fix each node's vertical position
-   *  proportional to publication year — newest at the top, oldest
-   *  at the bottom, seed pinned to the centre y. d3-force respects
-   *  the `fy` field, so the simulation just lays out x freely and
-   *  the graph reads as a timeline along y. */
+  /** Year axis: when enabled, fix each node's horizontal position
+   *  proportional to publication year — oldest left, newest right,
+   *  seed pinned to its own publication year. d3-force respects the
+   *  `fx` field so the simulation lays out y freely and the graph
+   *  reads as a timeline along x. */
   const yearBounds = useMemo(() => {
     const years = papers.map((p) => p.year || 0).filter((y) => y > 0);
     if (years.length === 0) return { min: 0, max: 0 };
@@ -170,17 +176,17 @@ export function RelatedGraph({
   }, [papers]);
 
   const graphData = useMemo(() => {
-    // Vertical lane height per node — tuned to the current canvas
-    // size so the timeline doesn't crash into the toolbar in
-    // small layouts. When year-axis is off, no fy is set and
+    // Horizontal lane width per node — tuned to the current canvas
+    // size so the timeline doesn't crash into the side gutters in
+    // narrow layouts. When year-axis is off, no fx is set and
     // d3-force lays out freely.
-    const laneH = Math.max(240, size.h - 40);
-    const yFor = (year: number | undefined): number | undefined => {
+    const laneW = Math.max(400, size.w - 80);
+    const xFor = (year: number | undefined): number | undefined => {
       if (!yearAxis) return undefined;
       if (!year || yearBounds.max === yearBounds.min) return 0;
       const t = (year - yearBounds.min) / (yearBounds.max - yearBounds.min);
-      // t = 0 → oldest → bottom; t = 1 → newest → top.
-      return (0.5 - t) * laneH;
+      // t = 0 → oldest → left; t = 1 → newest → right.
+      return (t - 0.5) * laneW;
     };
     const nodes: GraphNode[] = [
       {
@@ -188,19 +194,19 @@ export function RelatedGraph({
         label: seedTitle.length > 60 ? seedTitle.slice(0, 57) + '…' : seedTitle,
         isSeed: true,
         refCount: papers.length,
-        ...(yearAxis ? { fy: yFor(Number(seedYear)) ?? 0 } : {}),
+        ...(yearAxis ? { fx: xFor(Number(seedYear)) ?? 0 } : {}),
       },
     ];
     for (const p of papers) {
       const id = paperKey(p);
       if (!id) continue;
-      const fy = yFor(p.year);
+      const fx = xFor(p.year);
       nodes.push({
         id,
         label: (p.title || '').length > 50 ? (p.title || '').slice(0, 47) + '…' : (p.title || ''),
         paper: p,
         refCount: p.referencedWorks?.length || 0,
-        ...(fy !== undefined ? { fy } : {}),
+        ...(fx !== undefined ? { fx } : {}),
       });
     }
     const links: GraphLink[] = [];
@@ -232,22 +238,25 @@ export function RelatedGraph({
       links.push({ source: '__seed__', target: id, weight: 0 });
     }
     return { nodes, links };
-    // yearAxis / seedYear / yearBounds / size.h all participate in
+    // yearAxis / seedYear / yearBounds / size.w all participate in
     // the layout — without them the toggle never recomputed and the
     // year axis was a silent no-op.
-  }, [seedTitle, papers, yearAxis, seedYear, yearBounds, size.h]);
+  }, [seedTitle, papers, yearAxis, seedYear, yearBounds, size.w]);
 
-  // Color palette — uses the same dark/blue accent the rest of
-  // Minerva does so the graph reads as native.
+  // Color palette — seed (deep blue) and bibliographic-coupling
+  // edges (amber) are deliberately different families so the seed
+  // node stands out from its connections instead of dissolving into
+  // them as it did when both were the same blue.
   const colors = {
     seed: '#1e40af',
     paperFill: '#e4e4e7',
     paperFillDark: '#3f3f46',
     paperStroke: '#71717a',
     seedLink: 'rgba(113,113,122,0.3)',
-    bcLink: 'rgba(30,64,175,0.55)',
+    bcLink: 'rgba(234,88,12,0.65)',
     label: '#18181b',
     labelDark: '#fafafa',
+    dim: 'rgba(180,180,180,0.06)',
   };
   const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
 
@@ -257,6 +266,27 @@ export function RelatedGraph({
     return 6 + Math.min(8, Math.log2(1 + n.refCount));
   }
 
+  /** When a node is focused, every other node fades out unless it
+   *  shares an edge with the focused one. Set contains the focused
+   *  node id plus the ids of every direct neighbour. null when
+   *  nothing is focused (no dimming). */
+  const focusedAdjacency = useMemo<Set<string> | null>(() => {
+    if (!focused) return null;
+    const fk = paperKey(focused);
+    const adj = new Set<string>([fk]);
+    for (const link of graphData.links) {
+      const s = typeof link.source === 'string'
+        ? link.source
+        : (link.source as unknown as GraphNode).id;
+      const t = typeof link.target === 'string'
+        ? link.target
+        : (link.target as unknown as GraphNode).id;
+      if (s === fk) adj.add(t);
+      if (t === fk) adj.add(s);
+    }
+    return adj;
+  }, [focused, graphData.links]);
+
   function drawNode(raw: unknown, ctx: CanvasRenderingContext2D, globalScale: number) {
     const node = raw as GraphNode;
     const r = nodeRadius(node);
@@ -264,6 +294,12 @@ export function RelatedGraph({
     const y = node.y ?? 0;
     const isAdded = node.paper ? added.has(paperKey(node.paper)) : false;
     const isFocused = focused && node.paper && paperKey(focused) === paperKey(node.paper);
+    // Dim non-incident nodes when something is focused so the
+    // focused subgraph reads cleanly. Seed is exempt — it always
+    // stays visible so the user keeps their point of reference.
+    const dim = focusedAdjacency != null && !node.isSeed && !focusedAdjacency.has(node.id);
+    ctx.save();
+    if (dim) ctx.globalAlpha = 0.18;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fillStyle = node.isSeed
@@ -314,6 +350,7 @@ export function RelatedGraph({
         if (line) ctx.fillText(line, x, y + yOffset + lineCount * fontSize * 1.15);
       }
     }
+    ctx.restore();
   }
 
   const focusedKey = focused ? paperKey(focused) : null;
@@ -349,7 +386,7 @@ export function RelatedGraph({
           type="button"
           onClick={() => setYearAxis((v) => !v)}
           aria-pressed={yearAxis}
-          title="Lay out nodes vertically by publication year"
+          title="Lay out nodes horizontally by publication year (oldest left → newest right)"
           className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition ${
             yearAxis
               ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
@@ -366,6 +403,22 @@ export function RelatedGraph({
         >
           {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         </button>
+        {/* Node-spacing slider. Padding added to every node's
+          * collision radius — small values = cosy layout, large
+          * values = airy. Live-updates the simulation. */}
+        <label className="inline-flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400" title="Padding added to every node's collision radius">
+          <span>Spacing</span>
+          <input
+            type="range"
+            min={4}
+            max={36}
+            step={2}
+            value={spacing}
+            onChange={(e) => setSpacing(Number(e.target.value))}
+            className="w-28 cursor-pointer accent-zinc-900 dark:accent-white"
+          />
+          <span className="w-6 font-mono text-[10px]">{spacing}</span>
+        </label>
         {fullscreen && (
           <span className="ml-auto text-[10px] text-zinc-500">Press Esc to exit</span>
         )}
@@ -410,7 +463,18 @@ export function RelatedGraph({
           }}
           linkColor={(l) => {
             const src = (l.source as unknown as GraphNode);
-            return src?.isSeed ? colors.seedLink : colors.bcLink;
+            const tgt = (l.target as unknown as GraphNode);
+            const base = src?.isSeed ? colors.seedLink : colors.bcLink;
+            if (!focusedAdjacency) return base;
+            // An edge is "incident" if both endpoints are in the
+            // focused-adjacency set (the focused node itself or one
+            // of its direct neighbours). Non-incident edges fade out
+            // so the focused subgraph reads cleanly.
+            const sId = src?.id;
+            const tId = tgt?.id;
+            const incident =
+              !!sId && !!tId && focusedAdjacency.has(sId) && focusedAdjacency.has(tId);
+            return incident ? base : colors.dim;
           }}
           linkWidth={(l) => {
             const w = (l as unknown as GraphLink).weight || 0;
@@ -419,8 +483,17 @@ export function RelatedGraph({
           }}
           onNodeClick={(node) => {
             const n = node as GraphNode;
-            if (!n.isSeed && n.paper) setFocused(n.paper);
+            if (n.isSeed) { setFocused(null); return; }
+            if (!n.paper) return;
+            // Toggle: clicking the focused node again clears focus
+            // so the user can "step out" without finding empty space.
+            if (focused && paperKey(focused) === paperKey(n.paper)) {
+              setFocused(null);
+            } else {
+              setFocused(n.paper);
+            }
           }}
+          onBackgroundClick={() => setFocused(null)}
           cooldownTicks={120}
           enableNodeDrag={true}
           minZoom={0.4}
@@ -510,14 +583,18 @@ export function RelatedGraph({
         </span>
         <span className="inline-flex items-center gap-2">
           <span className="inline-flex flex-col items-center justify-center gap-0.5">
-            <span className="block h-px w-6 bg-blue-600" />
-            <span className="block h-0.5 w-6 bg-blue-600" />
+            <span className="block h-px w-6 bg-orange-500" />
+            <span className="block h-0.5 w-6 bg-orange-500" />
           </span>
-          Edge thickness = shared references with the linked paper (bibliographic coupling)
+          Edge thickness = shared references (bibliographic coupling)
         </span>
       </div>
       <div className="mt-1 text-[10px] text-zinc-500">
-        Drag to pan, scroll to zoom, click a node for details. {yearAxis ? 'Year axis: newest at the top, oldest at the bottom.' : ''}
+        Click a node to focus it (incident edges stay lit, the rest dim).
+        Click empty space or the seed to clear.
+        {yearAxis && yearBounds.min > 0 && (
+          <> Year axis: <span className="font-mono">{yearBounds.min}</span> ← oldest · newest → <span className="font-mono">{yearBounds.max}</span>.</>
+        )}
       </div>
     </div>
   );
