@@ -895,6 +895,7 @@ export function PreviewModal({
                 sectionSlug={view.sectionSlug}
                 rowId={view.rowId}
                 initial={typeof view.data?.content === 'string' ? (view.data.content as string) : (view.notes || '')}
+                initialSketchDoc={(view.data?._sketchDoc as unknown) as undefined}
                 contentField="content"
                 fullWidth
                 noteType={(view.data?.type as 'text' | 'md' | 'sketch') || 'md'}

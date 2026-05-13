@@ -8,6 +8,8 @@ import { appPrompt } from './prompt';
 import { notify } from '@/lib/notify';
 import { NotesPreview } from './notes-preview';
 import { SketchModal } from './sketch-modal';
+import type { SketchDoc } from '@/lib/sketch-doc';
+import { parseSketchDoc } from '@/lib/sketch-doc';
 import { readPref, writePref } from '@/lib/prefs';
 
 /** Markdown notes sidebar for the preview modal. Persists into the
@@ -19,6 +21,7 @@ export function NotesPane({
   sectionSlug,
   rowId,
   initial,
+  initialSketchDoc,
   onSaved,
   contentField = 'notes',
   fullWidth = false,
@@ -28,6 +31,10 @@ export function NotesPane({
   sectionSlug: string;
   rowId: string;
   initial: string;
+  /** Optional vector document for sketch notes. Persisted to
+   *  `row.data._sketchDoc`. When present, the sketch modal hydrates
+   *  from it (real editable strokes) instead of the PNG `initial`. */
+  initialSketchDoc?: SketchDoc | string | null;
   onSaved?: (next: string) => void;
   contentField?: string;
   /** Drop the 320-px sidebar shape and stretch to the parent's
@@ -56,6 +63,43 @@ export function NotesPane({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [uploading, setUploading] = useState(false);
   const [sketchOpen, setSketchOpen] = useState(false);
+
+  /** Single-flight autosave for the sketch vector doc. SketchModal
+   *  fires onAutoSave on every stroke completion (plus undo / redo /
+   *  clear / page-add / page-delete / manual Save). On iPad a
+   *  scribbler can hit ~30 ups/sec; without single-flighting the
+   *  PATCHes pile up against PG. The pattern is:
+   *   - in-flight save? Stash the latest doc as `next`, return.
+   *   - on completion, if `next` is set, fire one more (collapsed)
+   *     PATCH carrying the most recent doc state. */
+  const sketchPatchInFlightRef = useRef(false);
+  const sketchPendingDocRef = useRef<SketchDoc | null>(null);
+  async function flushSketchDoc(doc: SketchDoc): Promise<void> {
+    sketchPatchInFlightRef.current = true;
+    try {
+      const r = await fetch(`/api/sections/${sectionSlug}/rows/${rowId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { _sketchDoc: doc } }),
+      });
+      setSaving(r.ok ? 'saved' : 'error');
+    } catch {
+      setSaving('error');
+    } finally {
+      sketchPatchInFlightRef.current = false;
+      const next = sketchPendingDocRef.current;
+      sketchPendingDocRef.current = null;
+      if (next) void flushSketchDoc(next);
+    }
+  }
+  function sketchDocAutoSave(doc: SketchDoc) {
+    setSaving('pending');
+    if (sketchPatchInFlightRef.current) {
+      sketchPendingDocRef.current = doc;
+      return;
+    }
+    void flushSketchDoc(doc);
+  }
   // Counted depth so re-entering a child element doesn't clear
   // the drag-over highlight (dragenter fires on every nested
   // node we cross; dragleave fires the same way going out).
@@ -493,6 +537,17 @@ export function NotesPane({
         open={sketchOpen}
         onClose={() => setSketchOpen(false)}
         seed={effType === 'sketch' ? value : undefined}
+        seedDoc={effType === 'sketch' ? (() => {
+          // Caller can pass the doc as a parsed object OR as a raw
+          // string straight off row.data._sketchDoc. Parse the string
+          // path defensively so a malformed legacy save can't break
+          // the modal's hydration; falls back to the PNG seed path.
+          if (!initialSketchDoc) return undefined;
+          if (typeof initialSketchDoc === 'string') return parseSketchDoc(initialSketchDoc) ?? undefined;
+          return initialSketchDoc;
+        })() : undefined}
+        documentId={rowId}
+        onAutoSave={effType === 'sketch' ? sketchDocAutoSave : undefined}
         /* For sketch-typed notes, the saved bytes go INTO row.data.content
          * as a data: URL. This matches the inline-cell sketch flow and
          * removes the Drive-upload dependency that was silently failing

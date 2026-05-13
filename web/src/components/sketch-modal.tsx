@@ -51,6 +51,8 @@ import {
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { jsPDF } from 'jspdf';
+import type { SketchDoc, SketchDocStroke, SketchDocPage, SketchDocPaperSize } from '@/lib/sketch-doc';
+import { newSketchId } from '@/lib/sketch-doc';
 
 type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line';
 
@@ -115,14 +117,71 @@ function getToolSpec(t: Tool): ToolSpec {
   return TOOLS.find((x) => x.id === t) ?? TOOLS[0];
 }
 
+/* ----- In-memory Stroke ↔ SketchDocStroke converters --------------
+ * The runtime Stroke carries per-point absolute width (`w`). The
+ * persisted SketchDocStroke carries a base `style.width` plus a
+ * per-point `pressure` multiplier (0..1) so the same point-array
+ * survives a roundtrip without losing the pressure-variation info.
+ *   roundtrip:
+ *     stroke.points[i].w  =  stroke.style.width × pressure[i]
+ *   ↔
+ *     pressure[i]          =  stroke.points[i].w / stroke.style.width
+ */
+function strokeToDocStroke(s: Stroke, id: string): SketchDocStroke {
+  const widths = s.points.map((p) => p.w);
+  const baseWidth = widths.length > 0
+    ? widths.reduce((a, b) => a + b, 0) / widths.length
+    : 1;
+  return {
+    id,
+    type: 'stroke',
+    tool: s.tool,
+    points: s.points.map((p) => ({
+      x: p.x,
+      y: p.y,
+      pressure: baseWidth > 0 ? p.w / baseWidth : 1,
+    })),
+    style: {
+      color: s.color,
+      width: baseWidth,
+      opacity: s.alpha,
+      cap: 'round',
+      join: 'round',
+    },
+  };
+}
+
+function docStrokeToStroke(ds: SketchDocStroke): Stroke {
+  const baseWidth = ds.style.width || 1;
+  return {
+    tool: ds.tool,
+    color: ds.style.color,
+    alpha: ds.style.opacity,
+    points: ds.points.map((p) => ({
+      x: p.x,
+      y: p.y,
+      w: baseWidth * (p.pressure ?? 1),
+    })),
+  };
+}
+
+/** Map between the editor's PageFormat enum and the persisted
+ *  SketchDocPaperSize. They share the same value space — this is
+ *  just a typed bridge so a future divergence (per-page sizes,
+ *  custom dimensions) only needs to change in one place. */
+function paperToDocSize(f: PageFormat): SketchDocPaperSize { return f; }
+function docSizeToPaper(s: SketchDocPaperSize): PageFormat { return s; }
+
 export function SketchModal({
-  open, onClose, onSaved, seed, saveMode = 'upload',
+  open, onClose, onSaved, seed, saveMode = 'upload', seedDoc, onAutoSave, documentId,
 }: {
   open: boolean;
   onClose: () => void;
   onSaved: (url: string, name: string) => void;
   /** Existing sketch URL or data-URL to preload as the canvas
-   *  background. Erasable as a stroke layer like any other ink. */
+   *  background. Erasable as a stroke layer like any other ink.
+   *  Used only when `seedDoc` is absent — when both are provided
+   *  the vector doc wins. */
   seed?: string;
   /** How `save()` produces the URL passed to onSaved:
    *   - 'upload' (default): upload the PNG to the user's Drive and
@@ -132,6 +191,21 @@ export function SketchModal({
    *     Used by inline-cell sketch columns where the row's column
    *     stores the bytes directly and there's no separate file. */
   saveMode?: 'upload' | 'inline';
+  /** Existing vector document to hydrate the editor from. When
+   *  present, every previously-saved stroke is reconstructed as a
+   *  Stroke object on its original page — actually editable, not a
+   *  flattened background image. Falls back to `seed` (PNG) for
+   *  rows that pre-date the vector format. */
+  seedDoc?: SketchDoc;
+  /** Auto-save hook. Called on every stroke completion with a fresh
+   *  full-document snapshot so the caller can PATCH it to PG. The
+   *  caller is responsible for single-flighting (one in-flight PATCH
+   *  at a time) so a fast scribbler can't pile up requests. */
+  onAutoSave?: (doc: SketchDoc) => void;
+  /** Stable document id (usually the row id). Captured into the doc
+   *  so server-side validation can sanity-check the inbound payload
+   *  against the row it's being written to. */
+  documentId?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -141,6 +215,16 @@ export function SketchModal({
    *  reads / mutates those refs in dozens of places) doesn't have to
    *  thread a page index through every callsite. */
   const pagesRef = useRef<SketchPage[]>([{ strokes: [], bg: null }]);
+  /** Stable id-per-page, indexed parallel to pagesRef. Persisted in
+   *  the SketchDoc so subsequent autosaves keep the same page id
+   *  even after reordering / deletion. */
+  const pageIdsRef = useRef<string[]>([newSketchId('page')]);
+  /** Stable id-per-stroke. Strokes are stored without ids in memory
+   *  (the runtime Stroke type stayed minimal for backward compat);
+   *  the id is generated lazily in buildDoc and remembered by
+   *  identity via a Map so a re-serialise of an unchanged stroke
+   *  emits the same id. */
+  const strokeIdsRef = useRef<WeakMap<Stroke, string>>(new WeakMap());
   const strokesRef = useRef<Stroke[]>(pagesRef.current[0].strokes);
   const redoRef = useRef<Stroke[]>([]);
   const drawingRef = useRef<Stroke | null>(null);
@@ -221,14 +305,30 @@ export function SketchModal({
     const wrap = wrapRef.current;
     if (!c || !wrap) return;
 
-    // Reset the document to a fresh single page on open. The
-    // multi-page state is in-memory only; closing + reopening
-    // starts from a single blank page (or the seed background
-    // loaded into page 0 below).
-    pagesRef.current = [{ strokes: [], bg: null }];
-    setPageCount(1);
+    // Hydrate from `seedDoc` when present — every previously-saved
+    // stroke comes back as an editable Stroke object on its
+    // original page. Page ids and per-stroke ids carry over so the
+    // next autosave produces a stable diff (the same id keeps the
+    // same line). Falls back to a single blank page when no
+    // seedDoc; the PNG `seed` (legacy back-compat) is loaded as
+    // page 0's background below.
+    if (seedDoc && seedDoc.pages && seedDoc.pages.length > 0) {
+      pagesRef.current = seedDoc.pages.map((p) => ({
+        strokes: (p.objects || [])
+          .filter((o) => o.type === 'stroke')
+          .map(docStrokeToStroke),
+        bg: null,
+      }));
+      pageIdsRef.current = seedDoc.pages.map((p) => p.id);
+      setPageCount(seedDoc.pages.length);
+      setPageFormat(docSizeToPaper(seedDoc.paper?.size ?? 'auto'));
+    } else {
+      pagesRef.current = [{ strokes: [], bg: null }];
+      pageIdsRef.current = [newSketchId('page')];
+      setPageCount(1);
+      setPageFormat('auto');
+    }
     setPageIndex(0);
-    setPageFormat('auto');
     strokesRef.current = pagesRef.current[0].strokes;
     redoRef.current = [];
     bgImageRef.current = null;
@@ -373,6 +473,10 @@ export function SketchModal({
       setDebug(`up · ${ptype} · strokes=${strokesRef.current.length}`);
       redraw();
       force((n) => n + 1);
+      // Autosave hook — caller PATCHes the vector doc to PG. Fired
+      // on every pointerup so a crash mid-session loses at most one
+      // partial stroke. The caller is responsible for single-flight.
+      if (onAutoSave) onAutoSave(buildDoc());
     };
 
     // --- Pointer Events (pen + mouse + most touch on modern browsers)
@@ -544,12 +648,14 @@ export function SketchModal({
     if (popped) redoRef.current.push(popped);
     redraw();
     force((n) => n + 1);
+    if (onAutoSave) onAutoSave(buildDoc());
   }
   function redo() {
     const popped = redoRef.current.pop();
     if (popped) strokesRef.current.push(popped);
     redraw();
     force((n) => n + 1);
+    if (onAutoSave) onAutoSave(buildDoc());
   }
   function clearAll() {
     // Mutate in place so the alias from pagesRef stays bound — a
@@ -561,6 +667,7 @@ export function SketchModal({
     drawingRef.current = null;
     redraw();
     force((n) => n + 1);
+    if (onAutoSave) onAutoSave(buildDoc());
   }
 
   // ----- Multi-page navigation ----------------------------------
@@ -581,8 +688,10 @@ export function SketchModal({
   function addPage() {
     commitInFlight();
     pagesRef.current.push({ strokes: [], bg: null });
+    pageIdsRef.current.push(newSketchId('page'));
     setPageCount(pagesRef.current.length);
     setPageIndex(pagesRef.current.length - 1);
+    if (onAutoSave) onAutoSave(buildDoc());
   }
   function deleteCurrentPage() {
     if (pagesRef.current.length <= 1) {
@@ -592,10 +701,39 @@ export function SketchModal({
     }
     commitInFlight();
     pagesRef.current.splice(pageIndex, 1);
+    pageIdsRef.current.splice(pageIndex, 1);
     setPageCount(pagesRef.current.length);
     // Stay on the same visual slot, or step back if we deleted the
     // last page. The alias-sync effect handles the rebind.
     setPageIndex(Math.max(0, Math.min(pageIndex, pagesRef.current.length - 1)));
+    if (onAutoSave) onAutoSave(buildDoc());
+  }
+
+  /** Build a SketchDoc snapshot of the current editor state. The
+   *  doc carries stable per-stroke + per-page ids so a subsequent
+   *  autosave emits the same id for an unchanged stroke (PG patch
+   *  stays diffable, future per-object operations can address by
+   *  id). The `documentId` is filled from the caller's prop —
+   *  typically the row id. */
+  function buildDoc(): SketchDoc {
+    const idFor = (s: Stroke): string => {
+      let id = strokeIdsRef.current.get(s);
+      if (!id) {
+        id = newSketchId('stroke');
+        strokeIdsRef.current.set(s, id);
+      }
+      return id;
+    };
+    const pages: SketchDocPage[] = pagesRef.current.map((page, i) => ({
+      id: pageIdsRef.current[i] || newSketchId('page'),
+      objects: page.strokes.map((s) => strokeToDocStroke(s, idFor(s))),
+    }));
+    return {
+      schemaVersion: 1,
+      documentId: documentId || 'sketch',
+      paper: { size: paperToDocSize(pageFormat) },
+      pages,
+    };
   }
 
   // Cmd-Z / Cmd-Shift-Z / Esc keyboard shortcuts.
@@ -645,6 +783,9 @@ export function SketchModal({
       if (saveMode === 'inline') {
         // Caller stores bytes directly in row.data — no upload.
         const url = c.toDataURL('image/png');
+        // Flush the vector doc alongside the thumbnail so the row's
+        // _sketchDoc + content fields stay in step across the save.
+        if (onAutoSave) onAutoSave(buildDoc());
         onSaved(url, name);
       } else {
         const blob: Blob | null = await new Promise((res) => c.toBlob(res, 'image/png'));

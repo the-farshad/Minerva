@@ -32,6 +32,21 @@ export async function PATCH(
   if (!ref) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = (await req.json()) as { data?: Record<string, unknown> };
+  // Server validation for the vector sketch document. Caps payload
+  // size + structure so a malformed or oversized doc can't bloat
+  // row.data past PG's practical JSONB-edit envelope. Drops just
+  // the offending field rather than 4xx-ing the whole PATCH so an
+  // attempt to also patch unrelated fields still lands.
+  if (body.data && '_sketchDoc' in body.data) {
+    const { validateSketchDoc } = await import('@/lib/sketch-doc');
+    const err = validateSketchDoc(body.data._sketchDoc);
+    if (err) {
+      return NextResponse.json(
+        { error: `_sketchDoc rejected: ${err}` },
+        { status: 400 },
+      );
+    }
+  }
   const merged = { ...(ref.row.data as Record<string, unknown>), ...(body.data ?? {}) };
   const [updated] = await db.update(schema.rows)
     .set({ data: merged, updatedAt: new Date() })
