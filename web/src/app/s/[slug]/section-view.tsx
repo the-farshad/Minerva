@@ -75,6 +75,20 @@ export function SectionView({
         : r));
     } else if (event.kind === 'row.deleted' && event.sectionSlug === section.slug) {
       setRows((rs) => rs.filter((r) => r.id !== event.rowId));
+    } else if (event.kind === 'rows.bulkChanged' && event.sectionSlug === section.slug) {
+      // rewrite-tag / bulk-delete / import-sheet touch N rows at
+      // once and emit this compound event instead of N individual
+      // ones. Re-fetch the section's rows to pick up every change
+      // in one round-trip — without this a playlist rename never
+      // propagates to the visible group name.
+      void (async () => {
+        try {
+          const r = await fetch(`/api/sections/${section.slug}/rows`, { cache: 'no-store' });
+          if (!r.ok) return;
+          const fresh = (await r.json()) as Row[];
+          setRows(fresh);
+        } catch { /* tolerate */ }
+      })();
     }
   });
 

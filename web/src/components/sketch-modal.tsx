@@ -71,7 +71,16 @@ const TOOLS: ToolSpec[] = [
   { id: 'eraser',      label: 'Eraser',      Icon: Eraser,      minWidth: 8,  maxWidth: 32, alpha: 1    },
 ];
 
-const PALETTE = ['#1f1f1f', '#e11d48', '#ea580c', '#ca8a04', '#16a34a', '#0284c7', '#7c3aed', '#ffffff'];
+/** Expanded 16-swatch palette — two rows of inks (greys + dark
+ *  jewel tones + warm/cool spectrum). The native colour input is
+ *  still rendered next to the row so the user can pick anything
+ *  off-palette when needed. */
+const PALETTE = [
+  '#1f1f1f', '#52525b', '#a1a1aa', '#ffffff',
+  '#e11d48', '#ea580c', '#ca8a04', '#16a34a',
+  '#0d9488', '#0284c7', '#4f46e5', '#7c3aed',
+  '#c026d3', '#db2777', '#a16207', '#1e3a8a',
+];
 
 type Point = { x: number; y: number; w: number };
 type Stroke = { tool: Tool; color: string; alpha: number; points: Point[] };
@@ -249,12 +258,22 @@ export function SketchModal({
     const continueStroke = (clientX: number, clientY: number, pressure: number, ptype: string) => {
       if (!drawingRef.current) return;
       const r = rectOf();
-      drawingRef.current.points.push({
-        x: clientX - r.left,
-        y: clientY - r.top,
-        w: widthFor(pressure, ptype),
-      });
-      setDebug(`move · ${ptype} · p=${pressure.toFixed(2)} · pts=${drawingRef.current.points.length}`);
+      const nx = clientX - r.left;
+      const ny = clientY - r.top;
+      // Drop noise: Pencil fires ~120 Hz so successive samples may
+      // land sub-pixel apart. Skip points closer than 1.2 CSS px from
+      // the previous one — keeps the path smooth and shrinks the
+      // serialized point array by ~40%, which matters for SVG/PDF
+      // export size and per-frame redraw cost on long strokes.
+      const pts = drawingRef.current.points;
+      if (pts.length > 0) {
+        const last = pts[pts.length - 1];
+        const dx = nx - last.x;
+        const dy = ny - last.y;
+        if (dx * dx + dy * dy < 1.2 * 1.2) return;
+      }
+      pts.push({ x: nx, y: ny, w: widthFor(pressure, ptype) });
+      setDebug(`move · ${ptype} · p=${pressure.toFixed(2)} · pts=${pts.length}`);
       redraw();
     };
     const endStroke = (ptype: string) => {
@@ -394,28 +413,39 @@ export function SketchModal({
       ctx.restore();
       return;
     }
-    // Quadratic smoothing through midpoints — iOS-Notes feel.
-    for (let i = 1; i < s.points.length - 1; i++) {
-      const prev = s.points[i - 1];
-      const cur = s.points[i];
-      const next = s.points[i + 1];
-      const sx = (prev.x + cur.x) / 2;
-      const sy = (prev.y + cur.y) / 2;
-      const ex = (cur.x + next.x) / 2;
-      const ey = (cur.y + next.y) / 2;
-      ctx.lineWidth = (prev.w + cur.w + next.w) / 3;
+    // Catmull-Rom-to-Bezier smoothing: walk every interior triplet
+    // and emit a cubic bezier whose control points are derived from
+    // a Catmull-Rom spline through the four-point window around the
+    // segment. Visually rounder than quadratic-through-midpoints,
+    // and the per-segment width is a 5-point moving average so the
+    // line tapers smoothly with pressure instead of step-changing
+    // at every sample.
+    const widthAt = (i: number): number => {
+      let sum = 0;
+      let count = 0;
+      for (let k = Math.max(0, i - 2); k <= Math.min(s.points.length - 1, i + 2); k++) {
+        sum += s.points[k].w;
+        count += 1;
+      }
+      return sum / count;
+    };
+    for (let i = 0; i < s.points.length - 1; i++) {
+      const p0 = s.points[Math.max(0, i - 1)];
+      const p1 = s.points[i];
+      const p2 = s.points[i + 1];
+      const p3 = s.points[Math.min(s.points.length - 1, i + 2)];
+      // Catmull-Rom → cubic Bezier control points (tension 0.5,
+      // the classic centripetal-style smoothing factor).
+      const c1x = p1.x + (p2.x - p0.x) / 6;
+      const c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6;
+      const c2y = p2.y - (p3.y - p1.y) / 6;
+      ctx.lineWidth = (widthAt(i) + widthAt(i + 1)) / 2;
       ctx.beginPath();
-      ctx.moveTo(sx, sy);
-      ctx.quadraticCurveTo(cur.x, cur.y, ex, ey);
+      ctx.moveTo(p1.x, p1.y);
+      ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2.x, p2.y);
       ctx.stroke();
     }
-    const second = s.points[s.points.length - 2];
-    const last = s.points[s.points.length - 1];
-    ctx.lineWidth = (second.w + last.w) / 2;
-    ctx.beginPath();
-    ctx.moveTo((second.x + last.x) / 2, (second.y + last.y) / 2);
-    ctx.lineTo(last.x, last.y);
-    ctx.stroke();
     ctx.restore();
   }
 
@@ -857,14 +887,14 @@ function SketchToolButton({ label, icon, active, onActivate }: {
       aria-pressed={active}
       {...handlers}
       style={{ cursor: 'pointer' }}
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
         active
           ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white'
           : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
       }`}
     >
       {icon}
-      <span className="hidden sm:inline">{label}</span>
+      <span>{label}</span>
     </button>
   );
 }

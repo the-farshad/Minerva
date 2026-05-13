@@ -749,7 +749,7 @@ function GroupNameEditor({
         className="inline-flex items-center gap-1 text-sm font-medium"
       >
         {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        <span className="border-b border-transparent group-hover:border-zinc-300 dark:group-hover:border-zinc-700">
+        <span className="border-b border-dashed border-transparent group-hover:border-zinc-400 dark:group-hover:border-zinc-500">
           {name}
         </span>
         <span className="text-xs font-normal text-zinc-500">· {count}</span>

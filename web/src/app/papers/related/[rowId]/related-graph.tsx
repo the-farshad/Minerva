@@ -453,6 +453,50 @@ export function RelatedGraph({
             const r = nodeRadius(n as GraphNode);
             return (r * r) / 36; // sqrt(val) * nodeRelSize(6) ≈ r
           }}
+          /* Year axis tick labels — drawn under each unique year
+             present in the result set when year-axis is on. Years
+             with zero papers are skipped so the axis isn't padded
+             with empty space; the simulation-coord laneW we use to
+             pin nodes is the same one we use to position the tick
+             labels, so they line up with the node columns. */
+          onRenderFramePre={!yearAxis ? undefined : (ctx, globalScale) => {
+            const years = new Set<number>();
+            for (const p of papers) if (p.year && p.year > 0) years.add(p.year);
+            if (yearBounds.min > 0) years.add(yearBounds.min);
+            if (yearBounds.max > 0) years.add(yearBounds.max);
+            if (years.size === 0) return;
+            const laneW = Math.max(400, size.w - 80);
+            const ymin = yearBounds.min;
+            const ymax = yearBounds.max;
+            const sorted = Array.from(years).sort((a, b) => a - b);
+            // Find the lowest node Y in the current frame so the
+            // labels sit below the cloud instead of crashing into it.
+            // Falls back to size.h/2 - 30 in simulation coords if
+            // nothing's been laid out yet.
+            let maxY = -Infinity;
+            for (const n of graphData.nodes) {
+              const ny = (n as { y?: number }).y;
+              if (typeof ny === 'number' && ny > maxY) maxY = ny;
+            }
+            const labelY = (Number.isFinite(maxY) ? maxY : 0) + 30;
+            ctx.save();
+            ctx.font = `${10 / globalScale}px ui-sans-serif, system-ui`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = isDark ? '#a1a1aa' : '#52525b';
+            ctx.strokeStyle = isDark ? 'rgba(161,161,170,0.25)' : 'rgba(82,82,91,0.25)';
+            ctx.lineWidth = 1 / globalScale;
+            for (const yr of sorted) {
+              const t = ymax === ymin ? 0 : (yr - ymin) / (ymax - ymin);
+              const cx = (t - 0.5) * laneW;
+              ctx.beginPath();
+              ctx.moveTo(cx, labelY - 6 / globalScale);
+              ctx.lineTo(cx, labelY);
+              ctx.stroke();
+              ctx.fillText(String(yr), cx, labelY + 2 / globalScale);
+            }
+            ctx.restore();
+          }}
           nodeCanvasObject={drawNode}
           nodePointerAreaPaint={(node, color, ctx) => {
             const r = nodeRadius(node as GraphNode) + 4;
