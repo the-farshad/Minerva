@@ -121,13 +121,29 @@ export function SketchModal({
    * during SSR; we only render the portal on the client tick. */
   useEffect(() => setMounted(true), []);
 
-  /* Lock body scroll while open so the page underneath can't
-   * scroll into view on iPad when the user gestures. */
+  /* Lock body scroll while open + restore body.pointer-events.
+   *
+   * Sketch opens almost exclusively from inside a Radix preview
+   * dialog, and Radix Dialog sets `body { pointer-events: none }`
+   * while it's open as its standard "block the page underneath"
+   * behaviour. Our sketch portal is a direct child of <body>, so
+   * it inherits that `none`. Result: every tap on the canvas or
+   * the toolbar buttons silently dies and the diagnostic strip
+   * reports body.pe=none with 0 events arriving.
+   *
+   * Force-clear pointer-events while the modal is open and restore
+   * the prior value on close so Radix can continue managing the
+   * parent dialog cleanly. */
   useEffect(() => {
     if (!open) return;
-    const prev = document.body.style.overflow;
+    const prevOverflow = document.body.style.overflow;
+    const prevPe = document.body.style.pointerEvents;
     document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
+    document.body.style.pointerEvents = '';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.pointerEvents = prevPe;
+    };
   }, [open]);
 
   /* Canvas size, DPR, redraw on open + seed image load. */
@@ -588,7 +604,10 @@ export function SketchModal({
   const hasContent = strokesRef.current.length > 0 || !!bgImageRef.current;
 
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex flex-col bg-zinc-50 dark:bg-zinc-950">
+    <div
+      className="pointer-events-auto fixed inset-0 z-[80] flex flex-col bg-zinc-50 dark:bg-zinc-950"
+      style={{ pointerEvents: 'auto' }}
+    >
       {/* Top bar: title + Undo/Redo/Clear/Save/Export/Close ----- */}
       <header className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
         <strong className="text-sm">Sketch</strong>
