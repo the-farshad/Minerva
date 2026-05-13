@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download, Calendar as CalIcon, FileText, BookOpen, ChevronDown, X, List, GitBranch } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download, Calendar as CalIcon, FileText, BookOpen, ChevronDown, X, List, GitBranch, Filter } from 'lucide-react';
 import { RelatedGraph } from './related-graph';
+import { RelatedFunnel } from './related-funnel';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 
@@ -58,7 +59,7 @@ export function RelatedView({
   const [mirrored, setMirrored] = useState<Set<string>>(new Set());
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [view, setView] = useState<'list' | 'graph'>('list');
+  const [view, setView] = useState<'list' | 'graph' | 'funnel'>('list');
   const [yearPickerOpen, setYearPickerOpen] = useState(false);
   const yearPickerRef = useRef<HTMLDivElement>(null);
 
@@ -429,6 +430,18 @@ export function RelatedView({
           >
             <GitBranch className="h-3.5 w-3.5" /> Graph
           </button>
+          <button
+            type="button"
+            onClick={() => setView('funnel')}
+            title="Filter-pipeline funnel — see how many candidates survive each active filter"
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+              view === 'funnel'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            <Filter className="h-3.5 w-3.5" /> Funnel
+          </button>
         </div>
       </div>
 
@@ -685,7 +698,18 @@ export function RelatedView({
         />
       )}
 
-      <ul className={`mt-2 space-y-2 ${view === 'graph' ? 'hidden' : ''}`}>
+      {view === 'funnel' && papers && (
+        <RelatedFunnel
+          papers={papers}
+          added={added}
+          yearFrom={yearFrom}
+          yearTo={yearTo}
+          pdfOnly={pdfOnly}
+          venueFilter={venueFilter}
+        />
+      )}
+
+      <ul className={`mt-2 space-y-2 ${view !== 'list' ? 'hidden' : ''}`}>
         {filtered.map((p) => {
           const key = paperKey(p);
           const url = paperUrl(p);
