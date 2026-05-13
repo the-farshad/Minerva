@@ -480,10 +480,18 @@ export function NotesPane({
         open={sketchOpen}
         onClose={() => setSketchOpen(false)}
         seed={effType === 'sketch' ? value : undefined}
+        /* For sketch-typed notes, the saved bytes go INTO row.data.content
+         * as a data: URL. This matches the inline-cell sketch flow and
+         * removes the Drive-upload dependency that was silently failing
+         * — when the upload errored, content stayed empty and the next
+         * "Edit sketch" click looked exactly like creating a new one.
+         * For markdown / text notes, sketches inserted inline are
+         * attachments and still go through the Drive upload path so
+         * they don't bloat the row body with multi-KB data-URLs.
+         */
+        saveMode={effType === 'sketch' ? 'inline' : 'upload'}
         onSaved={(url, name) => {
           if (effType === 'sketch') {
-            // For sketch-typed notes, the saved data-URL IS the
-            // content; replace, don't splice.
             schedule(url);
           } else {
             spliceAtCaret(`![${name}](${url})\n`);

@@ -493,7 +493,17 @@ export function GroupedGrid({
                           const kind = section.preset === 'youtube' ? 'video' : 'paper';
                           toast.info(`Saving ${pending.length} item${pending.length === 1 ? '' : 's'} offline…`);
                           let done = 0, failed = 0;
-                          await Promise.all(pending.map(async (gr) => {
+                          // Serialize the saves: yt-dlp + the helper +
+                          // Drive throttle hard when N parallel video
+                          // downloads hit them at once (the user
+                          // reported one-by-one works but full-playlist
+                          // parallel breaks). Sequential with a 500 ms
+                          // inter-task gap is slower but reliable; the
+                          // background toast lets the user keep working.
+                          // A "progress" toast every 5 completions
+                          // shows movement on long playlists.
+                          for (let i = 0; i < pending.length; i++) {
+                            const gr = pending[i];
                             try {
                               const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/save-offline`, {
                                 method: 'POST',
@@ -503,7 +513,13 @@ export function GroupedGrid({
                               await readNdjsonResult(resp);
                               done++;
                             } catch { failed++; }
-                          }));
+                            if (i + 1 < pending.length) {
+                              if ((done + failed) % 5 === 0) {
+                                toast.info(`Saved ${done + failed}/${pending.length}…`);
+                              }
+                              await new Promise((r) => setTimeout(r, 500));
+                            }
+                          }
                           toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}${already > 0 ? ` · ${already} already offline` : ''}.`);
                         }}
                         className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
