@@ -146,26 +146,52 @@ export async function fetchRelatedFromOpenAlex(opts: {
   if (!seed.id) {
     return { ok: false, status: 404, error: 'OpenAlex found the paper but returned no ID.' };
   }
-  const related = seed.related.slice(0, Math.max(1, Math.min(opts.limit, 50)));
-  if (related.length === 0) {
+  // The seed's curated related_works[] is small (~10–20 max).
+  // For well-cited classics we boost coverage by also pulling
+  // the top-cited papers that CITE the seed — those are usually
+  // the followup / application papers a user studying the seed
+  // wants to know about. OpenAlex's /works?filter=cites:<id>
+  // endpoint is free and respects per_page up to 200.
+  const limit = Math.max(1, Math.min(opts.limit, 50));
+  const seedId = seed.id.replace(/^https:\/\/openalex\.org\//, '');
+  const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,primary_location,referenced_works';
+  const relatedIds = seed.related.map((u) => u.replace(/^https:\/\/openalex\.org\//, ''));
+
+  // Fetch top citers of the seed in parallel. cited_by_count
+  // descending gives "most-impactful citers" — papers that
+  // built on the seed and themselves became important.
+  let citerIds: string[] = [];
+  try {
+    const rCite = await fetch(politeUrl(
+      `/works?filter=cites:${encodeURIComponent(seedId)}&sort=cited_by_count:desc&per_page=${Math.max(20, limit)}&select=id`,
+      opts.email,
+    ));
+    if (rCite.ok) {
+      const jc = (await rCite.json()) as { results?: { id?: string }[] };
+      citerIds = (jc.results || [])
+        .map((w) => (w.id || '').replace(/^https:\/\/openalex\.org\//, ''))
+        .filter(Boolean);
+    }
+  } catch { /* citer expansion is best-effort */ }
+
+  // Union, dedupe (related-first so the curated list has visual
+  // priority), cap at limit.
+  const seen = new Set<string>();
+  const combinedIds: string[] = [];
+  for (const wid of [...relatedIds, ...citerIds]) {
+    if (!wid || seen.has(wid)) continue;
+    seen.add(wid);
+    combinedIds.push(wid);
+    if (combinedIds.length >= limit) break;
+  }
+  if (combinedIds.length === 0) {
     return { ok: true, papers: [], resolvedVia: opts.ref ? 'ref' : 'title' };
   }
-  // Batch-fetch details for the related work IDs. OpenAlex
-  // accepts up to ~50 IDs in a single filter so we usually fit
-  // in one round-trip.
+
   // Parallel single-work lookups. OpenAlex's list-filter for IDs
   // is finicky (pipe-OR returns only the first match in
-  // practice), and the related_works array is small enough
-  // (≤ ~10) that one-per-id is cheaper than fighting the filter
-  // syntax. Failed lookups (404, network) drop silently so a
-  // single deindexed work doesn't sink the whole page.
-  // OpenAlex deprecated `host_venue` — it's now a 400 in the
-  // select parameter. The venue lives under
-  // primary_location.source.display_name; we keep the host_venue
-  // type field on OAWork for compatibility but never request it.
-  const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,primary_location,referenced_works';
-  const lookups = related.map(async (u) => {
-    const wid = u.replace(/^https:\/\/openalex\.org\//, '');
+  // practice). One-per-id parallel is robust.
+  const lookups = combinedIds.map(async (wid) => {
     try {
       const r = await fetch(politeUrl(`/works/${encodeURIComponent(wid)}?select=${fields}`, opts.email));
       if (!r.ok) return null;
@@ -176,11 +202,36 @@ export async function fetchRelatedFromOpenAlex(opts: {
   });
   const raw = await Promise.all(lookups);
   const works = raw.filter((w): w is OAWork => w != null);
+
+  // Backfill titles via CrossRef for any work OpenAlex returned
+  // with a null title BUT a real DOI. CrossRef almost always
+  // has the title — these "untitled" rows were just OpenAlex
+  // record gaps, not actually anonymous papers.
+  await backfillTitlesFromCrossRef(works);
+
   const papers = works.map(workToPaper);
-  // Number of related_works[] pointers that didn't resolve to a
-  // live OpenAlex record on this fetch. Surfaced so the UI can
-  // tell the user "20 found, 18 readable" instead of pretending
-  // the list is complete.
   const dropped = raw.length - works.length;
   return { ok: true, papers, resolvedVia: opts.ref ? 'ref' : 'title', dropped };
+}
+
+/** For OpenAlex Works that came back without a title but with a
+ *  DOI, fetch the missing title from CrossRef. Mutates the
+ *  `works` array in place. Quiet on per-paper failure. */
+async function backfillTitlesFromCrossRef(works: OAWork[]): Promise<void> {
+  const needs = works.filter((w) => !w.title && w.doi);
+  if (needs.length === 0) return;
+  await Promise.all(needs.map(async (w) => {
+    const doi = (w.doi || '').replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
+    if (!doi) return;
+    try {
+      const r = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
+        headers: { Accept: 'application/json' },
+        next: { revalidate: 3600 },
+      });
+      if (!r.ok) return;
+      const j = (await r.json()) as { message?: { title?: string[] } };
+      const t = j.message?.title?.[0];
+      if (t) w.title = t;
+    } catch { /* tolerate */ }
+  }));
 }

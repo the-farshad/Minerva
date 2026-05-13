@@ -39,21 +39,56 @@ export async function GET(req: NextRequest) {
   const provider = (await getServerPref<string>(userId, 'related_papers_provider')) || 'openalex';
 
   try {
-    const res = provider === 'semanticscholar'
-      ? await fetchRelatedFromSemanticScholar({ ref, title, limit })
-      : await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
+    if (provider === 'semanticscholar') {
+      const ss = await fetchRelatedFromSemanticScholar({ ref, title, limit });
+      // SS-empty is a real failure mode for well-cited classics
+      // — their similarity index is opportunistic and routinely
+      // returns recommendedPapers:[] for foundational papers.
+      // Rather than punish the user for picking SS, transparently
+      // fall through to OpenAlex when SS resolves cleanly but
+      // returns nothing, and label the response so the UI can
+      // tell them what happened.
+      if (ss.ok && ss.papers.length === 0) {
+        const oa = await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
+        if (oa.ok) {
+          return NextResponse.json({
+            papers: oa.papers,
+            resolvedVia: oa.resolvedVia,
+            dropped: 'dropped' in oa ? oa.dropped : 0,
+            provider: 'openalex',
+            fallbackFrom: 'semanticscholar',
+          });
+        }
+        // OpenAlex fallback failed too — return the original
+        // SS-empty result rather than the OpenAlex error, since
+        // the SS path was the requested one.
+      }
+      if (ss.ok) {
+        return NextResponse.json({
+          papers: ss.papers,
+          resolvedVia: ss.resolvedVia,
+          dropped: 0,
+          provider: 'semanticscholar',
+        });
+      }
+      return NextResponse.json(
+        { error: ss.error, rateLimited: ss.rateLimited, provider: 'semanticscholar' },
+        { status: ss.status },
+      );
+    }
 
-    if (res.ok) {
+    const oa = await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
+    if (oa.ok) {
       return NextResponse.json({
-        papers: res.papers,
-        resolvedVia: res.resolvedVia,
-        dropped: 'dropped' in res ? res.dropped : 0,
-        provider,
+        papers: oa.papers,
+        resolvedVia: oa.resolvedVia,
+        dropped: 'dropped' in oa ? oa.dropped : 0,
+        provider: 'openalex',
       });
     }
     return NextResponse.json(
-      { error: res.error, rateLimited: res.rateLimited, provider },
-      { status: res.status },
+      { error: oa.error, rateLimited: oa.rateLimited, provider: 'openalex' },
+      { status: oa.status },
     );
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message, provider }, { status: 502 });

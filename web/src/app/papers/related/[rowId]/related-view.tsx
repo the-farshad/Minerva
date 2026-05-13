@@ -44,6 +44,7 @@ export function RelatedView({
 }) {
   const [papers, setPapers] = useState<Paper[] | null>(null);
   const [provider, setProvider] = useState<string>('openalex');
+  const [fallbackFrom, setFallbackFrom] = useState<string>('');
   const [resolvedVia, setResolvedVia] = useState<string>('');
   const [dropped, setDropped] = useState<number>(0);
   const [err, setErr] = useState<string | null>(null);
@@ -95,10 +96,11 @@ export function RelatedView({
       if (seedRef) params.set('ref', seedRef);
       if (seedTitle) params.set('title', seedTitle);
       const r2 = await fetch(`/api/related-papers?${params.toString()}`);
-      const j = (await r2.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string; dropped?: number };
+      const j = (await r2.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string; dropped?: number; fallbackFrom?: string };
       setDropped(j.dropped ?? 0);
       if (j.provider) setProvider(j.provider);
       if (j.resolvedVia) setResolvedVia(j.resolvedVia);
+      setFallbackFrom(j.fallbackFrom || '');
       if (!r2.ok) throw new Error(j.error || `Recommendations: ${r2.status}`);
       setPapers(j.papers || []);
     } catch (e) {
@@ -142,11 +144,12 @@ export function RelatedView({
         if (seedRef) params.set('ref', seedRef);
         if (seedTitle) params.set('title', seedTitle);
         const r = await fetch(`/api/related-papers?${params.toString()}`);
-        const j = (await r.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string; dropped?: number };
+        const j = (await r.json()) as { papers?: Paper[]; error?: string; provider?: string; resolvedVia?: string; dropped?: number; fallbackFrom?: string };
         if (cancelled) return;
         if (j.provider) setProvider(j.provider);
         if (j.resolvedVia) setResolvedVia(j.resolvedVia);
         setDropped(j.dropped ?? 0);
+        setFallbackFrom(j.fallbackFrom || '');
         if (!r.ok) throw new Error(j.error || `Recommendations: ${r.status}`);
         setPapers(j.papers || []);
       } catch (e) {
@@ -322,8 +325,14 @@ export function RelatedView({
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-xs uppercase tracking-wide text-zinc-500">Related papers</div>
             {papers && (
-              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" title={`Resolved via ${resolvedVia || 'ref'}`}>
+              <span
+                className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+                title={fallbackFrom
+                  ? `Resolved via ${resolvedVia || 'ref'} — your preferred provider (${fallbackFrom}) returned no results so we auto-fell back to ${provider}.`
+                  : `Resolved via ${resolvedVia || 'ref'}`}
+              >
                 {provider === 'semanticscholar' ? 'Semantic Scholar' : 'OpenAlex'}
+                {fallbackFrom && <span className="ml-1 normal-case text-[9px] text-zinc-500">(SS empty)</span>}
               </span>
             )}
             {papers && dropped > 0 && (
