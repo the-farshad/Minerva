@@ -660,13 +660,23 @@ export function SketchModal({
           }}
         />
         {/* Live diagnostic — proves whether events are arriving
-          * and which family. Stays small + bottom-right so it
-          * doesn't distract while drawing. */}
-        <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 font-mono text-[10px] text-white">
-          {canvasRef.current ? `${canvasRef.current.clientWidth}×${canvasRef.current.clientHeight}` : '?×?'}
-          {' · '}{debug}
-          {' · '}strokes={strokesRef.current.length}{drawingRef.current ? '+1' : ''}
-          {bgImageRef.current ? ' · bg' : ''}
+          * and which family. Includes body.pointer-events so a
+          * stuck Radix lock is visible without devtools. Wider
+          * so the whole event line is readable on iPad. */}
+        <div className="pointer-events-none absolute bottom-2 right-2 max-w-[90vw] rounded-md bg-black/75 px-2 py-1 font-mono text-[10px] leading-tight text-white">
+          <div>
+            canvas={canvasRef.current ? `${canvasRef.current.clientWidth}×${canvasRef.current.clientHeight}` : '?×?'}
+            {' '}· strokes={strokesRef.current.length}{drawingRef.current ? '+1' : ''}
+            {bgImageRef.current ? ' · bg' : ''}
+          </div>
+          <div>event: {debug}</div>
+          <div>
+            body.pe=
+            {typeof document !== 'undefined' && document.body.style.pointerEvents === 'none'
+              ? <span className="text-red-400">none (STUCK)</span>
+              : 'ok'}
+            {' '}· tool={tool} · w={effectiveWidth.toFixed(1)}
+          </div>
         </div>
       </div>
 

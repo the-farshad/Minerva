@@ -8,6 +8,7 @@ import { ThemeBoot } from '@/components/theme-card';
 import { ConfirmHost } from '@/components/confirm';
 import { PromptHost } from '@/components/prompt';
 import { MultiPickerHost } from '@/components/multi-picker';
+import { IpadPenBridge } from '@/components/ipad-pen-bridge';
 import { pullServerPrefs } from '@/lib/prefs';
 
 function PrefsBoot() {
@@ -29,6 +30,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <ConfirmHost />
       <PromptHost />
       <MultiPickerHost />
+      <IpadPenBridge />
     </QueryClientProvider>
   );
 }
