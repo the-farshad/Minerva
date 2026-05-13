@@ -75,13 +75,35 @@ function workToPaper(w: OAWork): RelatedPaper {
   // Strip the URL prefix off referenced work IDs so the client
   // can compute set intersections with cheap string equality.
   const refs = (w.referenced_works || []).map((u) => u.replace(/^https:\/\/openalex\.org\//, ''));
+
+  // Title fallback for the truly-no-title-and-no-DOI case (the
+  // CrossRef backfill couldn't help). Synthesize a label from
+  // first author + year + venue so the row is still recognisable.
+  let title = w.title || undefined;
+  if (!title) {
+    const firstAuthor = (w.authorships || []).find((a) => a.author?.display_name)?.author?.display_name;
+    const parts: string[] = [];
+    if (firstAuthor) {
+      const authorCount = (w.authorships || []).length;
+      parts.push(authorCount > 1 ? `${firstAuthor} et al.` : firstAuthor);
+    }
+    if (w.publication_year) parts.push(String(w.publication_year));
+    if (venue) parts.push(venue);
+    if (parts.length > 0) {
+      // Leading `〔synth〕` marker so the client knows to italicise
+      // and signal "this label was synthesised". The marker gets
+      // stripped before render — see related-view.tsx.
+      title = `〔synth〕${parts.join(' · ')}`;
+    }
+  }
+
   return {
     paperId: (w.id || '').replace(/^https:\/\/openalex\.org\//, ''),
     externalIds: {
       DOI: doi || undefined,
       ArXiv: arxivMatch?.[1] || undefined,
     },
-    title: w.title || undefined,
+    title,
     authors: (w.authorships || [])
       .map((a) => ({ name: a.author?.display_name || '' }))
       .filter((a) => a.name),

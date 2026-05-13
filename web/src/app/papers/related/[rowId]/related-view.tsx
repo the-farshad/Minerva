@@ -313,7 +313,7 @@ export function RelatedView({
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <Link
-        href={`/s/${encodeURIComponent(sectionSlug)}?row=${encodeURIComponent(rowId)}`}
+        href={`/s/${encodeURIComponent(sectionSlug)}`}
         className="mb-3 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
       >
         <ArrowLeft className="h-3 w-3" /> Back to {sectionSlug}
@@ -342,6 +342,35 @@ export function RelatedView({
               >
                 {papers.length} readable · {dropped} dropped
               </span>
+            )}
+            {/* Inline provider toggle — flips between OpenAlex
+              * and Semantic Scholar without leaving the page;
+              * persists to the same server pref Settings uses. */}
+            {papers && (
+              <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                {([
+                  { v: 'openalex',         label: 'OpenAlex' },
+                  { v: 'semanticscholar',  label: 'SS' },
+                ] as const).map((p) => {
+                  const active = provider === p.v;
+                  return (
+                    <button
+                      key={p.v}
+                      type="button"
+                      onClick={() => { if (!active) void switchProviderAndRefetch(p.v); }}
+                      disabled={switchingProvider}
+                      title={`Switch to ${p.label}`}
+                      className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide transition disabled:opacity-50 ${
+                        active
+                          ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                          : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
           <h1 className="mt-0.5 text-lg font-semibold leading-tight">{seedTitle}</h1>
@@ -672,21 +701,28 @@ export function RelatedView({
             >
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
-                  {p.title ? (
-                    url ? (
-                      <a href={url} target="_blank" rel="noopener" className="text-sm font-medium hover:underline">
-                        {p.title}
-                      </a>
-                    ) : (
-                      <span className="text-sm font-medium">{p.title}</span>
-                    )
-                  ) : (
-                    /* Untitled — OpenAlex sometimes has a record
-                       with no `title` field. Surface the paperId
-                       so the user can still recognise it (and
-                       follow the link) instead of seeing a wall
-                       of "(untitled)" entries that look broken. */
-                    url ? (
+                  {(() => {
+                    const synth = p.title?.startsWith('〔synth〕');
+                    const cleanTitle = synth ? (p.title || '').replace(/^〔synth〕/, '') : p.title;
+                    if (cleanTitle) {
+                      const className = synth
+                        ? 'text-sm italic text-zinc-700 hover:underline dark:text-zinc-300'
+                        : 'text-sm font-medium hover:underline';
+                      const inner = (
+                        <>
+                          {cleanTitle}
+                          {synth && <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0 text-[9px] uppercase tracking-wide text-amber-700 dark:bg-amber-950 dark:text-amber-300">untitled</span>}
+                        </>
+                      );
+                      return url
+                        ? <a href={url} target="_blank" rel="noopener" className={className}>{inner}</a>
+                        : <span className={className}>{inner}</span>;
+                    }
+                    /* Genuinely no usable label — neither
+                       OpenAlex nor CrossRef nor the synthesise
+                       fallback gave us anything. Render the
+                       paperId verbatim. */
+                    return url ? (
                       <a href={url} target="_blank" rel="noopener" className="text-sm italic text-zinc-500 hover:underline dark:text-zinc-400">
                         Untitled work
                         {p.paperId && <span className="ml-1 font-mono text-[10px] text-zinc-400">{p.paperId}</span>}
@@ -696,8 +732,8 @@ export function RelatedView({
                         Untitled work
                         {p.paperId && <span className="ml-1 font-mono text-[10px] text-zinc-400">{p.paperId}</span>}
                       </span>
-                    )
-                  )}
+                    );
+                  })()}
                   <div className="mt-0.5 text-[11px] text-zinc-500">
                     {authors}
                     {p.year && <span> · {p.year}</span>}

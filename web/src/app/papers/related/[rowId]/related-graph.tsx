@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { ExternalLink, Plus, Check, Loader2 } from 'lucide-react';
+import type { ForceGraphMethods } from 'react-force-graph-2d';
 
 /** react-force-graph-2d is a 100% client / canvas component —
  *  importing it server-side throws (no `document`). Dynamic-
@@ -64,6 +65,7 @@ export function RelatedGraph({
   onAdd: (p: Paper) => Promise<boolean>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const [size, setSize] = useState({ w: 800, h: 540 });
   const [focused, setFocused] = useState<Paper | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -92,6 +94,34 @@ export function RelatedGraph({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [fullscreen]);
+
+  // Configure the d3-force collision radius explicitly so nodes
+  // don't overlap with our custom canvas draw. We can't pass
+  // this via the ForceGraph2D props (lib only exposes nodeRelSize
+  // + nodeVal which produce a single uniform radius), so we
+  // poke at the simulation through the imperative ref after
+  // it's mounted. Re-runs on yearAxis since the key-bump
+  // remounts the canvas.
+  useEffect(() => {
+    let cancelled = false;
+    const apply = () => {
+      if (cancelled) return;
+      const g = graphRef.current as unknown as {
+        d3Force?: (name: string) => { radius?: (fn: (n: GraphNode) => number) => unknown } | undefined;
+        d3ReheatSimulation?: () => void;
+      } | undefined;
+      const collide = g?.d3Force?.('collide');
+      if (!collide?.radius) {
+        // Lib not mounted yet — try again on the next frame.
+        requestAnimationFrame(apply);
+        return;
+      }
+      collide.radius((n: GraphNode) => nodeRadius(n) + 6);
+      g?.d3ReheatSimulation?.();
+    };
+    apply();
+    return () => { cancelled = true; };
+  }, [yearAxis, fullscreen]);
 
   /** Year axis: when enabled, fix each node's vertical position
    *  proportional to publication year — newest at the top, oldest
@@ -310,11 +340,34 @@ export function RelatedGraph({
         style={containerStyle}
       >
         <ForceGraph2D
+          /* Key bumps on yearAxis so the simulation actually
+             re-runs with the new fy values. react-force-graph
+             persists the d3 simulation across graphData updates,
+             which meant toggling year-axis previously stamped
+             new fy onto nodes but the live simulation ignored
+             them. Remounting forces a fresh init. */
+          /* Key bumps on yearAxis so the simulation actually
+             re-runs with the new fy values. react-force-graph
+             persists the d3 simulation across graphData updates,
+             which meant toggling year-axis previously stamped
+             new fy onto nodes but the live simulation ignored
+             them. Remounting forces a fresh init. */
+          key={yearAxis ? 'year' : 'force'}
+          ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
           width={size.w}
           height={size.h}
           graphData={graphData}
           backgroundColor={isDark ? '#18181b' : '#fafafa'}
           nodeRelSize={6}
+          // nodeVal feeds d3-force's default collide-radius
+          // calculation; align it with our drawn node radii so
+          // even if the explicit forceCollide config above
+          // hasn't applied yet, the lib doesn't overlap things
+          // by default.
+          nodeVal={(n) => {
+            const r = nodeRadius(n as GraphNode);
+            return (r * r) / 36; // sqrt(val) * nodeRelSize(6) ≈ r
+          }}
           nodeCanvasObject={drawNode}
           nodePointerAreaPaint={(node, color, ctx) => {
             const r = nodeRadius(node as GraphNode) + 4;
@@ -406,8 +459,33 @@ export function RelatedGraph({
         </aside>
       )}
 
-      <div className="mt-2 text-[10px] text-zinc-500">
-        Edges weighted by shared references (bibliographic coupling). Node size scales with the paper's reference count. Drag to pan, scroll to zoom, click a node for details.
+      {/* Compact legend explaining how the visualization
+        * encodes data — so users aren't left guessing what
+        * size / colour / edge thickness mean. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-zinc-500">
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block h-3 w-3 rounded-full bg-blue-700" />
+          Seed paper
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block h-2 w-2 rounded-full bg-zinc-400" />
+          <span className="inline-block h-3 w-3 rounded-full bg-zinc-400" />
+          Size = number of references this paper cites
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block h-3 w-3 rounded-full bg-emerald-500" />
+          Already added to your library
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-flex flex-col items-center justify-center gap-0.5">
+            <span className="block h-px w-6 bg-blue-600" />
+            <span className="block h-0.5 w-6 bg-blue-600" />
+          </span>
+          Edge thickness = shared references with the linked paper (bibliographic coupling)
+        </span>
+      </div>
+      <div className="mt-1 text-[10px] text-zinc-500">
+        Drag to pan, scroll to zoom, click a node for details. {yearAxis ? 'Year axis: newest at the top, oldest at the bottom.' : ''}
       </div>
     </div>
   );
