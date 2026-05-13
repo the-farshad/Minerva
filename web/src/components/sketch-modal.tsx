@@ -81,13 +81,22 @@ function getToolSpec(t: Tool): ToolSpec {
 }
 
 export function SketchModal({
-  open, onClose, onSaved, seed,
+  open, onClose, onSaved, seed, saveMode = 'upload',
 }: {
   open: boolean;
   onClose: () => void;
   onSaved: (url: string, name: string) => void;
-  /** Existing sketch URL to preload as a non-erasable background. */
+  /** Existing sketch URL or data-URL to preload as the canvas
+   *  background. Erasable as a stroke layer like any other ink. */
   seed?: string;
+  /** How `save()` produces the URL passed to onSaved:
+   *   - 'upload' (default): upload the PNG to the user's Drive and
+   *     emit `/api/drive/file?id=...`. Used by the notes-pane Sketch
+   *     tile where the canvas becomes a Drive-backed attachment.
+   *   - 'inline': skip the upload, emit a base64 PNG `data:` URL.
+   *     Used by inline-cell sketch columns where the row's column
+   *     stores the bytes directly and there's no separate file. */
+  saveMode?: 'upload' | 'inline';
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -456,19 +465,25 @@ export function SketchModal({
     }
     setUploading(true);
     try {
-      const blob: Blob | null = await new Promise((res) => c.toBlob(res, 'image/png'));
-      if (!blob) throw new Error('Canvas export failed.');
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const name = `sketch-${stamp}.png`;
-      const fd = new FormData();
-      fd.append('file', blob, name);
-      fd.append('name', name);
-      fd.append('kind', 'misc');
-      const r = await fetch('/api/drive/upload', { method: 'POST', body: fd });
-      const j = (await r.json().catch(() => ({}))) as { fileId?: string; error?: string };
-      if (!r.ok || !j.fileId) throw new Error(j.error || `upload: ${r.status}`);
-      const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
-      onSaved(url, name);
+      if (saveMode === 'inline') {
+        // Caller stores bytes directly in row.data — no upload.
+        const url = c.toDataURL('image/png');
+        onSaved(url, name);
+      } else {
+        const blob: Blob | null = await new Promise((res) => c.toBlob(res, 'image/png'));
+        if (!blob) throw new Error('Canvas export failed.');
+        const fd = new FormData();
+        fd.append('file', blob, name);
+        fd.append('name', name);
+        fd.append('kind', 'misc');
+        const r = await fetch('/api/drive/upload', { method: 'POST', body: fd });
+        const j = (await r.json().catch(() => ({}))) as { fileId?: string; error?: string };
+        if (!r.ok || !j.fileId) throw new Error(j.error || `upload: ${r.status}`);
+        const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
+        onSaved(url, name);
+      }
       toast.success('Sketch saved.');
       clearAll();
       onClose();
