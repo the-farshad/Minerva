@@ -18,6 +18,38 @@ export const DRIVE_SUBFOLDERS = {
   misc:  'misc',
 } as const;
 
+/** Sanitise an arbitrary string (user-entered category /
+ *  playlist name) so it's safe to use as a Drive folder name.
+ *  Drive doesn't allow `/` or `\` in display names without
+ *  awkward escaping, and trims surrounding whitespace. We also
+ *  collapse runs of weird chars so a name like "AI / ML 2024:
+ *  notes" becomes "AI _ ML 2024_ notes" which still reads fine.
+ *  Returns null for empty / whitespace-only input. */
+export function sanitizeForDriveFolder(s: string): string | null {
+  const cleaned = String(s || '')
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  return cleaned || null;
+}
+
+/** For Papers preset rows, build the array of folder segments
+ *  that uploadToMinervaDrive should land the file in. Currently:
+ *    - `[papers]`            for rows with no category
+ *    - `[papers, <category>]` for rows with one or more cats,
+ *      using the first comma-separated tag (Option B from the
+ *      design discussion: primary category folder, no shortcuts).
+ *  Keeping the logic in one place so upload-paper and save-
+ *  offline can't drift out of sync. */
+export function paperFolderSegments(data: { category?: unknown }): string[] {
+  const raw = String((data?.category as unknown) || '').trim();
+  if (!raw) return [DRIVE_SUBFOLDERS.paper];
+  const first = raw.split(',')[0].trim();
+  const safe = sanitizeForDriveFolder(first);
+  return safe ? [DRIVE_SUBFOLDERS.paper, safe] : [DRIVE_SUBFOLDERS.paper];
+}
+
 async function authedJson(token: string, url: string, init?: RequestInit) {
   const r = await fetch(url, {
     ...init,

@@ -26,7 +26,7 @@ import { NextRequest } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { uploadToMinervaDrive, DRIVE_SUBFOLDERS } from '@/lib/drive';
+import { uploadToMinervaDrive, DRIVE_SUBFOLDERS, paperFolderSegments } from '@/lib/drive';
 import { notifyTelegram } from '@/lib/telegram';
 import { getServerPref } from '@/lib/server-prefs';
 
@@ -222,12 +222,20 @@ async function saveOffline(
   try {
     // `filename` may carry a `<playlist>/<leaf>` shape from the
     // video branch. Split it into the nested-folder path expected
-    // by uploadToMinervaDrive — for papers it's just the kind
-    // subfolder; for videos with a playlist it's `videos/<playlist>`.
+    // by uploadToMinervaDrive — for papers it's `papers/<first-
+    // category>/`, for videos with a playlist it's
+    // `videos/<playlist>`. Category folders sanitised via
+    // paperFolderSegments so a tag like "AI / ML" doesn't
+    // create a fake nested path. Multi-tagged papers land in
+    // their FIRST category — Option B from the design spec.
     const parts = filename.split('/').filter(Boolean);
     const driveName = parts.pop() || filename;
-    const folderPath: string[] = [];
-    if (DRIVE_SUBFOLDERS[kind]) folderPath.push(DRIVE_SUBFOLDERS[kind]!);
+    let folderPath: string[] = [];
+    if (kind === 'paper') {
+      folderPath = paperFolderSegments(data);
+    } else if (DRIVE_SUBFOLDERS[kind]) {
+      folderPath = [DRIVE_SUBFOLDERS[kind]!];
+    }
     folderPath.push(...parts);
     const up = await uploadToMinervaDrive(
       userId, bytes, driveName, mime,

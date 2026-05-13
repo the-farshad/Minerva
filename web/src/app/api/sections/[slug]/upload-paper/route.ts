@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { uploadToMinervaDrive, DRIVE_SUBFOLDERS } from '@/lib/drive';
+import { uploadToMinervaDrive, paperFolderSegments } from '@/lib/drive';
 import { extractPdfMeta } from '@/lib/pdf-meta';
 
 // extractPdfMeta lives in src/lib/pdf-meta.ts so the
@@ -43,6 +43,11 @@ export async function POST(
     if (!(file instanceof Blob)) return NextResponse.json({ error: 'Missing file' }, { status: 400 });
     const name = (file as File).name?.replace(/\.pdf$/i, '').replace(/[_\-]+/g, ' ').trim() || 'paper';
 
+    // Optional category passed alongside the file — lets a
+    // future Add-with-category dialog (or AddByUrl) seed the
+    // Drive folder at create time. When absent, paperFolderSegments
+    // falls back to flat `papers/`.
+    const categoryHint = String(form.get('category') || '').trim();
     const ab = await file.arrayBuffer();
     const meta = extractPdfMeta(new Uint8Array(ab));
 
@@ -50,7 +55,7 @@ export async function POST(
       userId, ab,
       (meta.title || name).replace(/[^\w.\- ]+/g, '_').slice(0, 100) + '.pdf',
       'application/pdf',
-      DRIVE_SUBFOLDERS.paper,
+      paperFolderSegments({ category: categoryHint }),
     );
 
     const allowed = new Set(((sec.schema as { headers?: string[] }).headers) || []);
@@ -62,6 +67,7 @@ export async function POST(
     set('authors', meta.authors);
     set('year', meta.year);
     set('doi', meta.doi);
+    if (categoryHint) set('category', categoryHint);
     if (allowed.has('offline')) data.offline = `drive:${up.id}`;
     if (allowed.has('url')) data.url = `https://drive.google.com/file/d/${up.id}/view`;
 
