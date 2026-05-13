@@ -332,7 +332,7 @@ export function RelatedView({
                   : `Resolved via ${resolvedVia || 'ref'}`}
               >
                 {provider === 'semanticscholar' ? 'Semantic Scholar' : 'OpenAlex'}
-                {fallbackFrom && <span className="ml-1 normal-case text-[9px] text-zinc-500">(SS empty)</span>}
+                {fallbackFrom && <span className="ml-1 normal-case text-[9px] text-zinc-500">(Semantic Scholar empty)</span>}
               </span>
             )}
             {papers && dropped > 0 && (
@@ -350,7 +350,7 @@ export function RelatedView({
               <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
                 {([
                   { v: 'openalex',         label: 'OpenAlex' },
-                  { v: 'semanticscholar',  label: 'SS' },
+                  { v: 'semanticscholar',  label: 'Semantic Scholar' },
                 ] as const).map((p) => {
                   const active = provider === p.v;
                   return (
