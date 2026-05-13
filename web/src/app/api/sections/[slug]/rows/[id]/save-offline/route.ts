@@ -257,10 +257,28 @@ async function saveOffline(
   // HTML parse-mode + escaped dynamic content. Section titles
   // and filenames routinely contain `_`, `(`, `&` etc. that
   // would 400 the Markdown path.
-  const { escapeTelegramHtml: esc } = await import('@/lib/telegram');
-  void notifyTelegram(
-    userId,
-    `<b>[${esc(sec.title)}]</b> offline copy ready: ${esc(filename)}`,
-  );
+  //
+  // Push the file itself to Telegram alongside the notification:
+  // for papers + short audio (under the 50 MB Bot API ceiling) the
+  // user receives the bytes in chat with the caption *as* the
+  // notification — one message, no text-then-fetch round-trip. For
+  // files over the limit (mostly long videos) sendTelegramDocument
+  // returns false and we fall back to the text-only notice plus a
+  // Drive link in the caption.
+  const { escapeTelegramHtml: esc, sendTelegramDocument } = await import('@/lib/telegram');
+  const fileLeaf = filename.split('/').pop() || filename;
+  const caption = `<b>[${esc(sec.title)}]</b> offline copy ready: ${esc(fileLeaf)}`;
+  void (async () => {
+    const sent = await sendTelegramDocument(userId, bytes, fileLeaf, caption);
+    if (sent) return;
+    // Either Telegram isn't configured (no-op), or the file was
+    // too big for Bot API. Either way, a plain text notice with
+    // the Drive URL keeps the user informed.
+    const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
+    await notifyTelegram(
+      userId,
+      `${caption}\n<a href="${driveUrl}">Open in Drive</a>`,
+    );
+  })();
   return { fileId, kind, filename };
 }

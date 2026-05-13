@@ -67,3 +67,47 @@ export async function notifyTelegram(
     });
   } catch { /* tolerate — notifications must never break the call site */ }
 }
+
+/** Telegram Bot API caps document uploads at 50 MB; we keep a 1 MB
+ *  safety margin so a multipart boundary + caption can't push us
+ *  over and reject the whole upload at the server boundary. */
+const TG_DOC_LIMIT_BYTES = 49 * 1024 * 1024;
+
+/** Send a binary blob as a Telegram document (with optional caption).
+ *
+ *  Returns true if the upload succeeded — caller can use the boolean
+ *  to decide whether to fall back to a text-only notice (e.g. when
+ *  the file is too big or the user hasn't configured Telegram).
+ *
+ *  Used by save-offline so the user receives the just-mirrored PDF /
+ *  audio file in chat alongside (actually: inside) the notification —
+ *  one message per save rather than text-then-fetch-from-Drive.
+ *  Videos larger than ~50 MB fail the size guard and the caller
+ *  falls back to a plain notification. */
+export async function sendTelegramDocument(
+  userId: string,
+  bytes: ArrayBuffer,
+  filename: string,
+  caption?: string,
+): Promise<boolean> {
+  const prefs = await readTelegramPrefs(userId);
+  if (!prefs.enabled || !prefs.botToken || !prefs.chatId) return false;
+  if (bytes.byteLength > TG_DOC_LIMIT_BYTES) return false;
+  try {
+    const fd = new FormData();
+    fd.append('chat_id', prefs.chatId);
+    fd.append('document', new Blob([bytes]), filename);
+    if (caption) {
+      fd.append('caption', caption);
+      fd.append('parse_mode', 'HTML');
+    }
+    fd.append('disable_notification', 'false');
+    const r = await fetch(`https://api.telegram.org/bot${prefs.botToken}/sendDocument`, {
+      method: 'POST',
+      body: fd,
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
