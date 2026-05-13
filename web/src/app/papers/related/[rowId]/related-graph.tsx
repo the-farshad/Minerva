@@ -4,6 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { ExternalLink, Plus, Check, Loader2 } from 'lucide-react';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
+// d3-force-3d is what react-force-graph-2d uses under the hood for
+// its simulation, so importing forceCollide / forceY from the same
+// package guarantees the force objects match the shape the lib's
+// `d3Force(name, force)` setter expects. Declared as a direct dep so
+// a clean install can't hoist it away.
+import { forceCollide, forceY } from 'd3-force-3d';
 
 /** react-force-graph-2d is a 100% client / canvas component —
  *  importing it server-side throws (no `document`). Dynamic-
@@ -95,29 +101,58 @@ export function RelatedGraph({
     return () => window.removeEventListener('keydown', onKey);
   }, [fullscreen]);
 
-  // Configure the d3-force collision radius explicitly so nodes
-  // don't overlap with our custom canvas draw. We can't pass
-  // this via the ForceGraph2D props (lib only exposes nodeRelSize
-  // + nodeVal which produce a single uniform radius), so we
-  // poke at the simulation through the imperative ref after
-  // it's mounted. Re-runs on yearAxis since the key-bump
-  // remounts the canvas.
+  // Configure the simulation forces directly. react-force-graph-2d
+  // does NOT install a collide force by default — it only uses
+  // forceLink, forceManyBody and forceCenter — which is why nodes
+  // overlap until we install one. Also install a vertical pin force
+  // when year-axis is on, complementing the per-node `fy` we set in
+  // graphData (belt-and-suspenders against re-mount races where the
+  // fy field is read before the simulation accepts it).
+  //
+  // Re-applies when:
+  //   - yearAxis toggles  (key bumps below, lib remounts, the prior
+  //     simulation is gone — we need to re-configure the new one).
+  //   - fullscreen toggles (container resize remounts the same way).
+  //   - graphData changes  (new node set, sim instance is new).
   useEffect(() => {
     let cancelled = false;
+    let tries = 0;
     const apply = () => {
       if (cancelled) return;
       const g = graphRef.current as unknown as {
-        d3Force?: (name: string) => { radius?: (fn: (n: GraphNode) => number) => unknown } | undefined;
+        d3Force?: ((name: string, force?: unknown) => unknown) | undefined;
         d3ReheatSimulation?: () => void;
       } | undefined;
-      const collide = g?.d3Force?.('collide');
-      if (!collide?.radius) {
-        // Lib not mounted yet — try again on the next frame.
+      if (!g?.d3Force) {
+        // Lib not mounted yet. Cap retries so we don't leak rAFs
+        // if the user navigates away mid-init.
+        if (tries++ > 60) return;
         requestAnimationFrame(apply);
         return;
       }
-      collide.radius((n: GraphNode) => nodeRadius(n) + 6);
-      g?.d3ReheatSimulation?.();
+      // Collide: full strength, two iterations, padded by 8 px so
+      // labels (drawn below each node) don't visually crash.
+      g.d3Force(
+        'collide',
+        forceCollide((n: unknown) => nodeRadius(n as GraphNode) + 8)
+          .strength(1)
+          .iterations(2),
+      );
+      // Year axis: an explicit forceY at each node's target Y, so
+      // even without honoring `fy` the simulation pulls everything
+      // into a timeline.
+      if (yearAxis) {
+        g.d3Force(
+          'yearY',
+          forceY((n: unknown) => (n as GraphNode).fy ?? 0).strength(
+            (n: unknown) => ((n as GraphNode).fy != null ? 0.9 : 0),
+          ),
+        );
+      } else {
+        // Wipe any leftover forceY from the previous yearAxis run.
+        g.d3Force('yearY', null);
+      }
+      g.d3ReheatSimulation?.();
     };
     apply();
     return () => { cancelled = true; };
@@ -197,7 +232,10 @@ export function RelatedGraph({
       links.push({ source: '__seed__', target: id, weight: 0 });
     }
     return { nodes, links };
-  }, [seedTitle, papers]);
+    // yearAxis / seedYear / yearBounds / size.h all participate in
+    // the layout — without them the toggle never recomputed and the
+    // year axis was a silent no-op.
+  }, [seedTitle, papers, yearAxis, seedYear, yearBounds, size.h]);
 
   // Color palette — uses the same dark/blue accent the rest of
   // Minerva does so the graph reads as native.
@@ -340,12 +378,6 @@ export function RelatedGraph({
         style={containerStyle}
       >
         <ForceGraph2D
-          /* Key bumps on yearAxis so the simulation actually
-             re-runs with the new fy values. react-force-graph
-             persists the d3 simulation across graphData updates,
-             which meant toggling year-axis previously stamped
-             new fy onto nodes but the live simulation ignored
-             them. Remounting forces a fresh init. */
           /* Key bumps on yearAxis so the simulation actually
              re-runs with the new fy values. react-force-graph
              persists the d3 simulation across graphData updates,
