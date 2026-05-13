@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { getServerPref, setServerPref, listServerPrefKeys } from '@/lib/server-prefs';
+import { bus } from '@/lib/event-bus';
 
 const ALLOWED_KEYS = new Set([
   'youtube_api_key',
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Value must be a string or null' }, { status: 400 });
   }
   await setServerPref(userId, key, value);
+  bus.emit(userId, { kind: 'userprefs.changed' });
   return NextResponse.json({ ok: true, key, set: value !== null && value !== '' });
 }
 

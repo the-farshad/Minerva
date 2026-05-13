@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
+import { bus } from '@/lib/event-bus';
 
 function splitList(v: unknown): string[] {
   return String(v || '')
@@ -81,6 +82,10 @@ export async function POST(
   let rewrote = 0;
   let deleted = 0;
   let stillTagged = 0;
+  /** Every row touched by this rewrite — fed to a single
+   *  `rows.bulkChanged` SSE event after the loop so other tabs
+   *  invalidate their cached row list once instead of N times. */
+  const touched: string[] = [];
 
   for (const r of rows) {
     const data = r.data as Record<string, unknown>;
@@ -107,6 +112,7 @@ export async function POST(
       rewrote += 1;
       if (next.length > 0) stillTagged += 1;
     }
+    touched.push(r.id);
   }
 
   // Keep the schema's option list in step with the bulk rewrite —
@@ -138,6 +144,16 @@ export async function POST(
           .where(eq(schema.sections.id, sec.id));
       }
     }
+  }
+
+  // Broadcast once: every open tab refetches the section's row
+  // list (so a group rename or delete propagates without refresh).
+  // Schema may also have changed (select/multiselect option list)
+  // so we emit section.changed as well — the section sidebar
+  // refetches and the CategoryBar picker picks up the new options.
+  if (touched.length > 0) {
+    bus.emit(userId, { kind: 'rows.bulkChanged', sectionSlug: sec.slug, rowIds: touched });
+    bus.emit(userId, { kind: 'section.changed', sectionSlug: sec.slug });
   }
 
   return NextResponse.json({ rewrote, deleted, stillTagged });

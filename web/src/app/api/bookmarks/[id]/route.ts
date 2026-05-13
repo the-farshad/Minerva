@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
+import { bus } from '@/lib/event-bus';
 
 export async function PATCH(
   req: NextRequest,
@@ -22,6 +23,7 @@ export async function PATCH(
     .where(and(eq(schema.bookmarks.id, id), eq(schema.bookmarks.userId, userId)))
     .returning();
   if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  bus.emit(userId, { kind: 'bookmark.changed', url: updated.url, op: 'updated' });
   return NextResponse.json(updated);
 }
 
@@ -37,5 +39,6 @@ export async function DELETE(
     .where(and(eq(schema.bookmarks.id, id), eq(schema.bookmarks.userId, userId)))
     .returning();
   if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  bus.emit(userId, { kind: 'bookmark.changed', url: deleted.url, op: 'deleted' });
   return NextResponse.json({ ok: true });
 }

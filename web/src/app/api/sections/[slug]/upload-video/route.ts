@@ -26,6 +26,7 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { uploadToMinervaDrive, DRIVE_SUBFOLDERS } from '@/lib/drive';
+import { bus } from '@/lib/event-bus';
 
 export async function POST(
   req: NextRequest,
@@ -102,6 +103,7 @@ export async function POST(
         .set({ data: nextData, updatedAt: new Date() })
         .where(eq(schema.rows.id, rowId))
         .returning();
+      bus.emit(userId, { kind: 'row.updated', sectionSlug: sec.slug, rowId: updated.id, data: updated.data as Record<string, unknown> });
       return NextResponse.json({
         attached: true,
         fileId: up.id,
@@ -122,6 +124,7 @@ export async function POST(
     const [row] = await db.insert(schema.rows).values({
       userId, sectionId: sec.id, data,
     }).returning();
+    bus.emit(userId, { kind: 'row.created', sectionSlug: sec.slug, rowId: row.id, data: row.data as Record<string, unknown> });
     return NextResponse.json({
       attached: false,
       fileId: up.id,

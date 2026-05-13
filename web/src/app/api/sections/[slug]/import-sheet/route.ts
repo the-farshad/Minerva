@@ -15,6 +15,7 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { getGoogleAccessToken } from '@/lib/google';
+import { bus } from '@/lib/event-bus';
 
 function extractSheetId(s: string): string | null {
   const m = s.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
@@ -116,6 +117,9 @@ export async function POST(
     }
   }
 
+  if (inserted > 0 || updated > 0) {
+    bus.emit(userId, { kind: 'rows.bulkChanged', sectionSlug: sec.slug, rowIds: [] });
+  }
   return NextResponse.json({
     ok: true,
     mode,

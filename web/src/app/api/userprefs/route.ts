@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
+import { bus } from '@/lib/event-bus';
 
 async function readClient(userId: string): Promise<Record<string, unknown>> {
   const row = await db.query.userPrefs.findFirst({
@@ -54,5 +55,6 @@ export async function PATCH(req: NextRequest) {
   } else {
     await db.insert(schema.userPrefs).values({ userId, data: nextData });
   }
+  bus.emit(userId, { kind: 'userprefs.changed' });
   return NextResponse.json({ ok: true, client: nextClient });
 }

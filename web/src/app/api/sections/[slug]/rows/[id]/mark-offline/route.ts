@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
+import { bus } from '@/lib/event-bus';
 
 export async function POST(
   req: NextRequest,
@@ -49,5 +50,6 @@ export async function POST(
   await db.update(schema.rows)
     .set({ data: nextData, updatedAt: new Date() })
     .where(eq(schema.rows.id, row.id));
+  bus.emit(userId, { kind: 'row.updated', sectionSlug: sec.slug, rowId: row.id, data: nextData });
   return NextResponse.json({ ok: true, offline: nextData.offline });
 }

@@ -9,6 +9,7 @@ import { eq, desc, inArray } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { newPollToken, validateSlots, slotsPerDay, hashPollPassword } from '@/lib/poll';
+import { bus } from '@/lib/event-bus';
 
 export async function GET() {
   const session = await auth();
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
   const [inserted] = await db.insert(schema.polls).values({
     token, userId, title, days, slots, closesAt, location, mode, kind, passwordHash,
   }).returning();
+  bus.emit(userId, { kind: 'poll.changed', token: inserted.token });
 
   return NextResponse.json({
     token: inserted.token,

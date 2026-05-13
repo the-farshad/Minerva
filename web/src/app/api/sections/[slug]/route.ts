@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
+import { bus } from '@/lib/event-bus';
 
 async function loadOwn(userId: string, slug: string) {
   return db.query.sections.findFirst({
@@ -88,6 +89,20 @@ export async function PATCH(
     .set(patch)
     .where(eq(schema.sections.id, sec.id))
     .returning();
+  // Broadcast the change so the sidebar + any open section view
+  // refetch. Title changes don't currently rewrite the slug — the
+  // slug is stable — but if that ever changes the section.renamed
+  // event will carry both so other tabs can redirect.
+  bus.emit(userId, { kind: 'section.changed', sectionSlug: sec.slug });
+  if (patch.title && patch.title !== sec.title) {
+    bus.emit(userId, {
+      kind: 'section.renamed',
+      oldSlug: sec.slug,
+      newSlug: updated.slug,
+      title: updated.title,
+    });
+  }
+  bus.emit(userId, { kind: 'sections.listChanged' });
   return NextResponse.json(updated);
 }
 
@@ -105,10 +120,12 @@ export async function DELETE(
   const purge = req.nextUrl.searchParams.get('purge') === '1';
   if (purge) {
     await db.delete(schema.sections).where(eq(schema.sections.id, sec.id));
+    bus.emit(userId, { kind: 'sections.listChanged' });
     return NextResponse.json({ ok: true, purged: true });
   }
   await db.update(schema.sections)
     .set({ enabled: false, updatedAt: new Date() })
     .where(eq(schema.sections.id, sec.id));
+  bus.emit(userId, { kind: 'sections.listChanged' });
   return NextResponse.json({ ok: true, hidden: true });
 }

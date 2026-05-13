@@ -29,6 +29,7 @@ import { eq, and } from 'drizzle-orm';
 import { uploadToMinervaDrive, DRIVE_SUBFOLDERS, paperFolderSegments } from '@/lib/drive';
 import { notifyTelegram } from '@/lib/telegram';
 import { getServerPref } from '@/lib/server-prefs';
+import { bus } from '@/lib/event-bus';
 
 const HELPER = (process.env.HELPER_BASE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
 
@@ -254,6 +255,7 @@ async function saveOffline(
   await db.update(schema.rows)
     .set({ data: nextData, updatedAt: new Date() })
     .where(eq(schema.rows.id, row.id));
+  bus.emit(userId, { kind: 'row.updated', sectionSlug: sec.slug, rowId: row.id, data: nextData });
   // HTML parse-mode + escaped dynamic content. Section titles
   // and filenames routinely contain `_`, `(`, `&` etc. that
   // would 400 the Markdown path.

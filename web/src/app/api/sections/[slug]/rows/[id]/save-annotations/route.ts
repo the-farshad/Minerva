@@ -22,6 +22,7 @@ import {
   ensureFolder,
   DRIVE_SUBFOLDERS,
 } from '@/lib/drive';
+import { bus } from '@/lib/event-bus';
 
 export async function POST(
   req: NextRequest,
@@ -91,6 +92,7 @@ export async function POST(
     await db.update(schema.rows)
       .set({ data, updatedAt: new Date() })
       .where(eq(schema.rows.id, id));
+    bus.emit(userId, { kind: 'row.updated', sectionSlug: sec.slug, rowId: id, data });
 
     return NextResponse.json({
       fileId: workingId,

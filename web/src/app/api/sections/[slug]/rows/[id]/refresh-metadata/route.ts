@@ -19,6 +19,7 @@ import { eq, and } from 'drizzle-orm';
 import { getServerPref } from '@/lib/server-prefs';
 import { fetchDriveFileBytes } from '@/lib/drive';
 import { extractPdfMeta } from '@/lib/pdf-meta';
+import { bus } from '@/lib/event-bus';
 
 // Scope to actual YouTube hostnames — the previous bare `v=...{11}`
 // pattern matched ANY URL with a `v=` query param (e.g. a publisher
@@ -310,6 +311,7 @@ export async function POST(
       .set({ data: merged, updatedAt: new Date() })
       .where(eq(schema.rows.id, id))
       .returning();
+    bus.emit(userId, { kind: 'row.updated', sectionSlug: slug, rowId: id, data: updated.data as Record<string, unknown> });
 
     return NextResponse.json({
       source,

@@ -730,7 +730,7 @@ function GroupNameEditor({
             if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
             if (e.key === 'Escape') { cancelled.current = true; (e.target as HTMLInputElement).blur(); }
           }}
-          className="border-0 border-b border-zinc-400 bg-transparent px-0.5 py-0 text-sm font-medium focus:border-zinc-900 focus:outline-none focus:ring-0 dark:border-zinc-500 dark:focus:border-zinc-100"
+          className="border-0 border-b border-dashed border-zinc-400 bg-transparent px-0.5 py-0 text-sm font-medium focus:border-zinc-900 focus:outline-none focus:ring-0 dark:border-zinc-500 dark:focus:border-zinc-100"
           style={{ minWidth: '6ch', width: `${Math.max(8, draft.length + 1)}ch` }}
         />
         <span className="text-xs font-normal text-zinc-500">· {count}</span>

@@ -20,8 +20,20 @@ export type MinervaEvent =
   | { kind: 'row.created'; sectionSlug: string; rowId: string; data: Record<string, unknown> }
   | { kind: 'row.updated'; sectionSlug: string; rowId: string; data: Record<string, unknown> }
   | { kind: 'row.deleted'; sectionSlug: string; rowId: string }
+  /** N rows in one section mutated together — emitted by
+   *  rewrite-tag, bulk-delete, import-sheet so the client invalidates
+   *  the section's row list once instead of N times. */
+  | { kind: 'rows.bulkChanged'; sectionSlug: string; rowIds: string[] }
   | { kind: 'section.changed'; sectionSlug: string }
-  | { kind: 'poll.changed'; token: string };
+  /** Slug changed (e.g. user renamed the section). The client uses
+   *  this to redirect any tab parked on the old slug to the new one
+   *  instead of 404-ing on the next refetch. */
+  | { kind: 'section.renamed'; oldSlug: string; newSlug: string; title: string }
+  /** Section was added/removed/reordered — sidebar should refetch. */
+  | { kind: 'sections.listChanged' }
+  | { kind: 'bookmark.changed'; url: string; op: 'created' | 'updated' | 'deleted' }
+  | { kind: 'poll.changed'; token: string }
+  | { kind: 'userprefs.changed' };
 
 // Node EventEmitter is hot-reload friendly under the App Router's
 // in-place module evaluation; storing on globalThis keeps a single

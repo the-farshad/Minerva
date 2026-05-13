@@ -12,6 +12,7 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { deleteDriveFile } from '@/lib/drive';
+import { bus } from '@/lib/event-bus';
 
 export async function POST(
   req: NextRequest,
@@ -171,6 +172,14 @@ export async function POST(
     // self-tolerant (404 / network failure → silent).
     if (driveIds.length) {
       await Promise.all(driveIds.map((fid) => deleteDriveFile(userId, fid)));
+    }
+    // Broadcast once: every open tab on this section invalidates
+    // its cached row list. We don't itemise the IDs in the payload
+    // for an ids-mode delete (the client only needs to know *that*
+    // the list changed) — passing an empty `rowIds: []` is the
+    // signal "refetch this section."
+    if (deleted > 0 || untagged > 0) {
+      bus.emit(userId, { kind: 'rows.bulkChanged', sectionSlug: sec.slug, rowIds: [] });
     }
     return NextResponse.json({ ok: true, deleted, untagged, driveDeleted: driveIds.length });
   } catch (e) {

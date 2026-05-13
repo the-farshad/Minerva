@@ -10,6 +10,7 @@ import { eq, and } from 'drizzle-orm';
 import { db, schema } from '@/db';
 import { userIdFromFeedToken } from '@/lib/feed-token';
 import { notifyTelegram } from '@/lib/telegram';
+import { bus } from '@/lib/event-bus';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
       notes: '',
     },
   }).returning();
+  bus.emit(userId, { kind: 'row.created', sectionSlug: 'inbox', rowId: created.id, data: created.data as Record<string, unknown> });
   // HTML parse-mode + escaped href / link text. Some URLs the
   // bookmarklet sends contain `_` and `&` which used to silently
   // 400 the Markdown path; HTML mode is forgiving as long as we

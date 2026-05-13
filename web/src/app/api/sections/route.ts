@@ -3,6 +3,7 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and, asc } from 'drizzle-orm';
 import { PRESETS } from '@/lib/presets';
+import { bus } from '@/lib/event-bus';
 
 export async function GET() {
   const session = await auth();
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
         .set({ enabled: true, updatedAt: new Date() })
         .where(eq(schema.sections.id, existing.id))
         .returning();
+      bus.emit(userId, { kind: 'sections.listChanged' });
       return NextResponse.json(revived);
     }
     return NextResponse.json(existing);
@@ -61,5 +63,6 @@ export async function POST(req: NextRequest) {
     enabled: true,
     preset: preset.preset,
   }).returning();
+  bus.emit(userId, { kind: 'sections.listChanged' });
   return NextResponse.json(created);
 }

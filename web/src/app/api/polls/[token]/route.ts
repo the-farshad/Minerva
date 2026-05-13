@@ -11,6 +11,7 @@ import { eq, asc, and } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { cellCount, hashPollPassword, validateSlots, type PollSlots } from '@/lib/poll';
+import { bus } from '@/lib/event-bus';
 
 async function loadByToken(token: string) {
   return db.query.polls.findFirst({ where: eq(schema.polls.token, token) });
@@ -179,6 +180,9 @@ export async function POST(
   const [inserted] = await db.insert(schema.pollResponses).values({
     pollId: poll.id, name, bits, note,
   }).returning();
+  // Notify the poll owner — public response endpoints don't have a
+  // session userId, so emit on the poll's owner.
+  bus.emit(poll.userId, { kind: 'poll.changed', token: poll.token });
   return NextResponse.json({
     id: inserted.id,
     name: inserted.name,
@@ -269,6 +273,7 @@ export async function PATCH(
     .set(patch)
     .where(eq(schema.polls.id, poll.id))
     .returning();
+  bus.emit(userId, { kind: 'poll.changed', token: updated.token });
   return NextResponse.json({
     token: updated.token,
     title: updated.title,
@@ -295,5 +300,6 @@ export async function DELETE(
   if (!poll) return NextResponse.json({ error: 'Poll not found.' }, { status: 404 });
   if (poll.userId !== userId) return NextResponse.json({ error: 'Not your poll.' }, { status: 403 });
   await db.delete(schema.polls).where(and(eq(schema.polls.id, poll.id)));
+  bus.emit(userId, { kind: 'poll.changed', token: poll.token });
   return NextResponse.json({ ok: true });
 }

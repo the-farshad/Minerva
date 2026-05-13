@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and, asc } from 'drizzle-orm';
+import { bus } from '@/lib/event-bus';
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -44,5 +45,6 @@ export async function POST(req: NextRequest) {
     label: (body.label || '').slice(0, 200),
     note: (body.note || '').slice(0, 5000),
   }).returning();
+  bus.emit(userId, { kind: 'bookmark.changed', url: created.url, op: 'created' });
   return NextResponse.json(created);
 }

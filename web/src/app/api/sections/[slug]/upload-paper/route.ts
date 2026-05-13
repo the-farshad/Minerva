@@ -18,6 +18,7 @@ import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { uploadToMinervaDrive, paperFolderSegments } from '@/lib/drive';
 import { extractPdfMeta } from '@/lib/pdf-meta';
+import { bus } from '@/lib/event-bus';
 
 // extractPdfMeta lives in src/lib/pdf-meta.ts so the
 // refresh-metadata route can reuse the same parser when
@@ -74,6 +75,7 @@ export async function POST(
     const [row] = await db.insert(schema.rows).values({
       userId, sectionId: sec.id, data,
     }).returning();
+    bus.emit(userId, { kind: 'row.created', sectionSlug: sec.slug, rowId: row.id, data: row.data as Record<string, unknown> });
 
     return NextResponse.json({
       id: row.id,

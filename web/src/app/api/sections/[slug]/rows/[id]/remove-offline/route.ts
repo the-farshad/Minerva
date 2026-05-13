@@ -13,6 +13,7 @@ import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { deleteDriveFile } from '@/lib/drive';
+import { bus } from '@/lib/event-bus';
 
 export async function POST(
   _req: NextRequest,
@@ -64,6 +65,7 @@ export async function POST(
     .set({ data: nextData, updatedAt: new Date() })
     .where(eq(schema.rows.id, id))
     .returning();
+  bus.emit(userId, { kind: 'row.updated', sectionSlug: sec.slug, rowId: id, data: updated.data as Record<string, unknown> });
   return NextResponse.json({
     deleted,
     offline: remaining,
