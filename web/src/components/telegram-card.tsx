@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
-import { Send, Check } from 'lucide-react';
+import { Send, Check, ExternalLink } from 'lucide-react';
 
 type State = { chatId: string; enabled: boolean; hasToken: boolean; tokenSuffix: string };
 
@@ -11,13 +11,28 @@ export function TelegramCard() {
   const [state, setState] = useState<State>({ chatId: '', enabled: false, hasToken: false, tokenSuffix: '' });
   const [tokenInput, setTokenInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [botUsername, setBotUsername] = useState<string>('');
+  const [chatLabel, setChatLabel] = useState<string>('');
 
   useEffect(() => { void load(); }, []);
 
   async function load() {
     try {
       const r = await fetch('/api/telegram');
-      if (r.ok) setState(await r.json());
+      if (r.ok) {
+        const s = (await r.json()) as State;
+        setState(s);
+        if (s.hasToken) void fetchBotUsername();
+      }
+    } catch { /* tolerate */ }
+  }
+
+  async function fetchBotUsername() {
+    try {
+      const r = await fetch('/api/telegram/me');
+      if (!r.ok) return;
+      const j = (await r.json()) as { username?: string };
+      if (j.username) setBotUsername(j.username);
     } catch { /* tolerate */ }
   }
 
@@ -58,15 +73,43 @@ export function TelegramCard() {
     }
   }
 
+  async function getChat() {
+    if (!state.hasToken && !tokenInput) return;
+    // Save the token first if it's been newly typed.
+    if (tokenInput) await save();
+    setBusy(true);
+    try {
+      const r = await fetch('/api/telegram/getchat', { method: 'POST' });
+      const j = (await r.json().catch(() => ({}))) as { chatId?: string; chatLabel?: string; chatType?: string; error?: string };
+      if (!r.ok) throw new Error(j.error || `getchat: ${r.status}`);
+      setState((s) => ({ ...s, chatId: j.chatId || '' }));
+      setChatLabel(j.chatLabel || '');
+      toast.success(j.chatLabel
+        ? `Chat id pulled: ${j.chatLabel} (${j.chatType || 'private'}).`
+        : 'Chat id pulled from Telegram.');
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex items-center gap-2">
         <Send className="h-4 w-4 text-zinc-500" />
         <strong className="text-sm">Telegram notifications</strong>
+        {state.hasToken && botUsername && (
+          <span className="rounded-full bg-blue-100 px-2 py-0.5 font-mono text-[10px] text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+            @{botUsername}
+          </span>
+        )}
       </div>
       <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-        BYO bot. Create one via <a className="underline" href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>,
-        then DM your bot and grab the chat id from <code>https://api.telegram.org/bot&lt;token&gt;/getUpdates</code>.
+        BYO bot. Create one via{' '}
+        <a className="underline" href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>,
+        paste the token below, then click <span className="font-medium">Get</span> to pull your
+        chat id automatically (you just need to DM the bot first).
       </p>
 
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -87,30 +130,12 @@ export function TelegramCard() {
               type="text"
               value={state.chatId}
               onChange={(e) => setState((s) => ({ ...s, chatId: e.target.value }))}
-              placeholder="DM the bot once, then click ↘"
+              placeholder="DM the bot once, then click Get →"
               className="flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
             />
             <button
               type="button"
-              onClick={async () => {
-                if (!state.hasToken && !tokenInput) {
-                  return;
-                }
-                // Save the token first if it's been newly typed.
-                if (tokenInput) await save();
-                setBusy(true);
-                try {
-                  const r = await fetch('/api/telegram/getchat', { method: 'POST' });
-                  const j = await r.json().catch(() => ({}));
-                  if (!r.ok) throw new Error(j.error || `getchat: ${r.status}`);
-                  setState((s) => ({ ...s, chatId: j.chatId }));
-                  toast.success('Chat id pulled from Telegram.');
-                } catch (e) {
-                  notify.error('Get chat id: ' + (e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
+              onClick={getChat}
               disabled={busy || (!state.hasToken && !tokenInput)}
               title="DM your bot any message first, then click to fetch chat id"
               className="rounded-md border border-zinc-300 px-2 py-1.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
@@ -118,8 +143,27 @@ export function TelegramCard() {
               Get
             </button>
           </div>
+          {chatLabel && (
+            <span className="text-[10px] text-zinc-500">Resolved: {chatLabel}</span>
+          )}
         </label>
       </div>
+
+      {state.hasToken && botUsername && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-xs dark:bg-zinc-950">
+          <span className="text-zinc-500">Step 1:</span>
+          <a
+            href={`https://t.me/${botUsername}`}
+            target="_blank"
+            rel="noopener"
+            className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700"
+          >
+            <ExternalLink className="h-3 w-3" /> Open @{botUsername} in Telegram
+          </a>
+          <span className="text-zinc-500">Step 2: send it any message (e.g. <code>/start</code>).</span>
+          <span className="text-zinc-500">Step 3: click <span className="font-medium">Get</span> above.</span>
+        </div>
+      )}
 
       <label className="mt-3 inline-flex items-center gap-2 text-xs">
         <input
@@ -148,6 +192,12 @@ export function TelegramCard() {
           <Send className="h-3 w-3" /> Send test
         </button>
       </div>
+
+      <p className="mt-3 text-[10px] text-zinc-500">
+        Can&rsquo;t find chat id? If you saved a webhook on your bot earlier,
+        getUpdates will be empty — clear it at <code>https://api.telegram.org/bot&lt;token&gt;/deleteWebhook</code>,
+        DM the bot, then click Get again. Or paste the chat id manually if you already know it.
+      </p>
     </div>
   );
 }
