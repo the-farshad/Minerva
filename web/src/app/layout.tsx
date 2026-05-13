@@ -26,18 +26,10 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${ubuntu.variable} ${roboto.variable} ${vazir.variable} h-full antialiased`}>
       <head>
-        {/* Inline boot — runs BEFORE any service worker can
-          * intercept fetches. Two jobs:
-          *
-          * 1. Set theme + font on <html> so there's no flash.
-          * 2. Aggressively unregister any leftover service worker
-          *    (v1 of Minerva shipped one that aggressively cached
-          *    everything, including /api/pdf — which is what's been
-          *    causing "This page couldn't load" inside the modal
-          *    iframe). Also drops every cache the SW created. If
-          *    anything was unregistered, reload once so the page
-          *    is genuinely fresh.
-          */}
+        {/* Inline boot — applies theme + font on <html> before
+          * first paint to avoid a light→dark flash. Kept as inline
+          * (not a separate script) because it must run before
+          * Tailwind's stylesheet evaluates the `.dark` class. */}
         <script
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{
@@ -53,24 +45,6 @@ export default function RootLayout({
                     (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
                   h.classList.toggle('dark', wantDark);
                   if (font) h.setAttribute('data-font', font);
-                } catch (e) {}
-                try {
-                  if (sessionStorage.getItem('minerva.v2.sw-purged') === '1') return;
-                  if (!('serviceWorker' in navigator)) return;
-                  navigator.serviceWorker.getRegistrations().then(function (regs) {
-                    if (!regs || regs.length === 0) return;
-                    Promise.all(regs.map(function (r) { return r.unregister(); })).then(function () {
-                      var done = function () {
-                        sessionStorage.setItem('minerva.v2.sw-purged', '1');
-                        // Hard-reload bypassing the (now unregistered) SW's cache.
-                        location.reload();
-                      };
-                      if (typeof caches === 'undefined') { done(); return; }
-                      caches.keys().then(function (keys) {
-                        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
-                      }).then(done, done);
-                    });
-                  }).catch(function () {});
                 } catch (e) {}
               })();
             `,

@@ -462,7 +462,12 @@ def download():
     # signature, not the IP alone. We try them in order and stop on
     # the first success. Each attempt re-prepares ydl_opts so plugin
     # state (PO-token cache) resets cleanly.
-    PLAYER_CLIENT_RETRIES = (None, "web_safari", "ios", "web", "mweb")
+    # The `ios` client routinely caps YouTube formats at 360p/720p
+    # even when 1080p+ is available — putting it last keeps quality
+    # clients (web, web_safari, mweb) at the front of the retry
+    # chain so we only fall back to `ios` when everything else has
+    # been bot-walled and we're trading quality for any-success-at-all.
+    PLAYER_CLIENT_RETRIES = (None, "web_safari", "web", "mweb", "ios")
     info = None
     path = None
     last_exc: Exception | None = None
@@ -477,6 +482,13 @@ def download():
         try:
             with yt_dlp.YoutubeDL(attempt_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
+                # Diagnostic: log which client / format yt-dlp
+                # actually shipped, so a "best available downloaded
+                # the worst one" complaint is reproducible from logs.
+                _h = (info or {}).get("height")
+                _w = (info or {}).get("width")
+                _fid = (info or {}).get("format_id")
+                print(f"[yt-dlp] client={client or 'default'} → format={_fid} {_w}x{_h}", flush=True)
                 path = ydl.prepare_filename(info)
                 if not os.path.exists(path):
                     base, _ = os.path.splitext(path)
