@@ -47,7 +47,6 @@ import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown,
 } from 'lucide-react';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { jsPDF } from 'jspdf';
@@ -660,38 +659,23 @@ export function SketchModal({
             disabled={!hasContent || uploading}
             onActivate={clearAll}
           />
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                type="button"
-                disabled={!hasContent || uploading}
-                title="Download a vector copy"
-                className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
-                style={{ cursor: 'pointer' }}
-              >
-                <FileDown className="h-3.5 w-3.5" /> Export
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="end" sideOffset={4}
-                className="z-[90] min-w-[8rem] rounded-md border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
-              >
-                <DropdownMenu.Item
-                  onSelect={(e) => { e.preventDefault(); void exportSvg(); }}
-                  className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  SVG (vector)
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={(e) => { e.preventDefault(); void exportPdf(); }}
-                  className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  PDF (vector)
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
+          {/* Export buttons are plain inline pills — no Radix
+            * DropdownMenu, because that dropdown's `pointer-events:
+            * none` lock on body was preventing iPad Pencil taps
+            * from opening the menu (or hitting an item inside it).
+            * Two visible pills are also one tap instead of two. */}
+          <SketchButton
+            label="SVG"
+            icon={<FileDown className="h-3.5 w-3.5" />}
+            disabled={!hasContent || uploading}
+            onActivate={() => void exportSvg()}
+          />
+          <SketchButton
+            label="PDF"
+            icon={<FileDown className="h-3.5 w-3.5" />}
+            disabled={!hasContent || uploading}
+            onActivate={() => void exportPdf()}
+          />
           <SketchButton
             label={uploading ? 'Saving…' : 'Save'}
             icon={uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SaveIcon className="h-3.5 w-3.5" />}

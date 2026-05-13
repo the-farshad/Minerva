@@ -284,26 +284,40 @@ export function NotesPane({
               // as .md produced an unreadable text file (the user's
               // "exports as md" complaint when expecting PDF/PNG).
               if (effType === 'sketch') {
-                // Decode the data-URL into actual PNG bytes so the
-                // download is a usable image, not a text representation.
-                const m = value.match(/^data:(image\/[^;]+);base64,(.*)$/);
-                if (!m) {
-                  toast.error('Sketch isn\'t a recognizable PNG — try re-saving from the sketch editor.');
-                  return;
-                }
-                const mime = m[1];
-                const bin = atob(m[2]);
-                const bytes = new Uint8Array(bin.length);
-                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-                const blob = new Blob([bytes], { type: mime });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `sketch-${rowId.slice(0, 8)}.${mime === 'image/png' ? 'png' : 'jpg'}`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                // For a sketch note, the Download button produces
+                // a PDF (the user's expectation — "export as PDF").
+                // Loads the PNG data-URL, measures it, and embeds it
+                // into a single-page PDF sized to the image. Dynamic
+                // import of jsPDF keeps notes-pane's bundle small
+                // for the common (md/text) path.
+                void (async () => {
+                  const m = value.match(/^data:image\/[a-z]+;base64,(.*)$/i);
+                  if (!m) {
+                    toast.error('Sketch isn\'t a recognizable image — try re-saving from the sketch editor.');
+                    return;
+                  }
+                  try {
+                    const img = new Image();
+                    img.src = value;
+                    await new Promise<void>((res, rej) => {
+                      img.onload = () => res();
+                      img.onerror = () => rej(new Error('image load failed'));
+                    });
+                    const w = img.naturalWidth || 800;
+                    const h = img.naturalHeight || 600;
+                    const { jsPDF } = await import('jspdf');
+                    const pdf = new jsPDF({
+                      orientation: w >= h ? 'l' : 'p',
+                      unit: 'px',
+                      format: [w, h],
+                      hotfixes: ['px_scaling'],
+                    });
+                    pdf.addImage(value, 'PNG', 0, 0, w, h);
+                    pdf.save(`sketch-${rowId.slice(0, 8)}.pdf`);
+                  } catch (e) {
+                    toast.error(`PDF export failed: ${(e as Error).message}`);
+                  }
+                })();
                 return;
               }
               const blob = new Blob([value], { type: 'text/markdown;charset=utf-8' });
@@ -316,7 +330,7 @@ export function NotesPane({
               document.body.removeChild(a);
               setTimeout(() => URL.revokeObjectURL(url), 1000);
             }}
-            title={effType === 'sketch' ? 'Download this sketch as a PNG' : 'Download these notes as a Markdown file'}
+            title={effType === 'sketch' ? 'Download this sketch as a PDF' : 'Download these notes as a Markdown file'}
             className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
             <Download className="h-3.5 w-3.5" />
