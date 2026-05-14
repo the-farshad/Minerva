@@ -353,6 +353,50 @@ export function SketchModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool]);
 
+  /* Render state that lives outside the imperative draw path —
+   * paper format, page-style background, the view transform —
+   * needs to trigger a redraw when it changes. Without this,
+   * picking a Style from the dropdown updates the state but the
+   * canvas keeps showing the old pattern until the next stroke
+   * (or next close/reopen), which reads as "the dropdown does
+   * nothing." */
+  useEffect(() => {
+    if (!open) return;
+    redraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageBackground, pageFormat, scale, tx, ty, open]);
+
+  /* When the user picks a paper format, auto-fit the canvas so the
+   * paper rectangle is visible inside the viewport. Without this,
+   * picking "A4 portrait" (595×842) on a typical iPad-landscape
+   * canvas leaves the paper extending below the visible area and
+   * the dropdown reads as "did nothing visible". Skip for `auto`
+   * (full-bleed historical behaviour). */
+  useEffect(() => {
+    if (!open) return;
+    if (pageFormat === 'auto') return;
+    const fmt = PAGE_FORMATS.find((f) => f.id === pageFormat);
+    if (!fmt || fmt.pxW <= 0 || fmt.pxH <= 0) return;
+    const c = canvasRef.current;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const viewW = c.clientWidth || c.width / dpr;
+    const viewH = c.clientHeight || c.height / dpr;
+    // Fit with 5 % margin on each side so the paper doesn't crash
+    // into the chrome.
+    const fit = Math.min((viewW * 0.9) / fmt.pxW, (viewH * 0.9) / fmt.pxH);
+    const fitScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
+    const centerTx = (viewW - fitScale * fmt.pxW) / 2;
+    const centerTy = (viewH - fitScale * fmt.pxH) / 2;
+    setScale(fitScale);
+    setTx(centerTx);
+    setTy(centerTy);
+    scaleRef.current = fitScale;
+    txRef.current = centerTx;
+    tyRef.current = centerTy;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageFormat, open]);
+
   /* Canvas size, DPR, redraw on open + seed image load. */
   useEffect(() => {
     if (!open) return;
@@ -558,7 +602,7 @@ export function SketchModal({
     /** Hit-test threshold in CSS px. A 10 px halo around the
      *  rendered stroke is generous on touch + Pencil without
      *  bleeding into adjacent lines. */
-    const HIT_THRESHOLD_VIEW_PX = 10;
+    const HIT_THRESHOLD_VIEW_PX = 16;
     /** Local helper for editing-tool handlers — same view→model
      *  reverse-transform as `toModel`, just named for the editing
      *  context (lasso / obj-eraser / move-drag) where the coord
@@ -651,13 +695,16 @@ export function SketchModal({
           return;
         }
         if (lassoRef.current) {
-          // Same 1.2 px noise filter as drawing — keeps the lasso
-          // polygon compact for the point-in-polygon pass.
+          // Lasso noise filter — looser than drawing's (0.5 model
+          // px) so a quick small loop still captures enough points
+          // for a meaningful polygon. Scales inversely with zoom
+          // for the same reason the drawing filter does.
           const last = lassoRef.current[lassoRef.current.length - 1];
           if (last) {
             const ddx = x - last.x;
             const ddy = y - last.y;
-            if (ddx * ddx + ddy * ddy < 1.2 * 1.2) return;
+            const minDist = 0.5 / scaleRef.current;
+            if (ddx * ddx + ddy * ddy < minDist * minDist) return;
           }
           lassoRef.current.push({ x, y });
           redraw();
@@ -681,7 +728,13 @@ export function SketchModal({
         if (lassoRef.current) {
           const polygon = lassoRef.current;
           lassoRef.current = null;
-          if (polygon.length >= 3) {
+          // ≥2 points + a non-zero bbox is enough to imply a swept
+          // path; 3 was too strict and discarded the common
+          // quick-flick selection where the user drags briefly
+          // across a few strokes.
+          const bb = polylineBBox(polygon);
+          const swept = bb && (bb.maxX - bb.minX > 4 / scaleRef.current || bb.maxY - bb.minY > 4 / scaleRef.current);
+          if (polygon.length >= 2 && swept) {
             // Select every stroke with ≥1 point inside the lasso.
             for (const s of strokesRef.current) {
               if (s.points.some((p) => pointInPolygon(p.x, p.y, polygon))) {
@@ -901,17 +954,47 @@ export function SketchModal({
     // space — they pan + zoom with the rest of the page. We extend
     // the visible area by 50% on each side so panning doesn't
     // expose unpatterned edges.
+    // Paper boundary — when a non-auto format is selected, draw a
+    // translucent rectangle showing where the page edges sit.
+    // Centered on (0,0) in model space, sized to the chosen
+    // format. Gives the user a visible reference for what the PDF
+    // export will look like. Auto keeps the historical full-bleed
+    // canvas behaviour.
+    if (pageFormat !== 'auto') {
+      const fmtRef = PAGE_FORMATS.find((f) => f.id === pageFormat);
+      if (fmtRef && fmtRef.pxW > 0 && fmtRef.pxH > 0) {
+        ctx.save();
+        // White paper fill — survives in dark mode too so the user
+        // sees a clear "this is your page" region.
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, fmtRef.pxW, fmtRef.pxH);
+        ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+        ctx.lineWidth = 1 / scale;
+        ctx.strokeRect(0, 0, fmtRef.pxW, fmtRef.pxH);
+        ctx.restore();
+      }
+    }
     if (pageBackground !== 'blank') {
-      // Compute the visible MODEL bounds from the inverse of the
-      // current transform, then iterate the pattern across that
-      // range. Lets the user pan / zoom and the lines keep coming —
-      // no clipped edges, no per-frame allocations beyond the loop.
+      // Pattern bounds: clip to the paper rectangle when a non-auto
+      // format is set (the pattern represents lines on a sheet of
+      // paper; it shouldn't bleed past the page edges). Otherwise
+      // fill the visible model area derived from the inverse
+      // transform.
       const viewW = c.clientWidth || c.width / dpr;
       const viewH = c.clientHeight || c.height / dpr;
-      const mxMin = -tx / scale;
-      const mxMax = (viewW - tx) / scale;
-      const myMin = -ty / scale;
-      const myMax = (viewH - ty) / scale;
+      let mxMin: number, mxMax: number, myMin: number, myMax: number;
+      const paperFmt = pageFormat !== 'auto' ? PAGE_FORMATS.find((f) => f.id === pageFormat) : null;
+      if (paperFmt && paperFmt.pxW > 0 && paperFmt.pxH > 0) {
+        mxMin = 0;
+        myMin = 0;
+        mxMax = paperFmt.pxW;
+        myMax = paperFmt.pxH;
+      } else {
+        mxMin = -tx / scale;
+        mxMax = (viewW - tx) / scale;
+        myMin = -ty / scale;
+        myMax = (viewH - ty) / scale;
+      }
       // Line width in MODEL units so the rendered line stays ~1
       // view-px regardless of zoom level.
       const linePxModel = 1 / scale;
