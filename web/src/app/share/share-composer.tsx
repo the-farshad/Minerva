@@ -1,10 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
-import { Copy, ExternalLink } from 'lucide-react';
-import { shareUrl, type SharePayload } from '@/lib/share';
+import { Copy, ExternalLink, Lock } from 'lucide-react';
+import { shareUrl, shareUrlEncrypted, type SharePayload } from '@/lib/share';
 import { ShareCard } from '@/components/share-card';
 
 export function ShareComposer() {
@@ -12,6 +12,7 @@ export function ShareComposer() {
   const [body, setBody] = useState('');
   const [choicesText, setChoicesText] = useState('');
   const [kind, setKind] = useState<SharePayload['kind']>('note');
+  const [code, setCode] = useState('');
 
   const payload: SharePayload | null = useMemo(() => {
     const choices = choicesText.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -23,7 +24,19 @@ export function ShareComposer() {
     return p;
   }, [title, body, choicesText, kind]);
 
-  const url = payload ? shareUrl(payload) : '';
+  // The link is sync for a plain share but async when an access
+  // code is set (key derivation), so it lives in state and is
+  // recomputed by an effect rather than a useMemo.
+  const [url, setUrl] = useState('');
+  const codeProtected = code.trim().length > 0;
+  useEffect(() => {
+    if (!payload) { setUrl(''); return; }
+    const trimmed = code.trim();
+    if (!trimmed) { setUrl(shareUrl(payload)); return; }
+    let cancelled = false;
+    void shareUrlEncrypted(payload, trimmed).then((u) => { if (!cancelled) setUrl(u); });
+    return () => { cancelled = true; };
+  }, [payload, code]);
 
   async function copy() {
     if (!url) return;
@@ -80,8 +93,30 @@ export function ShareComposer() {
             <option value="poll">Poll</option>
           </select>
         </label>
+        <label className="block">
+          <span className="flex items-center gap-1 text-xs font-medium">
+            <Lock className="h-3 w-3" /> Access code <span className="font-normal text-zinc-400">(optional)</span>
+          </span>
+          <input
+            type="text"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="Leave blank for an open link"
+            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          />
+          <span className="mt-1 block text-[11px] text-zinc-500">
+            {codeProtected
+              ? 'The card is encrypted with this code — recipients must enter it to view. It is never sent to any server; share it separately from the link.'
+              : 'With a code set, the share link is encrypted end-to-end and unreadable without it.'}
+          </span>
+        </label>
         {payload && url ? (
           <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+            {codeProtected && (
+              <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                <Lock className="h-3 w-3" /> Code-protected — recipients need the code
+              </span>
+            )}
             <input
               readOnly
               value={url}
