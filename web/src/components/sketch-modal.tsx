@@ -92,7 +92,11 @@ const PALETTE = [
   '#c026d3', '#db2777', '#a16207', '#1e3a8a',
 ];
 
-type Point = { x: number; y: number; w: number };
+/** Per-point captured Pencil state. tilt (`tx`, `ty`) is in degrees
+ *  from vertical, ±90; absent for finger/mouse input. Persisted via
+ *  SketchDocPoint.tiltX / tiltY so a future shading renderer can
+ *  use it without re-asking the user to redraw. */
+type Point = { x: number; y: number; w: number; tx?: number; ty?: number };
 type Stroke = { tool: Tool; color: string; alpha: number; points: Point[] };
 
 /** Multi-page document model. Each page holds its own stroke
@@ -144,11 +148,16 @@ function strokeToDocStroke(s: Stroke, id: string): SketchDocStroke {
     id,
     type: 'stroke',
     tool: s.tool,
-    points: s.points.map((p) => ({
-      x: p.x,
-      y: p.y,
-      pressure: baseWidth > 0 ? p.w / baseWidth : 1,
-    })),
+    points: s.points.map((p) => {
+      const out: { x: number; y: number; pressure: number; tiltX?: number; tiltY?: number } = {
+        x: p.x,
+        y: p.y,
+        pressure: baseWidth > 0 ? p.w / baseWidth : 1,
+      };
+      if (typeof p.tx === 'number') out.tiltX = p.tx;
+      if (typeof p.ty === 'number') out.tiltY = p.ty;
+      return out;
+    }),
     style: {
       color: s.color,
       width: baseWidth,
@@ -165,11 +174,16 @@ function docStrokeToStroke(ds: SketchDocStroke): Stroke {
     tool: ds.tool,
     color: ds.style.color,
     alpha: ds.style.opacity,
-    points: ds.points.map((p) => ({
-      x: p.x,
-      y: p.y,
-      w: baseWidth * (p.pressure ?? 1),
-    })),
+    points: ds.points.map((p) => {
+      const pt: Point = {
+        x: p.x,
+        y: p.y,
+        w: baseWidth * (p.pressure ?? 1),
+      };
+      if (typeof p.tiltX === 'number') pt.tx = p.tiltX;
+      if (typeof p.tiltY === 'number') pt.ty = p.tiltY;
+      return pt;
+    }),
   };
 }
 
@@ -253,6 +267,33 @@ export function SketchModal({
   const [tool, setTool] = useState<Tool>('pen');
   const [color, setColor] = useState(PALETTE[0]);
   const [widthOverride, setWidthOverride] = useState<number | null>(null);
+  /** Per-tool memory of the last colour + width override the user
+   *  picked. Switching tools restores that tool's preferences so
+   *  the highlighter doesn't surprise the pen with the
+   *  highlighter's yellow. */
+  const toolPrefsRef = useRef<Partial<Record<Tool, { color?: string; width?: number | null }>>>({});
+  /** Per-tool alpha override. Lets the user pull the highlighter
+   *  more / less transparent, the pen 100 % opaque, etc. — without
+   *  changing the static ToolSpec defaults. */
+  const [opacity, setOpacity] = useState<number | null>(null);
+  /** Most-recently-used colours, capped at 8. Persisted in
+   *  localStorage so the next session restores them. */
+  const RECENT_KEY = 'minerva.v2.sketch.recentColors';
+  const [recentColors, setRecentColors] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem(RECENT_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.slice(0, 8) : [];
+    } catch { return []; }
+  });
+  function pushRecentColor(c: string) {
+    setRecentColors((prev) => {
+      const next = [c, ...prev.filter((x) => x !== c)].slice(0, 8);
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }
   const [uploading, setUploading] = useState(false);
   const [debug, setDebug] = useState('idle');
   const [, force] = useState(0);
@@ -350,8 +391,31 @@ export function SketchModal({
       redraw();
       force((n) => n + 1);
     }
+    // Restore the picked-tool's last-used colour + width override
+    // from per-tool memory. A first switch to a tool with no prior
+    // prefs leaves the current settings as the defaults.
+    const prefs = toolPrefsRef.current[tool];
+    if (prefs) {
+      if (typeof prefs.color === 'string') setColor(prefs.color);
+      if (prefs.width !== undefined) setWidthOverride(prefs.width);
+    }
+    // Opacity resets to "tool default" on every tool switch so
+    // changing tools doesn't drag the highlighter's alpha into the
+    // pen, for instance.
+    setOpacity(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool]);
+
+  /* Mirror the current colour + width into the tool-prefs map so
+   * the next tool switch and back restores them. Runs after every
+   * change to colour, width, or tool. */
+  useEffect(() => {
+    toolPrefsRef.current[tool] = {
+      ...toolPrefsRef.current[tool],
+      color,
+      width: widthOverride,
+    };
+  }, [tool, color, widthOverride]);
 
   /* Render state that lives outside the imperative draw path —
    * paper format, page-style background, the view transform —
@@ -537,21 +601,27 @@ export function SketchModal({
       };
     };
 
-    const beginStroke = (clientX: number, clientY: number, pressure: number, ptype: string) => {
+    const beginStroke = (clientX: number, clientY: number, pressure: number, ptype: string, tx?: number, ty?: number) => {
       const { x, y } = toModel(clientX, clientY);
       const spec = getToolSpec(tool);
+      const firstPoint: Point = { x, y, w: widthFor(pressure, ptype) };
+      if (typeof tx === 'number') firstPoint.tx = tx;
+      if (typeof ty === 'number') firstPoint.ty = ty;
       drawingRef.current = {
         tool,
         color: tool === 'eraser' ? '#000' : color,
-        alpha: spec.alpha,
-        points: [{ x, y, w: widthFor(pressure, ptype) }],
+        // User-set opacity overrides the tool's default alpha.
+        // Lets the user push the highlighter more / less
+        // transparent without redefining the tool itself.
+        alpha: typeof opacity === 'number' ? opacity : spec.alpha,
+        points: [firstPoint],
       };
       redoRef.current = []; // any new stroke invalidates redo history
       setDebug(`down · ${ptype} · p=${pressure.toFixed(2)}`);
       redraw();
       force((n) => n + 1);
     };
-    const continueStroke = (clientX: number, clientY: number, pressure: number, ptype: string) => {
+    const continueStroke = (clientX: number, clientY: number, pressure: number, ptype: string, tx?: number, ty?: number) => {
       if (!drawingRef.current) return;
       const { x: nx, y: ny } = toModel(clientX, clientY);
       const pts = drawingRef.current.points;
@@ -560,11 +630,11 @@ export function SketchModal({
       // The user sees a live preview as they drag; release commits
       // exactly two points (anchor + tip) — perfect ruler-line.
       if (drawingRef.current.tool === 'line') {
-        if (pts.length === 1) {
-          pts.push({ x: nx, y: ny, w: widthFor(pressure, ptype) });
-        } else {
-          pts[1] = { x: nx, y: ny, w: widthFor(pressure, ptype) };
-        }
+        const pt: Point = { x: nx, y: ny, w: widthFor(pressure, ptype) };
+        if (typeof tx === 'number') pt.tx = tx;
+        if (typeof ty === 'number') pt.ty = ty;
+        if (pts.length === 1) pts.push(pt);
+        else pts[1] = pt;
         setDebug(`line · ${ptype} · pts=2`);
         redraw();
         return;
@@ -580,7 +650,10 @@ export function SketchModal({
         const dy = ny - last.y;
         if (dx * dx + dy * dy < noiseThresh * noiseThresh) return;
       }
-      pts.push({ x: nx, y: ny, w: widthFor(pressure, ptype) });
+      const pt: Point = { x: nx, y: ny, w: widthFor(pressure, ptype) };
+      if (typeof tx === 'number') pt.tx = tx;
+      if (typeof ty === 'number') pt.ty = ty;
+      pts.push(pt);
       setDebug(`move · ${ptype} · p=${pressure.toFixed(2)} · pts=${pts.length}`);
       redraw();
     };
@@ -759,7 +832,7 @@ export function SketchModal({
         return;
       }
       const p = e.pressure > 0 ? e.pressure : (e.pointerType === 'pen' ? 0.5 : 1);
-      beginStroke(e.clientX, e.clientY, p, e.pointerType);
+      beginStroke(e.clientX, e.clientY, p, e.pointerType, e.tiltX, e.tiltY);
     };
     const onPointerMove = (e: PointerEvent) => {
       if (activeInputRef.current !== 'pointer') return;
@@ -769,8 +842,23 @@ export function SketchModal({
         return;
       }
       if (!drawingRef.current) return;
-      const p = e.pressure > 0 ? e.pressure : (e.pointerType === 'pen' ? 0.5 : 1);
-      continueStroke(e.clientX, e.clientY, p, e.pointerType);
+      // Coalesced events — iPad Pencil at 120 Hz often delivers two
+      // or three sub-frame samples that the browser batches into a
+      // single pointermove. Iterating them gives a noticeably
+      // smoother curve at the cost of a few more points per stroke.
+      // Falls back to the singleton event on platforms without the
+      // API (Chrome on Linux is rolling support, Safari has it).
+      let events: PointerEvent[];
+      if (typeof e.getCoalescedEvents === 'function') {
+        const ce = e.getCoalescedEvents();
+        events = ce.length > 0 ? ce : [e];
+      } else {
+        events = [e];
+      }
+      for (const ev of events) {
+        const p = ev.pressure > 0 ? ev.pressure : (ev.pointerType === 'pen' ? 0.5 : 1);
+        continueStroke(ev.clientX, ev.clientY, p, ev.pointerType, ev.tiltX, ev.tiltY);
+      }
     };
     const onPointerUp = (e: PointerEvent) => {
       if (activeInputRef.current !== 'pointer') return;
@@ -1214,6 +1302,14 @@ export function SketchModal({
     if (onAutoSave) onAutoSave(buildDoc());
   }
   function clearAll() {
+    // Confirm before destroying everything on the current page —
+    // undo would only step back stroke-by-stroke on a giant
+    // multi-hundred-stroke page, so a misclick on Clear is
+    // expensive. Skip the confirm when there's nothing to clear.
+    if (strokesRef.current.length === 0 && !bgImageRef.current) return;
+    if (typeof window !== 'undefined' && !window.confirm(
+      `Clear all ${strokesRef.current.length} stroke${strokesRef.current.length === 1 ? '' : 's'} on this page?`
+    )) return;
     // Mutate in place so the alias from pagesRef stays bound — a
     // fresh [] would orphan the page object's strokes array and
     // subsequent pushes would land in the alias-only array,
@@ -1782,7 +1878,7 @@ export function SketchModal({
                 key={c}
                 color={c}
                 active={color === c}
-                onActivate={() => setColor(c)}
+                onActivate={() => { setColor(c); pushRecentColor(c); }}
               />
             ))}
             <label className="ml-1 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-dashed border-zinc-300 text-[10px] text-zinc-500 dark:border-zinc-600">
@@ -1790,11 +1886,48 @@ export function SketchModal({
               <input
                 type="color"
                 value={color}
-                onChange={(e) => setColor(e.target.value)}
+                onChange={(e) => { setColor(e.target.value); pushRecentColor(e.target.value); }}
                 className="sr-only"
               />
             </label>
           </div>
+        )}
+        {/* Recent colors strip — eight most-recent picks, persisted
+          * in localStorage so the next session keeps them. Hidden
+          * when empty; hidden for the eraser tool (which doesn't
+          * use colour). */}
+        {tool !== 'eraser' && recentColors.length > 0 && (
+          <div className="inline-flex items-center gap-1" title="Recent colours">
+            <span className="text-[9px] uppercase tracking-wide text-zinc-500">Recent</span>
+            {recentColors.map((c) => (
+              <SketchColorButton
+                key={`recent-${c}`}
+                color={c}
+                active={color === c}
+                onActivate={() => setColor(c)}
+              />
+            ))}
+          </div>
+        )}
+        {/* Opacity slider — overrides the current tool's default
+          * alpha. Hidden for eraser (alpha doesn't apply with
+          * destination-out). Resets to "tool default" on tool
+          * switch so changing tools doesn't drag a highlighter's
+          * 0.35 onto the pen. */}
+        {tool !== 'eraser' && (
+          <label className="inline-flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400" title="Override the tool's default alpha for new strokes">
+            <span>Opacity</span>
+            <input
+              type="range"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={typeof opacity === 'number' ? opacity : activeSpec.alpha}
+              onChange={(e) => setOpacity(Number(e.target.value))}
+              className="w-20 cursor-pointer accent-zinc-900 dark:accent-white"
+            />
+            <span className="w-7 font-mono text-[10px] text-zinc-500">{Math.round((typeof opacity === 'number' ? opacity : activeSpec.alpha) * 100)}%</span>
+          </label>
         )}
 
         {/* Width: five tap-able tiers + a fine-tune slider beside.
