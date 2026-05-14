@@ -36,7 +36,7 @@ export function AddByUrl({
   const kind = sectionKind(section);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState('');
-  type LookupItem = Record<string, string>;
+  type LookupItem = Record<string, string> & { position?: number };
   type LookupSingle = LookupItem & { kind?: string };
   type LookupPlaylist = { kind: 'playlist'; playlistId: string; playlistName?: string; items: LookupItem[] };
   type LookupResult = LookupSingle | LookupPlaylist;
@@ -92,9 +92,14 @@ export function AddByUrl({
           const data: Record<string, unknown> = {};
           if (allowed.has('playlist')) data.playlist = playlistLabel;
           for (const [k, v] of Object.entries(item)) {
-            if (v == null || v === '' || k === 'playlist') continue;
+            if (v == null || v === '' || k === 'playlist' || k === 'position') continue;
             if (allowed.has(k)) data[k] = v;
           }
+          // Preserve the video's place in the playlist as a meta
+          // field (underscore-prefixed → hidden from the column
+          // grid) so the section can sort rows back into playlist
+          // order regardless of when each row was created.
+          if (typeof item.position === 'number') data._playlistPos = item.position;
           const r = await fetch(`/api/sections/${section.slug}/rows`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

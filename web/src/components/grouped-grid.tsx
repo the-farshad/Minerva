@@ -186,6 +186,18 @@ export function GroupedGrid({
         byKey.get(key)!.push(r);
       }
     }
+    // Within each group, restore playlist order when the rows carry
+    // a `_playlistPos` (set on import). Videos then stay in the
+    // playlist's own order regardless of when each row was created
+    // or re-imported. Rows without a position keep their relative
+    // order and sort after the positioned ones.
+    const posOf = (r: Row) =>
+      typeof r.data._playlistPos === 'number' ? (r.data._playlistPos as number) : Number.POSITIVE_INFINITY;
+    for (const arr of byKey.values()) {
+      if (arr.some((r) => typeof r.data._playlistPos === 'number')) {
+        arr.sort((a, b) => posOf(a) - posOf(b));
+      }
+    }
     if (sectionSort !== 'default') {
       order.sort((a, b) => {
         if (sectionSort === 'name-asc')  return collator.compare(a, b);
