@@ -39,19 +39,35 @@ export function RelatedSankey({
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 540 });
   const [focused, setFocused] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
     const sync = () => {
       const rect = el.getBoundingClientRect();
-      setSize({ w: rect.width || 800, h: Math.max(360, rect.width * 0.6) });
+      // In fullscreen the height is the viewport minus the toolbar
+      // strip; otherwise it's a 0.6× width ratio (same shape the
+      // inline graph uses) so the diagram has reasonable airtime
+      // without dominating the page.
+      const h = fullscreen
+        ? Math.max(360, window.innerHeight - 80)
+        : Math.max(360, rect.width * 0.6);
+      setSize({ w: rect.width || 800, h });
     };
     sync();
     const ro = new ResizeObserver(sync);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [fullscreen]);
+
+  // Esc exits fullscreen for keyboard users.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
 
   /** Build the citation graph. Nodes include the seed and every
    *  visible paper; links exist whenever a paper's
@@ -148,9 +164,27 @@ export function RelatedSankey({
   const isFocused = (id: string) => focused === id;
   const isIncident = (sId: string, tId: string) => !focused || focused === sId || focused === tId;
 
+  // Fullscreen wraps the entire panel in a fixed-inset overlay; the
+  // toolbar strip + SVG canvas inside resize via the same
+  // ResizeObserver path. Esc exits (see effect above).
+  const outerClass = fullscreen
+    ? 'fixed inset-0 z-50 flex flex-col bg-white p-2 dark:bg-zinc-950'
+    : 'rounded-xl border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950';
+
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
-      <div ref={containerRef} className="w-full">
+    <div className={outerClass}>
+      <div className="mb-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setFullscreen((v) => !v)}
+          title={fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        </button>
+        {fullscreen && <span className="ml-auto text-[10px] text-zinc-500">Press Esc to exit</span>}
+      </div>
+      <div ref={containerRef} className={fullscreen ? 'flex-1 w-full' : 'w-full'}>
         <svg
           width={size.w}
           height={size.h}

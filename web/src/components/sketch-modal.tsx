@@ -46,15 +46,16 @@ import { createPortal } from 'react-dom';
 import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
-  ChevronLeft, ChevronRight, Plus as PlusIcon, FileX,
+  ChevronLeft, ChevronRight, Plus as PlusIcon, FileX, Lasso, Copy,
 } from 'lucide-react';
+import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-hit-test';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { jsPDF } from 'jspdf';
 import type { SketchDoc, SketchDocStroke, SketchDocPage, SketchDocPaperSize } from '@/lib/sketch-doc';
 import { newSketchId } from '@/lib/sketch-doc';
 
-type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line';
+type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line' | 'obj-eraser' | 'lasso';
 
 type ToolSpec = {
   id: Tool;
@@ -72,6 +73,12 @@ const TOOLS: ToolSpec[] = [
   { id: 'highlighter', label: 'Highlighter', Icon: Highlighter, minWidth: 12, maxWidth: 28, alpha: 0.35 },
   { id: 'line',        label: 'Line',        Icon: Slash,       minWidth: 2,  maxWidth: 8,  alpha: 1    },
   { id: 'eraser',      label: 'Eraser',      Icon: Eraser,      minWidth: 8,  maxWidth: 32, alpha: 1    },
+  // Vector-aware tools enabled by the SketchDoc model.
+  // `obj-eraser` removes whole strokes per tap/swipe; `lasso`
+  // selects strokes inside a freehand loop so the user can delete
+  // / duplicate / drag-move them as a unit.
+  { id: 'obj-eraser',  label: 'Object',      Icon: Trash2,      minWidth: 6,  maxWidth: 16, alpha: 1    },
+  { id: 'lasso',       label: 'Lasso',       Icon: Lasso,       minWidth: 2,  maxWidth: 2,  alpha: 0.6  },
 ];
 
 /** Expanded 16-swatch palette — two rows of inks (greys + dark
@@ -225,6 +232,13 @@ export function SketchModal({
    *  identity via a Map so a re-serialise of an unchanged stroke
    *  emits the same id. */
   const strokeIdsRef = useRef<WeakMap<Stroke, string>>(new WeakMap());
+  /** Lasso selection state. `selectedRef` holds the Set of currently-
+   *  selected Stroke objects on the current page; `lassoRef` is the
+   *  in-flight polyline being dragged; `moveStartRef` is the start
+   *  pointer position for a drag-to-move on an existing selection. */
+  const selectedRef = useRef<Set<Stroke>>(new Set());
+  const lassoRef = useRef<{ x: number; y: number }[] | null>(null);
+  const moveStartRef = useRef<{ x: number; y: number } | null>(null);
   const strokesRef = useRef<Stroke[]>(pagesRef.current[0].strokes);
   const redoRef = useRef<Stroke[]>([]);
   const drawingRef = useRef<Stroke | null>(null);
@@ -293,10 +307,32 @@ export function SketchModal({
     redoRef.current = [];
     drawingRef.current = null;
     activeInputRef.current = null;
+    // Selection + lasso state is per-page — switching pages clears
+    // them so the lasso highlight from page 1 doesn't ghost over
+    // page 2's strokes.
+    selectedRef.current.clear();
+    lassoRef.current = null;
+    moveStartRef.current = null;
     redraw();
     force((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageIndex, open]);
+
+  /* Tool change clears the editing selection — picking the pen
+   * tool while strokes are selected is implicitly "I'm done with
+   * those" and stale selection halo would distract from the new
+   * drawing. Lasso state is also wiped so a half-drawn polyline
+   * doesn't persist after switching away. */
+  useEffect(() => {
+    if (tool !== 'lasso' && selectedRef.current.size > 0) {
+      selectedRef.current.clear();
+      lassoRef.current = null;
+      moveStartRef.current = null;
+      redraw();
+      force((n) => n + 1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool]);
 
   /* Canvas size, DPR, redraw on open + seed image load. */
   useEffect(() => {
@@ -452,15 +488,16 @@ export function SketchModal({
         return;
       }
       // Drop noise: Pencil fires ~120 Hz so successive samples may
-      // land sub-pixel apart. Skip points closer than 1.2 CSS px from
-      // the previous one — keeps the path smooth and shrinks the
-      // serialized point array by ~40%, which matters for SVG/PDF
-      // export size and per-frame redraw cost on long strokes.
+      // land sub-pixel apart. Skip points closer than 2 CSS px from
+      // the previous one — a more aggressive filter than the prior
+      // 1.2 px makes the rendered curve visibly smoother (fewer
+      // micro-segments fighting the Bezier smoothing) and shrinks
+      // serialized strokes by ~55%, lowering autosave payload size.
       if (pts.length > 0) {
         const last = pts[pts.length - 1];
         const dx = nx - last.x;
         const dy = ny - last.y;
-        if (dx * dx + dy * dy < 1.2 * 1.2) return;
+        if (dx * dx + dy * dy < 2 * 2) return;
       }
       pts.push({ x: nx, y: ny, w: widthFor(pressure, ptype) });
       setDebug(`move · ${ptype} · p=${pressure.toFixed(2)} · pts=${pts.length}`);
@@ -479,26 +516,177 @@ export function SketchModal({
       if (onAutoSave) onAutoSave(buildDoc());
     };
 
+    // ----- Editing-tool handlers -----------------------------------
+
+    /** Hit-test threshold in CSS px. A 10 px halo around the
+     *  rendered stroke is generous on touch + Pencil without
+     *  bleeding into adjacent lines. */
+    const HIT_THRESHOLD = 10;
+    const localXY = (clientX: number, clientY: number) => {
+      const r = rectOf();
+      return { x: clientX - r.left, y: clientY - r.top };
+    };
+
+    const pickStrokeAt = (px: number, py: number): Stroke | null => {
+      // Iterate in reverse so the topmost stroke wins — matches how
+      // the renderer paints them (later strokes paint over earlier).
+      const list = strokesRef.current;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const s = list[i];
+        const halo = HIT_THRESHOLD + (s.points.reduce((a, p) => a + p.w, 0) / Math.max(1, s.points.length)) / 2;
+        if (distanceToPolyline(px, py, s.points) <= halo) return s;
+      }
+      return null;
+    };
+
+    const eraseAt = (px: number, py: number): boolean => {
+      const hit = pickStrokeAt(px, py);
+      if (!hit) return false;
+      const idx = strokesRef.current.indexOf(hit);
+      if (idx >= 0) strokesRef.current.splice(idx, 1);
+      selectedRef.current.delete(hit);
+      return true;
+    };
+
+    /** Bounding box of every currently-selected stroke. Used to
+     *  decide whether a pointerdown in lasso mode starts a move
+     *  (down-point inside the bbox) or a new lasso (outside). */
+    const selectionBBox = () => {
+      const all: { x: number; y: number }[] = [];
+      for (const s of selectedRef.current) {
+        for (const p of s.points) all.push({ x: p.x, y: p.y });
+      }
+      return polylineBBox(all);
+    };
+
+    // ----- Pointer dispatch by tool --------------------------------
+
+    const downEditing = (clientX: number, clientY: number) => {
+      const { x, y } = localXY(clientX, clientY);
+      if (tool === 'obj-eraser') {
+        if (eraseAt(x, y)) {
+          redraw();
+          force((n) => n + 1);
+          if (onAutoSave) onAutoSave(buildDoc());
+        }
+        return;
+      }
+      if (tool === 'lasso') {
+        // If we already have a selection and the click lands inside
+        // its bbox, start a move-drag instead of a new lasso.
+        const bb = selectionBBox();
+        if (bb && selectedRef.current.size > 0 && x >= bb.minX - 6 && x <= bb.maxX + 6 && y >= bb.minY - 6 && y <= bb.maxY + 6) {
+          moveStartRef.current = { x, y };
+          return;
+        }
+        // Otherwise clear selection and start a new lasso polyline.
+        selectedRef.current.clear();
+        lassoRef.current = [{ x, y }];
+        redraw();
+        force((n) => n + 1);
+      }
+    };
+
+    const moveEditing = (clientX: number, clientY: number) => {
+      const { x, y } = localXY(clientX, clientY);
+      if (tool === 'obj-eraser') {
+        if (eraseAt(x, y)) {
+          redraw();
+          force((n) => n + 1);
+        }
+        return;
+      }
+      if (tool === 'lasso') {
+        if (moveStartRef.current) {
+          const dx = x - moveStartRef.current.x;
+          const dy = y - moveStartRef.current.y;
+          // Translate every selected stroke's points by the delta.
+          // The points array is mutated in place — keeps the alias
+          // bound to pagesRef and avoids reallocating per-frame.
+          for (const s of selectedRef.current) {
+            for (const p of s.points) { p.x += dx; p.y += dy; }
+          }
+          moveStartRef.current = { x, y };
+          redraw();
+          return;
+        }
+        if (lassoRef.current) {
+          // Same 1.2 px noise filter as drawing — keeps the lasso
+          // polygon compact for the point-in-polygon pass.
+          const last = lassoRef.current[lassoRef.current.length - 1];
+          if (last) {
+            const ddx = x - last.x;
+            const ddy = y - last.y;
+            if (ddx * ddx + ddy * ddy < 1.2 * 1.2) return;
+          }
+          lassoRef.current.push({ x, y });
+          redraw();
+        }
+      }
+    };
+
+    const upEditing = () => {
+      if (tool === 'obj-eraser') {
+        // Autosave after a swipe-erase gesture so a fast wipe
+        // produces one PATCH at the end rather than per-deleted-stroke.
+        if (onAutoSave) onAutoSave(buildDoc());
+        return;
+      }
+      if (tool === 'lasso') {
+        if (moveStartRef.current) {
+          moveStartRef.current = null;
+          if (onAutoSave) onAutoSave(buildDoc());
+          return;
+        }
+        if (lassoRef.current) {
+          const polygon = lassoRef.current;
+          lassoRef.current = null;
+          if (polygon.length >= 3) {
+            // Select every stroke with ≥1 point inside the lasso.
+            for (const s of strokesRef.current) {
+              if (s.points.some((p) => pointInPolygon(p.x, p.y, polygon))) {
+                selectedRef.current.add(s);
+              }
+            }
+          }
+          redraw();
+          force((n) => n + 1);
+        }
+      }
+    };
+
     // --- Pointer Events (pen + mouse + most touch on modern browsers)
     const onPointerDown = (e: PointerEvent) => {
       if (activeInputRef.current === 'touch') return; // touch path already engaged
       activeInputRef.current = 'pointer';
       e.preventDefault();
       try { c.setPointerCapture(e.pointerId); } catch { /* old Safari */ }
+      if (tool === 'obj-eraser' || tool === 'lasso') {
+        downEditing(e.clientX, e.clientY);
+        return;
+      }
       const p = e.pressure > 0 ? e.pressure : (e.pointerType === 'pen' ? 0.5 : 1);
       beginStroke(e.clientX, e.clientY, p, e.pointerType);
     };
     const onPointerMove = (e: PointerEvent) => {
       if (activeInputRef.current !== 'pointer') return;
-      if (!drawingRef.current) return;
       e.preventDefault();
+      if (tool === 'obj-eraser' || tool === 'lasso') {
+        moveEditing(e.clientX, e.clientY);
+        return;
+      }
+      if (!drawingRef.current) return;
       const p = e.pressure > 0 ? e.pressure : (e.pointerType === 'pen' ? 0.5 : 1);
       continueStroke(e.clientX, e.clientY, p, e.pointerType);
     };
     const onPointerUp = (e: PointerEvent) => {
       if (activeInputRef.current !== 'pointer') return;
       try { c.releasePointerCapture(e.pointerId); } catch { /* ok */ }
-      endStroke(e.pointerType);
+      if (tool === 'obj-eraser' || tool === 'lasso') {
+        upEditing();
+      } else {
+        endStroke(e.pointerType);
+      }
       activeInputRef.current = null;
     };
 
@@ -511,6 +699,10 @@ export function SketchModal({
       e.preventDefault();
       const t = e.touches[0];
       if (!t) return;
+      if (tool === 'obj-eraser' || tool === 'lasso') {
+        downEditing(t.clientX, t.clientY);
+        return;
+      }
       const pressure = typeof t.force === 'number' && t.force > 0 ? t.force : 0.5;
       beginStroke(t.clientX, t.clientY, pressure, 'touch');
     };
@@ -519,13 +711,21 @@ export function SketchModal({
       e.preventDefault();
       const t = e.touches[0];
       if (!t) return;
+      if (tool === 'obj-eraser' || tool === 'lasso') {
+        moveEditing(t.clientX, t.clientY);
+        return;
+      }
       const pressure = typeof t.force === 'number' && t.force > 0 ? t.force : 0.5;
       continueStroke(t.clientX, t.clientY, pressure, 'touch');
     };
     const onTouchEnd = (e: TouchEvent) => {
       if (activeInputRef.current !== 'touch') return;
       e.preventDefault();
-      endStroke('touch');
+      if (tool === 'obj-eraser' || tool === 'lasso') {
+        upEditing();
+      } else {
+        endStroke('touch');
+      }
       activeInputRef.current = null;
     };
 
@@ -573,6 +773,51 @@ export function SketchModal({
     }
     for (const s of strokesRef.current) drawStroke(ctx, s);
     if (drawingRef.current) drawStroke(ctx, drawingRef.current);
+    // Selection highlight — a 2 px translucent-blue outline drawn
+    // beneath each selected stroke. Sits in screen coordinates so a
+    // tiny sub-pixel stroke is still visibly tagged.
+    if (selectedRef.current.size > 0) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.55)';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const s of selectedRef.current) {
+        if (s.points.length === 0) continue;
+        ctx.beginPath();
+        ctx.moveTo(s.points[0].x, s.points[0].y);
+        for (let i = 1; i < s.points.length; i++) {
+          ctx.lineTo(s.points[i].x, s.points[i].y);
+        }
+        ctx.stroke();
+      }
+      // Selection bounding box (dashed) — visually communicates
+      // "drag inside here to move" affordance.
+      const bb = polylineBBox(
+        Array.from(selectedRef.current).flatMap((s) => s.points.map((p) => ({ x: p.x, y: p.y }))),
+      );
+      if (bb) {
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bb.minX - 4, bb.minY - 4, (bb.maxX - bb.minX) + 8, (bb.maxY - bb.minY) + 8);
+      }
+      ctx.restore();
+    }
+    // Live lasso polyline — dashed amber outline.
+    if (lassoRef.current && lassoRef.current.length > 0) {
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = 'rgba(234, 88, 12, 0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(lassoRef.current[0].x, lassoRef.current[0].y);
+      for (let i = 1; i < lassoRef.current.length; i++) {
+        ctx.lineTo(lassoRef.current[i].x, lassoRef.current[i].y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
     ctx.restore();
   }
 
@@ -607,13 +852,22 @@ export function SketchModal({
       ctx.restore();
       return;
     }
-    // Catmull-Rom-to-Bezier smoothing: walk every interior triplet
-    // and emit a cubic bezier whose control points are derived from
-    // a Catmull-Rom spline through the four-point window around the
-    // segment. Visually rounder than quadratic-through-midpoints,
-    // and the per-segment width is a 5-point moving average so the
-    // line tapers smoothly with pressure instead of step-changing
-    // at every sample.
+    // Smoothing strategy depends on whether the tool has alpha < 1.
+    //
+    // For OPAQUE tools (pen, alpha=1, eraser) we render each
+    // Catmull-Rom segment as its own bezierCurveTo() so the line
+    // width can taper segment-to-segment with pressure variation —
+    // this is what gives the pen its inky feel.
+    //
+    // For TRANSLUCENT tools (highlighter alpha=0.35, marker 0.6,
+    // pencil 0.85, line) each per-segment stroke() composites against
+    // the previous: a 0.35-alpha join overlaps the adjacent
+    // 0.35-alpha segment and the visible pixel ends up at
+    // 1 − (1 − 0.35)² ≈ 0.58 — visibly darker than the rest of the
+    // stroke. The fix is to emit one continuous path: a single
+    // beginPath() → many bezierCurveTo() → one stroke() composites
+    // exactly once, no joins darker than the body. We trade per-
+    // segment width variation (acceptable for uniform-width tools).
     const widthAt = (i: number): number => {
       let sum = 0;
       let count = 0;
@@ -623,22 +877,42 @@ export function SketchModal({
       }
       return sum / count;
     };
-    for (let i = 0; i < s.points.length - 1; i++) {
-      const p0 = s.points[Math.max(0, i - 1)];
-      const p1 = s.points[i];
-      const p2 = s.points[i + 1];
-      const p3 = s.points[Math.min(s.points.length - 1, i + 2)];
-      // Catmull-Rom → cubic Bezier control points (tension 0.5,
-      // the classic centripetal-style smoothing factor).
-      const c1x = p1.x + (p2.x - p0.x) / 6;
-      const c1y = p1.y + (p2.y - p0.y) / 6;
-      const c2x = p2.x - (p3.x - p1.x) / 6;
-      const c2y = p2.y - (p3.y - p1.y) / 6;
-      ctx.lineWidth = (widthAt(i) + widthAt(i + 1)) / 2;
+    const isUniformWidth = s.tool === 'highlighter' || s.tool === 'marker' || s.tool === 'pencil' || s.tool === 'line';
+    if (isUniformWidth) {
+      const avgW = s.points.reduce((a, p) => a + p.w, 0) / s.points.length;
+      ctx.lineWidth = avgW;
       ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2.x, p2.y);
+      ctx.moveTo(s.points[0].x, s.points[0].y);
+      for (let i = 0; i < s.points.length - 1; i++) {
+        const p0 = s.points[Math.max(0, i - 1)];
+        const p1 = s.points[i];
+        const p2 = s.points[i + 1];
+        const p3 = s.points[Math.min(s.points.length - 1, i + 2)];
+        const c1x = p1.x + (p2.x - p0.x) / 6;
+        const c1y = p1.y + (p2.y - p0.y) / 6;
+        const c2x = p2.x - (p3.x - p1.x) / 6;
+        const c2y = p2.y - (p3.y - p1.y) / 6;
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2.x, p2.y);
+      }
       ctx.stroke();
+    } else {
+      for (let i = 0; i < s.points.length - 1; i++) {
+        const p0 = s.points[Math.max(0, i - 1)];
+        const p1 = s.points[i];
+        const p2 = s.points[i + 1];
+        const p3 = s.points[Math.min(s.points.length - 1, i + 2)];
+        // Catmull-Rom → cubic Bezier control points (tension 0.5,
+        // the classic centripetal-style smoothing factor).
+        const c1x = p1.x + (p2.x - p0.x) / 6;
+        const c1y = p1.y + (p2.y - p0.y) / 6;
+        const c2x = p2.x - (p3.x - p1.x) / 6;
+        const c2y = p2.y - (p3.y - p1.y) / 6;
+        ctx.lineWidth = (widthAt(i) + widthAt(i + 1)) / 2;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2.x, p2.y);
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }
@@ -685,6 +959,43 @@ export function SketchModal({
     commitInFlight();
     setPageIndex(idx);
   }
+  /** Delete every stroke currently in selectedRef. Used by the
+   *  contextual selection toolbar that appears under the lasso. */
+  function deleteSelection() {
+    if (selectedRef.current.size === 0) return;
+    const survive: Stroke[] = [];
+    for (const s of strokesRef.current) {
+      if (!selectedRef.current.has(s)) survive.push(s);
+    }
+    strokesRef.current.length = 0;
+    for (const s of survive) strokesRef.current.push(s);
+    selectedRef.current.clear();
+    redraw();
+    force((n) => n + 1);
+    if (onAutoSave) onAutoSave(buildDoc());
+  }
+  /** Duplicate every selected stroke at a small offset; the new
+   *  copies become the new selection so the user can drag them
+   *  straight away without an extra tap. */
+  function duplicateSelection() {
+    if (selectedRef.current.size === 0) return;
+    const OFFSET = 16;
+    const fresh: Stroke[] = [];
+    for (const s of selectedRef.current) {
+      fresh.push({
+        tool: s.tool,
+        color: s.color,
+        alpha: s.alpha,
+        points: s.points.map((p) => ({ x: p.x + OFFSET, y: p.y + OFFSET, w: p.w })),
+      });
+    }
+    for (const f of fresh) strokesRef.current.push(f);
+    selectedRef.current = new Set(fresh);
+    redraw();
+    force((n) => n + 1);
+    if (onAutoSave) onAutoSave(buildDoc());
+  }
+
   function addPage() {
     commitInFlight();
     pagesRef.current.push({ strokes: [], bg: null });
@@ -1043,13 +1354,43 @@ export function SketchModal({
           ref={canvasRef}
           className="block h-full w-full"
           style={{
-            cursor: tool === 'eraser' ? 'cell' : 'crosshair',
+            cursor: tool === 'eraser' || tool === 'obj-eraser' ? 'cell' : tool === 'lasso' ? 'grab' : 'crosshair',
             touchAction: 'none',
             userSelect: 'none',
             WebkitUserSelect: 'none',
             WebkitTouchCallout: 'none',
           }}
         />
+        {/* Selection action chip — appears at the top of the canvas
+          * when one or more strokes are lassoed. Delete removes the
+          * selection in one go; Duplicate clones them with a small
+          * offset (the clones become the new selection so the user
+          * can drag them straight away). The dashed bbox + blue
+          * stroke halo are drawn directly on the canvas by redraw(). */}
+        {tool === 'lasso' && selectedRef.current.size > 0 && (
+          <div className="absolute left-1/2 top-2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full border border-zinc-200 bg-white/95 px-1.5 py-1 text-xs shadow-md dark:border-zinc-700 dark:bg-zinc-900/95">
+            <span className="px-1.5 text-[11px] text-zinc-500">{selectedRef.current.size} selected</span>
+            <SketchIconButton
+              label="Delete selection"
+              icon={<Trash2 className="h-4 w-4" />}
+              onActivate={deleteSelection}
+            />
+            <SketchIconButton
+              label="Duplicate selection"
+              icon={<Copy className="h-4 w-4" />}
+              onActivate={duplicateSelection}
+            />
+            <SketchIconButton
+              label="Clear selection"
+              icon={<X className="h-4 w-4" />}
+              onActivate={() => {
+                selectedRef.current.clear();
+                redraw();
+                force((n) => n + 1);
+              }}
+            />
+          </div>
+        )}
         {/* Live diagnostic — proves whether events are arriving
           * and which family. Includes body.pointer-events so a
           * stuck Radix lock is visible without devtools. Wider

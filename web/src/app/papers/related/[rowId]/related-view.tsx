@@ -93,7 +93,7 @@ export function RelatedView({
       setProvider(next);
       setPapers(null);
       setErr(null);
-      const params = new URLSearchParams({ limit: '40' });
+      const params = new URLSearchParams({ limit: '80' });
       if (seedRef) params.set('ref', seedRef);
       if (seedTitle) params.set('title', seedTitle);
       const r2 = await fetch(`/api/related-papers?${params.toString()}`);
@@ -141,7 +141,7 @@ export function RelatedView({
         // can fall back to a title-search when SS doesn't index
         // the paper under the ref shape (common for non-arXiv,
         // non-CrossRef DOIs).
-        const params = new URLSearchParams({ limit: '40' });
+        const params = new URLSearchParams({ limit: '80' });
         if (seedRef) params.set('ref', seedRef);
         if (seedTitle) params.set('title', seedTitle);
         const r = await fetch(`/api/related-papers?${params.toString()}`);

@@ -35,7 +35,16 @@ export async function GET(req: NextRequest) {
   if (!ref && !title) {
     return NextResponse.json({ error: '`ref` or `title` is required.' }, { status: 400 });
   }
-  const limit = Math.min(50, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 30));
+  // Caller-supplied page size. Capped at 100 — the upstream
+  // OpenAlex /works/<id>/related_works endpoint returns 25 fixed,
+  // so the headroom above 50 lets the cited-by leg pull a longer
+  // tail. The Sankey / graph views become hard to read above 100,
+  // so 100 is also the practical UI ceiling.
+  //
+  // True lazy-load (paginating the cited-by query with ?offset) is
+  // a separate slice — the API surface and client refetch loop
+  // need their own design pass.
+  const limit = Math.min(100, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 30));
 
   const provider = (await getServerPref<string>(userId, 'related_papers_provider')) || 'openalex';
 
