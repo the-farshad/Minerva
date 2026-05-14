@@ -96,12 +96,24 @@ jobs:
              git fetch origin main
              git reset --hard origin/main
              cd docs
-             # Pull any newer minerva-web image that web-publish
-             # just pushed to Docker Hub. Capture the local image
-             # digest before+after so we can tell whether we
-             # actually need to recreate the container.
+             # Reclaim disk BEFORE pulling, not after. The 24 GB box
+             # hits ~88% after ~3 deploys (every web-publish brings
+             # down a fresh ~1.5 GB image and Compose never evicts
+             # the old one). A full disk makes `docker compose pull`
+             # fail — and when that failure was swallowed by a
+             # trailing `|| true`, the droplet sat silently on the
+             # previous web SHA while the deploy still reported green.
+             # Pruning up-front means the pull has room to land.
+             docker image prune -af --filter 'until=12h' 2>&1 | tail -1 || true
+             docker builder prune -af 2>&1 | tail -1 || true
+             # Pull any newer minerva-web image that web-publish just
+             # pushed to Docker Hub. Capture the local image digest
+             # before+after so we can tell whether we actually need
+             # to recreate the container. NO `|| true` — a failed
+             # pull must fail the deploy loudly, not mask a stale
+             # image behind a green check.
              before=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
-             docker compose pull minerva-web || true
+             docker compose pull minerva-web
              after=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
              docker compose build minerva-services
              if [ \"\$before\" != \"\$after\" ]; then
@@ -112,12 +124,4 @@ jobs:
              # in idempotent mode — no-op when nothing changed.
              docker compose up -d
              sleep 6
-             curl -sS http://127.0.0.1:8765/health | head -c 200
-             # Reclaim disk by dropping dangling images + build
-             # cache. The 24 GB droplet otherwise hits 88% after
-             # ~3 deploys because every web-publish brings down
-             # a fresh ~1.5 GB image and Compose never evicts
-             # the previous one. Quiet on failure (e.g. another
-             # process holds an image ref).
-             docker image prune -af --filter 'until=12h' 2>&1 | tail -1 || true
-             docker builder prune -af 2>&1 | tail -1 || true"
+             curl -sS http://127.0.0.1:8765/health | head -c 200"

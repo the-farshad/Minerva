@@ -52,7 +52,22 @@ export type SketchDocStroke = {
   style: SketchDocStrokeStyle;
 };
 
-export type SketchDocObject = SketchDocStroke;
+/** A typed-text object. Placed via the text tool — on iPadOS the
+ *  editing overlay is a real <textarea>, so Apple Pencil Scribble
+ *  converts handwriting to text on-device before it lands here.
+ *  `x`/`y` are the top-left anchor in model coordinates; `fontSize`
+ *  is in model px (multiplied by the view scale at render time). */
+export type SketchDocText = {
+  id: string;
+  type: 'text';
+  x: number;
+  y: number;
+  text: string;
+  fontSize: number;
+  color: string;
+};
+
+export type SketchDocObject = SketchDocStroke | SketchDocText;
 
 export type SketchDocPaperSize =
   | 'auto'
@@ -133,9 +148,16 @@ export function validateSketchDoc(raw: unknown): string | null {
     if (objs.length > SKETCH_LIMITS.maxObjectsPerPage) return `pages[${pi}] > ${SKETCH_LIMITS.maxObjectsPerPage} objects`;
     for (const [oi, o] of objs.entries()) {
       if (!o || typeof o !== 'object') return `pages[${pi}].objects[${oi}] not an object`;
-      if (o.type !== 'stroke') return `unsupported object type ${o.type}`;
-      if (!Array.isArray(o.points)) return `pages[${pi}].objects[${oi}].points not an array`;
-      if (o.points.length > SKETCH_LIMITS.maxPointsPerObject) return `pages[${pi}].objects[${oi}] > ${SKETCH_LIMITS.maxPointsPerObject} points`;
+      if (o.type === 'stroke') {
+        if (!Array.isArray(o.points)) return `pages[${pi}].objects[${oi}].points not an array`;
+        if (o.points.length > SKETCH_LIMITS.maxPointsPerObject) return `pages[${pi}].objects[${oi}] > ${SKETCH_LIMITS.maxPointsPerObject} points`;
+      } else if (o.type === 'text') {
+        const t = o as Partial<SketchDocText>;
+        if (typeof t.text !== 'string') return `pages[${pi}].objects[${oi}].text not a string`;
+        if (typeof t.x !== 'number' || typeof t.y !== 'number') return `pages[${pi}].objects[${oi}] missing x/y`;
+      } else {
+        return `unsupported object type ${(o as { type?: string }).type}`;
+      }
     }
   }
   // Size check after structure validation so a malformed huge blob

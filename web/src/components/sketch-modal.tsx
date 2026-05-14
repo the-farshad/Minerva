@@ -47,16 +47,16 @@ import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
-  Square, Circle, ArrowRight, FileText, SlidersHorizontal, Info,
+  Square, Circle, ArrowRight, FileText, SlidersHorizontal, Info, Type as TypeIcon,
 } from 'lucide-react';
 import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-hit-test';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { jsPDF } from 'jspdf';
-import type { SketchDoc, SketchDocStroke, SketchDocPage, SketchDocPaperSize } from '@/lib/sketch-doc';
+import type { SketchDoc, SketchDocStroke, SketchDocText, SketchDocPage, SketchDocPaperSize } from '@/lib/sketch-doc';
 import { newSketchId } from '@/lib/sketch-doc';
 
-type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line' | 'rect' | 'ellipse' | 'arrow' | 'obj-eraser' | 'lasso';
+type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line' | 'rect' | 'ellipse' | 'arrow' | 'obj-eraser' | 'lasso' | 'text';
 
 type ToolSpec = {
   id: Tool;
@@ -86,6 +86,10 @@ const TOOLS: ToolSpec[] = [
   // / duplicate / drag-move them as a unit.
   { id: 'obj-eraser',  label: 'Object',      Icon: Trash2,      minWidth: 6,  maxWidth: 16, alpha: 1    },
   { id: 'lasso',       label: 'Lasso',       Icon: Lasso,       minWidth: 2,  maxWidth: 2,  alpha: 0.6  },
+  // Text tool — taps place a <textarea> editing overlay. On iPadOS
+  // that textarea is Scribble-enabled, so Apple Pencil handwriting
+  // is converted to text on-device. Width/alpha are unused.
+  { id: 'text',        label: 'Text',        Icon: TypeIcon,    minWidth: 1,  maxWidth: 1,  alpha: 1    },
 ];
 
 /** Expanded 16-swatch palette — two rows of inks (greys + dark
@@ -106,11 +110,17 @@ const PALETTE = [
 type Point = { x: number; y: number; w: number; tx?: number; ty?: number };
 type Stroke = { tool: Tool; color: string; alpha: number; points: Point[] };
 
+/** Runtime typed-text object. `x`/`y` is the top-left anchor in
+ *  model coordinates; `fontSize` is in model px. Mirrors
+ *  SketchDocText 1:1 — the converters below are identity-ish. */
+type TextObj = { x: number; y: number; text: string; fontSize: number; color: string };
+
 /** Multi-page document model. Each page holds its own stroke
- *  history + optional background image; the editor flips between
- *  pages by changing `pageIndex`, with `strokesRef` / `bgImageRef`
- *  aliased to the current page's slots. */
-type SketchPage = { strokes: Stroke[]; bg: HTMLImageElement | null };
+ *  history, typed-text objects, and optional background image; the
+ *  editor flips between pages by changing `pageIndex`, with
+ *  `strokesRef` / `textsRef` / `bgImageRef` aliased to the current
+ *  page's slots. */
+type SketchPage = { strokes: Stroke[]; texts: TextObj[]; bg: HTMLImageElement | null };
 
 /** Paper format presets — affect the PDF export dimensions only.
  *  The on-screen canvas always fills the viewport regardless of
@@ -162,7 +172,12 @@ function strokeToDocStroke(s: Stroke, id: string): SketchDocStroke {
   return {
     id,
     type: 'stroke',
-    tool: s.tool,
+    // `Stroke.tool` is the editor's Tool union, which includes
+    // 'text' — but the text tool never produces a Stroke (it places
+    // a TextObj instead), so a stroke's tool is always a real
+    // SketchDocTool. The cast bridges the wider type at this one
+    // serialisation boundary.
+    tool: s.tool as SketchDocStroke['tool'],
     points: s.points.map((p) => {
       const out: { x: number; y: number; pressure: number; tiltX?: number; tiltY?: number } = {
         x: p.x,
@@ -200,6 +215,15 @@ function docStrokeToStroke(ds: SketchDocStroke): Stroke {
       return pt;
     }),
   };
+}
+
+/** Text object ↔ SketchDocText converters. Nearly identity — the
+ *  persisted form just carries an `id` + `type` discriminator. */
+function textToDocText(t: TextObj, id: string): SketchDocText {
+  return { id, type: 'text', x: t.x, y: t.y, text: t.text, fontSize: t.fontSize, color: t.color };
+}
+function docTextToText(dt: SketchDocText): TextObj {
+  return { x: dt.x, y: dt.y, text: dt.text, fontSize: dt.fontSize || 28, color: dt.color || '#1f1f1f' };
 }
 
 /** Map between the editor's PageFormat enum and the persisted
@@ -251,7 +275,7 @@ export function SketchModal({
    *  into the current page so the rest of the file (which already
    *  reads / mutates those refs in dozens of places) doesn't have to
    *  thread a page index through every callsite. */
-  const pagesRef = useRef<SketchPage[]>([{ strokes: [], bg: null }]);
+  const pagesRef = useRef<SketchPage[]>([{ strokes: [], texts: [], bg: null }]);
   /** Stable id-per-page, indexed parallel to pagesRef. Persisted in
    *  the SketchDoc so subsequent autosaves keep the same page id
    *  even after reordering / deletion. */
@@ -262,6 +286,7 @@ export function SketchModal({
    *  identity via a Map so a re-serialise of an unchanged stroke
    *  emits the same id. */
   const strokeIdsRef = useRef<WeakMap<Stroke, string>>(new WeakMap());
+  const textIdsRef = useRef<WeakMap<TextObj, string>>(new WeakMap());
   /** Lasso selection state. `selectedRef` holds the Set of currently-
    *  selected Stroke objects on the current page; `lassoRef` is the
    *  in-flight polyline being dragged; `moveStartRef` is the start
@@ -294,6 +319,7 @@ export function SketchModal({
     snapshot: { stroke: Stroke; points: { x: number; y: number; w: number }[] }[];
   } | null>(null);
   const strokesRef = useRef<Stroke[]>(pagesRef.current[0].strokes);
+  const textsRef = useRef<TextObj[]>(pagesRef.current[0].texts);
   const redoRef = useRef<Stroke[]>([]);
   const drawingRef = useRef<Stroke | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
@@ -351,6 +377,23 @@ export function SketchModal({
    *  width / opacity / smoothing — the Notes-style pen options.
    *  Only one is open at a time; tapping anywhere else closes it. */
   const [openMenu, setOpenMenu] = useState<'paper' | 'pen' | null>(null);
+  /** Active text-tool editing overlay. When set, a <textarea> is
+   *  rendered on top of the canvas at the model anchor (x/y); on
+   *  iPadOS that textarea is Scribble-enabled, so Apple Pencil
+   *  handwriting is recognised on-device. `editIndex` is the index
+   *  of an existing text object being re-edited, or null for a new
+   *  one. Font size for new text is fixed at TEXT_FONT_SIZE model px. */
+  const TEXT_FONT_SIZE = 28;
+  const [textEditor, setTextEditor] = useState<
+    { x: number; y: number; value: string; editIndex: number | null; color: string; fontSize: number } | null
+  >(null);
+  const textEditorRef = useRef<HTMLTextAreaElement>(null);
+  /** Index of the text object currently behind the editing overlay,
+   *  or -1. Read by redraw() (a ref, not state, so imperative
+   *  redraws right after setTextEditor see the correct value
+   *  without waiting for a state flush) to skip drawing the object
+   *  twice — the <textarea> is already showing it. */
+  const editingTextIndexRef = useRef<number>(-1);
   /** Diagnostic strip in the canvas corner. Off by default — it's
    *  a debugging aid, not something the user needs while drawing —
    *  toggled from the header and persisted in localStorage. */
@@ -446,10 +489,12 @@ export function SketchModal({
     const page = pagesRef.current[pageIndex];
     if (!page) return;
     strokesRef.current = page.strokes;
+    textsRef.current = page.texts;
     bgImageRef.current = page.bg;
     redoRef.current = [];
     drawingRef.current = null;
     activeInputRef.current = null;
+    setTextEditor(null);
     // Selection + lasso state is per-page — switching pages clears
     // them so the lasso highlight from page 1 doesn't ghost over
     // page 2's strokes.
@@ -579,8 +624,11 @@ export function SketchModal({
     if (seedDoc && seedDoc.pages && seedDoc.pages.length > 0) {
       pagesRef.current = seedDoc.pages.map((p) => ({
         strokes: (p.objects || [])
-          .filter((o) => o.type === 'stroke')
+          .filter((o): o is SketchDocStroke => o.type === 'stroke')
           .map(docStrokeToStroke),
+        texts: (p.objects || [])
+          .filter((o): o is SketchDocText => o.type === 'text')
+          .map(docTextToText),
         bg: null,
       }));
       pageIdsRef.current = seedDoc.pages.map((p) => p.id);
@@ -588,7 +636,7 @@ export function SketchModal({
       setPageFormat(docSizeToPaper(seedDoc.paper?.size ?? 'auto'));
       setPageBackground(((seedDoc.paper?.background as PageBackground) ?? 'blank'));
     } else {
-      pagesRef.current = [{ strokes: [], bg: null }];
+      pagesRef.current = [{ strokes: [], texts: [], bg: null }];
       pageIdsRef.current = [newSketchId('page')];
       setPageCount(1);
       setPageFormat('auto');
@@ -603,7 +651,9 @@ export function SketchModal({
     txRef.current = 0;
     tyRef.current = 0;
     setPageIndex(0);
+    setTextEditor(null);
     strokesRef.current = pagesRef.current[0].strokes;
+    textsRef.current = pagesRef.current[0].texts;
     redoRef.current = [];
     bgImageRef.current = null;
     drawingRef.current = null;
@@ -1105,6 +1155,10 @@ export function SketchModal({
     // --- Pointer Events (pen + mouse + most touch on modern browsers)
     const onPointerDown = (e: PointerEvent) => {
       if (activeInputRef.current === 'touch') return; // touch path already engaged
+      // Text tool: a tap doesn't draw — it places / re-opens a text
+      // editing overlay. Handled on pointerup so a stray micro-drag
+      // doesn't matter; nothing to do on down.
+      if (tool === 'text') { e.preventDefault(); return; }
       activeInputRef.current = 'pointer';
       e.preventDefault();
       try { c.setPointerCapture(e.pointerId); } catch { /* old Safari */ }
@@ -1116,6 +1170,7 @@ export function SketchModal({
       beginStroke(e.clientX, e.clientY, p, e.pointerType, e.tiltX, e.tiltY);
     };
     const onPointerMove = (e: PointerEvent) => {
+      if (tool === 'text') return;
       if (activeInputRef.current !== 'pointer') return;
       e.preventDefault();
       if (tool === 'obj-eraser' || tool === 'lasso') {
@@ -1142,6 +1197,13 @@ export function SketchModal({
       }
     };
     const onPointerUp = (e: PointerEvent) => {
+      if (tool === 'text') {
+        e.preventDefault();
+        const { x, y } = toModel(e.clientX, e.clientY);
+        openTextEditor(x, y, pickTextAt(x, y));
+        activeInputRef.current = null;
+        return;
+      }
       if (activeInputRef.current !== 'pointer') return;
       try { c.releasePointerCapture(e.pointerId); } catch { /* ok */ }
       if (tool === 'obj-eraser' || tool === 'lasso') {
@@ -1179,6 +1241,9 @@ export function SketchModal({
       activeInputRef.current = 'touch';
       const t = e.touches[0];
       if (!t) return;
+      // Text tool: placement happens on touchend (same as the
+      // pointer path). Nothing to begin here.
+      if (tool === 'text') return;
       if (tool === 'obj-eraser' || tool === 'lasso') {
         downEditing(t.clientX, t.clientY);
         return;
@@ -1223,6 +1288,7 @@ export function SketchModal({
         redraw();
         return;
       }
+      if (tool === 'text') return;
       if (activeInputRef.current !== 'touch') return;
       const t = e.touches[0];
       if (!t) return;
@@ -1241,6 +1307,15 @@ export function SketchModal({
         // semantics. The user lifts both, then starts fresh.
         if (e.touches.length < 2) pinch = null;
         if (e.touches.length === 0) activeInputRef.current = null;
+        return;
+      }
+      if (tool === 'text') {
+        const t = e.changedTouches[0];
+        if (t) {
+          const { x, y } = toModel(t.clientX, t.clientY);
+          openTextEditor(x, y, pickTextAt(x, y));
+        }
+        activeInputRef.current = null;
         return;
       }
       if (activeInputRef.current !== 'touch') return;
@@ -1458,6 +1533,23 @@ export function SketchModal({
     }
     for (const s of strokesRef.current) drawStroke(ctx, s);
     if (drawingRef.current) drawStroke(ctx, drawingRef.current);
+    // Typed-text objects render above strokes, in model space (the
+    // ctx is already pan/zoom-transformed). The one being live-
+    // edited is skipped — the <textarea> overlay is showing it
+    // instead, so drawing it here too would double it.
+    for (let ti = 0; ti < textsRef.current.length; ti++) {
+      if (editingTextIndexRef.current === ti) continue;
+      const t = textsRef.current[ti];
+      if (!t.text) continue;
+      ctx.save();
+      ctx.fillStyle = t.color;
+      ctx.font = `${t.fontSize}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.textBaseline = 'top';
+      t.text.split('\n').forEach((ln, li) => {
+        ctx.fillText(ln, t.x, t.y + li * t.fontSize * 1.25);
+      });
+      ctx.restore();
+    }
     // Selection highlight — a 2 px translucent-blue outline drawn
     // beneath each selected stroke. Sits in screen coordinates so a
     // tiny sub-pixel stroke is still visibly tagged.
@@ -1728,7 +1820,7 @@ export function SketchModal({
     // undo would only step back stroke-by-stroke on a giant
     // multi-hundred-stroke page, so a misclick on Clear is
     // expensive. Skip the confirm when there's nothing to clear.
-    if (strokesRef.current.length === 0 && !bgImageRef.current) return;
+    if (strokesRef.current.length === 0 && textsRef.current.length === 0 && !bgImageRef.current) return;
     if (typeof window !== 'undefined' && !window.confirm(
       `Clear all ${strokesRef.current.length} stroke${strokesRef.current.length === 1 ? '' : 's'} on this page?`
     )) return;
@@ -1737,11 +1829,87 @@ export function SketchModal({
     // subsequent pushes would land in the alias-only array,
     // disappearing on the next page switch.
     strokesRef.current.length = 0;
+    textsRef.current.length = 0;
     redoRef.current.length = 0;
     drawingRef.current = null;
+    editingTextIndexRef.current = -1;
+    setTextEditor(null);
     redraw();
     force((n) => n + 1);
     if (onAutoSave) onAutoSave(buildDoc());
+  }
+
+  // ----- Text tool ----------------------------------------------
+
+  /** Open the text editing overlay. `mx`/`my` are model coords.
+   *  When `index` is given the existing text object is re-edited;
+   *  otherwise a new object is staged at the tapped point. */
+  function openTextEditor(mx: number, my: number, index: number | null) {
+    if (index !== null) {
+      const t = textsRef.current[index];
+      if (!t) return;
+      editingTextIndexRef.current = index;
+      setTextEditor({ x: t.x, y: t.y, value: t.text, editIndex: index, color: t.color, fontSize: t.fontSize });
+    } else {
+      editingTextIndexRef.current = -1;
+      setTextEditor({ x: mx, y: my, value: '', editIndex: null, color, fontSize: TEXT_FONT_SIZE });
+    }
+    redraw();
+    // Focus on the next tick once the textarea has mounted.
+    setTimeout(() => textEditorRef.current?.focus(), 0);
+  }
+
+  /** Commit (or discard) the text editing overlay. Empty text is
+   *  dropped — both for a brand-new object and for an existing one
+   *  the user cleared (cleared text = delete the object). */
+  function commitTextEditor() {
+    const ed = textEditor;
+    if (!ed) return;
+    const value = ed.value.trim();
+    if (ed.editIndex !== null) {
+      const t = textsRef.current[ed.editIndex];
+      if (t) {
+        if (value) {
+          t.text = value;
+        } else {
+          textsRef.current.splice(ed.editIndex, 1);
+        }
+      }
+    } else if (value) {
+      textsRef.current.push({ x: ed.x, y: ed.y, text: value, fontSize: ed.fontSize, color: ed.color });
+    }
+    editingTextIndexRef.current = -1;
+    setTextEditor(null);
+    redraw();
+    force((n) => n + 1);
+    if (onAutoSave) onAutoSave(buildDoc());
+  }
+
+  /** Hit-test the text objects on the current page — returns the
+   *  topmost index whose rendered box contains the model point, or
+   *  null. Used so tapping an existing text re-opens it for editing
+   *  instead of stacking a new one on top. */
+  function pickTextAt(mx: number, my: number): number | null {
+    const c = canvasRef.current;
+    const ctx = c?.getContext('2d') ?? null;
+    for (let i = textsRef.current.length - 1; i >= 0; i--) {
+      const t = textsRef.current[i];
+      const lines = t.text.split('\n');
+      const lineH = t.fontSize * 1.25;
+      const h = Math.max(lineH, lines.length * lineH);
+      let w = t.fontSize * 4;
+      if (ctx) {
+        ctx.save();
+        ctx.font = `${t.fontSize}px ui-sans-serif, system-ui, sans-serif`;
+        w = Math.max(...lines.map((ln) => ctx.measureText(ln).width), 8);
+        ctx.restore();
+      }
+      const pad = 6;
+      if (mx >= t.x - pad && mx <= t.x + w + pad && my >= t.y - pad && my <= t.y + h + pad) {
+        return i;
+      }
+    }
+    return null;
   }
 
   // ----- Multi-page navigation ----------------------------------
@@ -1798,7 +1966,7 @@ export function SketchModal({
 
   function addPage() {
     commitInFlight();
-    pagesRef.current.push({ strokes: [], bg: null });
+    pagesRef.current.push({ strokes: [], texts: [], bg: null });
     pageIdsRef.current.push(newSketchId('page'));
     setPageCount(pagesRef.current.length);
     setPageIndex(pagesRef.current.length - 1);
@@ -1868,6 +2036,7 @@ export function SketchModal({
         alpha: s.alpha,
         points: s.points.map((p) => ({ ...p })),
       })),
+      texts: cur.texts.map((t) => ({ ...t })),
       bg: cur.bg,
     };
     pagesRef.current.splice(pageIndex + 1, 0, clone);
@@ -1908,9 +2077,20 @@ export function SketchModal({
       }
       return id;
     };
+    const idForText = (t: TextObj): string => {
+      let id = textIdsRef.current.get(t);
+      if (!id) {
+        id = newSketchId('stroke');
+        textIdsRef.current.set(t, id);
+      }
+      return id;
+    };
     const pages: SketchDocPage[] = pagesRef.current.map((page, i) => ({
       id: pageIdsRef.current[i] || newSketchId('page'),
-      objects: page.strokes.map((s) => strokeToDocStroke(s, idFor(s))),
+      objects: [
+        ...page.strokes.map((s) => strokeToDocStroke(s, idFor(s))),
+        ...page.texts.map((t) => textToDocText(t, idForText(t))),
+      ],
     }));
     return {
       schemaVersion: 1,
@@ -1990,7 +2170,7 @@ export function SketchModal({
       // version. Single-page workflow (the common case) is
       // unaffected.
       const otherPagesWithContent = pagesRef.current.reduce(
-        (n, p, i) => n + (i !== pageIndex && (p.strokes.length > 0 || !!p.bg) ? 1 : 0),
+        (n, p, i) => n + (i !== pageIndex && (p.strokes.length > 0 || p.texts.length > 0 || !!p.bg) ? 1 : 0),
         0,
       );
       if (otherPagesWithContent > 0) {
@@ -2008,7 +2188,7 @@ export function SketchModal({
   }
 
   async function exportSvg() {
-    if (strokesRef.current.length === 0 && !bgImageRef.current) {
+    if (strokesRef.current.length === 0 && textsRef.current.length === 0 && !bgImageRef.current) {
       notify.error('Sketch is empty.'); return;
     }
     const { w, h } = canvasSizeCss();
@@ -2042,6 +2222,19 @@ export function SketchModal({
       const d = s.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
       parts.push(`<path d="${d}" fill="none" stroke="${stroke}" stroke-opacity="${s.alpha}" stroke-width="${avg.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`);
     }
+    const esc = (str: string) => str.replace(/[&<>"]/g, (ch) => (
+      ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;'
+    ));
+    for (const t of textsRef.current) {
+      if (!t.text) continue;
+      t.text.split('\n').forEach((ln, li) => {
+        parts.push(
+          `<text x="${t.x.toFixed(2)}" y="${(t.y + t.fontSize * (li + 0.8)).toFixed(2)}" ` +
+          `font-family="ui-sans-serif, system-ui, sans-serif" font-size="${t.fontSize}" ` +
+          `fill="${t.color}">${esc(ln)}</text>`,
+        );
+      });
+    }
     parts.push('</svg>');
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     downloadBlob(new Blob([parts.join('')], { type: 'image/svg+xml' }), `sketch-${stamp}.svg`);
@@ -2050,7 +2243,7 @@ export function SketchModal({
 
   async function exportPdf() {
     const totalPages = pagesRef.current.length;
-    const hasAnything = pagesRef.current.some((p) => p.strokes.length > 0 || p.bg);
+    const hasAnything = pagesRef.current.some((p) => p.strokes.length > 0 || p.texts.length > 0 || p.bg);
     if (!hasAnything) {
       notify.error('Sketch is empty.'); return;
     }
@@ -2111,6 +2304,15 @@ export function SketchModal({
         }
         pdf.lines(lines, s.points[0].x * sx, s.points[0].y * sy, [1, 1], 'S');
       }
+      for (const t of page.texts) {
+        if (!t.text) continue;
+        pdf.setTextColor(t.color);
+        pdf.setFontSize(t.fontSize * Math.max(sx, sy) * 0.75); // px → pt
+        const lineH = t.fontSize * sy;
+        t.text.split('\n').forEach((ln, li) => {
+          pdf.text(ln, t.x * sx, t.y * sy + lineH * (li + 0.8));
+        });
+      }
     }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     pdf.save(`sketch-${stamp}.pdf`);
@@ -2123,7 +2325,7 @@ export function SketchModal({
   const effectiveWidth = widthOverride ?? (activeSpec.minWidth + activeSpec.maxWidth) / 2;
   // Save/Export are enabled when ANY page has content — multi-page
   // PDF export ships whatever pages have strokes or a background.
-  const hasContent = pagesRef.current.some((p) => p.strokes.length > 0 || !!p.bg);
+  const hasContent = pagesRef.current.some((p) => p.strokes.length > 0 || p.texts.length > 0 || !!p.bg);
 
   return createPortal(
     <div
@@ -2287,13 +2489,54 @@ export function SketchModal({
           ref={canvasRef}
           className="block h-full w-full"
           style={{
-            cursor: tool === 'eraser' || tool === 'obj-eraser' ? 'cell' : tool === 'lasso' ? 'grab' : 'crosshair',
+            cursor: tool === 'eraser' || tool === 'obj-eraser' ? 'cell'
+              : tool === 'lasso' ? 'grab'
+              : tool === 'text' ? 'text'
+              : 'crosshair',
             touchAction: 'none',
             userSelect: 'none',
             WebkitUserSelect: 'none',
             WebkitTouchCallout: 'none',
           }}
         />
+        {/* Text-tool editing overlay — a real <textarea> so iPadOS
+          * Scribble converts Apple Pencil handwriting to text on the
+          * device. Positioned at the model anchor projected through
+          * the live view transform; font-size tracks the zoom so
+          * what's typed matches what redraw() will paint. Commits on
+          * blur or ⌘/Ctrl+Enter; Esc discards. */}
+        {textEditor && (
+          <textarea
+            ref={textEditorRef}
+            value={textEditor.value}
+            onChange={(e) => setTextEditor((ed) => (ed ? { ...ed, value: e.target.value } : ed))}
+            onBlur={commitTextEditor}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                editingTextIndexRef.current = -1;
+                setTextEditor(null);
+                redraw();
+              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                commitTextEditor();
+              }
+            }}
+            spellCheck={false}
+            placeholder="Type or write with Pencil…"
+            rows={1}
+            className="absolute resize-none overflow-hidden whitespace-pre rounded border border-blue-400 bg-white/95 p-0 leading-[1.25] shadow-sm outline-none dark:bg-zinc-900/95"
+            style={{
+              left: tx + scale * textEditor.x,
+              top: ty + scale * textEditor.y,
+              minWidth: 40,
+              fontSize: scale * textEditor.fontSize,
+              fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+              color: textEditor.color,
+              touchAction: 'auto',
+            }}
+          />
+        )}
         {/* Selection action chip — appears at the top of the canvas
           * when one or more strokes are lassoed. Delete removes the
           * selection in one go; Duplicate clones them with a small
@@ -2423,7 +2666,7 @@ export function SketchModal({
           * through useDualActivate so Pencil + touch both fire —
           * the old native <select>/<input range> controls were
           * unresponsive to Apple Pencil taps. */}
-        {tool !== 'eraser' && tool !== 'obj-eraser' && tool !== 'lasso' && (() => {
+        {tool !== 'eraser' && tool !== 'obj-eraser' && tool !== 'lasso' && tool !== 'text' && (() => {
           const min = activeSpec.minWidth;
           const max = activeSpec.maxWidth;
           const WIDTH_TIERS = [min, min + (max - min) * 0.25, (min + max) / 2, min + (max - min) * 0.75, max];
