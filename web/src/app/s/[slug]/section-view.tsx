@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref } from '@/lib/prefs';
 import type { Row } from '@/lib/row';
+import { relativeTime, formatDateTime } from '@/lib/relative-time';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp, ArrowDownUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useServerEvents } from '@/hooks/use-server-events';
@@ -915,8 +916,8 @@ function _LegacyGrid({
             <div className="text-sm font-medium">
               {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
             </div>
-            <div className="mt-2 text-xs text-zinc-500">
-              {new Date(r.updatedAt).toLocaleDateString()}
+            <div className="mt-2 text-xs text-zinc-500" title={`Last edited ${formatDateTime(r.updatedAt)}`}>
+              edited {relativeTime(r.updatedAt)}
             </div>
           </button>
           <button
