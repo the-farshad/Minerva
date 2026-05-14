@@ -91,6 +91,10 @@ export type SketchDocPaper = {
 export type SketchDocPage = {
   id: string;
   objects: SketchDocObject[];
+  /** Per-page paper override. When present, the set fields win over
+   *  the document-wide `SketchDoc.paper` for this page only ("just
+   *  change this page"). Absent → the page inherits the doc paper. */
+  paper?: Partial<SketchDocPaper>;
 };
 
 export type SketchDoc = {
@@ -150,6 +154,8 @@ export function validateSketchDoc(raw: unknown): string | null {
   for (const [pi, p] of doc.pages.entries()) {
     if (!p || typeof p !== 'object') return `pages[${pi}] not an object`;
     if (!Array.isArray((p as SketchDocPage).objects)) return `pages[${pi}].objects not an array`;
+    const pp = (p as SketchDocPage).paper;
+    if (pp !== undefined && (pp === null || typeof pp !== 'object')) return `pages[${pi}].paper not an object`;
     const objs = (p as SketchDocPage).objects;
     if (objs.length > SKETCH_LIMITS.maxObjectsPerPage) return `pages[${pi}] > ${SKETCH_LIMITS.maxObjectsPerPage} objects`;
     for (const [oi, o] of objs.entries()) {

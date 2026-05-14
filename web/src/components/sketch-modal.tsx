@@ -53,7 +53,7 @@ import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-h
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { jsPDF } from 'jspdf';
-import type { SketchDoc, SketchDocStroke, SketchDocText, SketchDocPage, SketchDocPaperSize } from '@/lib/sketch-doc';
+import type { SketchDoc, SketchDocStroke, SketchDocText, SketchDocPage, SketchDocPaper, SketchDocPaperSize } from '@/lib/sketch-doc';
 import { newSketchId } from '@/lib/sketch-doc';
 
 type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line' | 'rect' | 'ellipse' | 'arrow' | 'obj-eraser' | 'lasso' | 'text';
@@ -125,9 +125,16 @@ type TextObj = { x: number; y: number; text: string; fontSize: number; color: st
 /** Multi-page document model. Each page holds its own stroke
  *  history, typed-text objects, and optional background image; the
  *  editor flips between pages by changing `pageIndex`, with
- *  `strokesRef` / `textsRef` / `bgImageRef` aliased to the current
- *  page's slots. */
-type SketchPage = { strokes: Stroke[]; texts: TextObj[]; bg: HTMLImageElement | null };
+ *  `strokesRef` / `textsRef` / `bgImageRef` / `pageOverrideRef`
+ *  aliased to the current page's slots. `paper`, when set, overrides
+ *  the document-wide paper settings for this page only. */
+type PagePaperOverride = Partial<SketchDocPaper>;
+type SketchPage = {
+  strokes: Stroke[];
+  texts: TextObj[];
+  bg: HTMLImageElement | null;
+  paper?: PagePaperOverride;
+};
 
 /** Paper format presets — affect the PDF export dimensions only.
  *  The on-screen canvas always fills the viewport regardless of
@@ -327,6 +334,11 @@ export function SketchModal({
   } | null>(null);
   const strokesRef = useRef<Stroke[]>(pagesRef.current[0].strokes);
   const textsRef = useRef<TextObj[]>(pagesRef.current[0].texts);
+  /** Aliased to the current page's paper override (or null). redraw
+   *  / drawStroke / fitPaperToView read it to resolve the effective
+   *  paper settings — `override ?? document-wide` — without needing
+   *  pageIndex in a stale closure. */
+  const pageOverrideRef = useRef<PagePaperOverride | null>(pagesRef.current[0].paper ?? null);
   const redoRef = useRef<Stroke[]>([]);
   /** Undo/redo across both object kinds. `undoLogRef` records the
    *  kind of each undoable action in chronological order so undo()
@@ -389,6 +401,11 @@ export function SketchModal({
   const [pageBackground, setPageBackground] = useState<PageBackground>('blank');
   const [paperColor, setPaperColor] = useState<PaperColor>('white');
   const [marginGuides, setMarginGuides] = useState(false);
+  /** Paper-change scope. `all` (default) edits the document-wide
+   *  paper settings; `page` writes an override onto the current
+   *  page only ("just change this page"). Resets to `all` each
+   *  open — it's a transient editing mode, not a saved preference. */
+  const [paperScope, setPaperScope] = useState<'all' | 'page'>('all');
   /** Which grouped settings popover is open, if any. `paper`
    *  collects size / style / surface / margins; `pen` collects
    *  width / opacity / smoothing — the Notes-style pen options.
@@ -542,6 +559,7 @@ export function SketchModal({
     if (!page) return;
     strokesRef.current = page.strokes;
     textsRef.current = page.texts;
+    pageOverrideRef.current = page.paper ?? null;
     bgImageRef.current = page.bg;
     redoRef.current = [];
     undoLogRef.current = [];
@@ -618,14 +636,21 @@ export function SketchModal({
    *  below), and on demand via the toolbar's Fit button. Centring
    *  the new page is the whole point — without it, picking a new
    *  size leaves the page rendered at the previous format's view
-   *  transform, off-screen, reading as "the picker did nothing". */
-  function fitPaperToView() {
-    if (pageFormat === 'auto') {
+   *  transform, off-screen, reading as "the picker did nothing".
+   *  Fits the *effective* format for the current page: a per-page
+   *  size override wins over the document-wide `pageFormat`. Pass
+   *  `explicitFormat` when the new value isn't in state yet (the
+   *  document-wide setter is async). */
+  function fitPaperToView(explicitFormat?: PageFormat) {
+    const effFormat: PageFormat = explicitFormat
+      ?? (pagesRef.current[pageIndex]?.paper?.size as PageFormat | undefined)
+      ?? pageFormat;
+    if (effFormat === 'auto') {
       // No paper rect to fit — just reset to identity.
       resetView();
       return;
     }
-    const fmt = PAGE_FORMATS.find((f) => f.id === pageFormat);
+    const fmt = PAGE_FORMATS.find((f) => f.id === effFormat);
     if (!fmt || fmt.pxW <= 0 || fmt.pxH <= 0) return;
     const c = canvasRef.current;
     if (!c) return;
@@ -645,19 +670,58 @@ export function SketchModal({
     redraw();
   }
 
-  /* Fit the paper into the viewport on open and on every format
-   * change. Picking a new size must visibly recentre + rescale to
-   * that page; fitting only once (the old behaviour) left every
-   * later format change rendering at the previous format's view
+  /* Fit the paper into the viewport on open, on every document-wide
+   * format change, and on page switch (a page may carry its own
+   * size override). Fitting only once (the old behaviour) left
+   * later format changes rendering at the previous format's view
    * transform — off-screen, looking like the picker did nothing.
-   * `auto` resets to the identity (full-bleed) view. On open the
-   * effect first sees pageFormat='auto' (harmless reset), then
-   * fires again when a seedDoc's real format hydrates. */
+   * `auto` resets to the identity (full-bleed) view. */
   useEffect(() => {
     if (!open) return;
     fitPaperToView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageFormat, open]);
+  }, [pageFormat, pageIndex, open]);
+
+  /** Apply a paper property change, honouring `paperScope`.
+   *  `all` updates the document-wide setting AND drops that
+   *  property from every page's override, so the change is truly
+   *  universal. `page` writes the property onto the current page's
+   *  override only ("just change this page"). Either way: re-fit on
+   *  a size change, redraw, persist. */
+  function setPaperProp(
+    prop: 'size' | 'background' | 'surface' | 'margins',
+    value: PageFormat | PageBackground | PaperColor | boolean,
+  ) {
+    if (paperScope === 'page') {
+      const page = pagesRef.current[pageIndex];
+      if (page) {
+        const next: PagePaperOverride = { ...(page.paper ?? {}) };
+        (next as Record<string, unknown>)[prop] = value;
+        page.paper = next;
+        pageOverrideRef.current = next;
+      }
+    } else {
+      if (prop === 'size') setPageFormat(value as PageFormat);
+      else if (prop === 'background') setPageBackground(value as PageBackground);
+      else if (prop === 'surface') setPaperColor(value as PaperColor);
+      else if (prop === 'margins') setMarginGuides(value as boolean);
+      for (const p of pagesRef.current) {
+        if (p.paper && prop in p.paper) {
+          const rest: PagePaperOverride = { ...p.paper };
+          delete rest[prop];
+          p.paper = Object.keys(rest).length > 0 ? rest : undefined;
+        }
+      }
+      pageOverrideRef.current = pagesRef.current[pageIndex]?.paper ?? null;
+    }
+    // 'page' scope: state didn't change, so fit from the new
+    // override. 'all' scope: the state setter is async — pass the
+    // value explicitly so the fit doesn't lag a render behind.
+    if (prop === 'size') fitPaperToView(value as PageFormat);
+    redraw();
+    force((n) => n + 1);
+    if (onAutoSave) onAutoSave(buildDoc());
+  }
 
   /* Canvas size, DPR, redraw on open + seed image load. */
   useEffect(() => {
@@ -682,6 +746,9 @@ export function SketchModal({
           .filter((o): o is SketchDocText => o.type === 'text')
           .map(docTextToText),
         bg: null,
+        // Per-page paper override carries over verbatim — the
+        // runtime shape is exactly Partial<SketchDocPaper>.
+        paper: p.paper && Object.keys(p.paper).length > 0 ? { ...p.paper } : undefined,
       }));
       pageIdsRef.current = seedDoc.pages.map((p) => p.id);
       setPageCount(seedDoc.pages.length);
@@ -711,8 +778,10 @@ export function SketchModal({
     tyRef.current = 0;
     setPageIndex(0);
     setTextEditor(null);
+    setPaperScope('all');
     strokesRef.current = pagesRef.current[0].strokes;
     textsRef.current = pagesRef.current[0].texts;
+    pageOverrideRef.current = pagesRef.current[0].paper ?? null;
     redoRef.current = [];
     undoLogRef.current = [];
     redoLogRef.current = [];
@@ -1474,11 +1543,13 @@ export function SketchModal({
     const tx = txRef.current;
     const ty = tyRef.current;
     // Likewise read the paper settings from refs — same stale-
-    // closure hazard as the transform above.
-    const pageFormat = pageFormatRef.current;
-    const pageBackground = pageBackgroundRef.current;
-    const paperColor = paperColorRef.current;
-    const marginGuides = marginGuidesRef.current;
+    // closure hazard as the transform above. The current page's
+    // override (if any) wins over the document-wide value.
+    const ov = pageOverrideRef.current;
+    const pageFormat = (ov?.size as PageFormat | undefined) ?? pageFormatRef.current;
+    const pageBackground = (ov?.background as PageBackground | undefined) ?? pageBackgroundRef.current;
+    const paperColor = (ov?.surface as PaperColor | undefined) ?? paperColorRef.current;
+    const marginGuides = ov?.margins ?? marginGuidesRef.current;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
@@ -1741,7 +1812,8 @@ export function SketchModal({
       // surface, or in dark mode, that backdrop differs from the
       // paper, so the "erased" path showed up as a wrong-coloured
       // streak: the eraser looked like it was drawing a line.
-      const paperFill = (PAPER_COLORS.find((p) => p.id === paperColorRef.current) ?? PAPER_COLORS[0]).fill;
+      const effSurface = pageOverrideRef.current?.surface ?? paperColorRef.current;
+      const paperFill = (PAPER_COLORS.find((p) => p.id === effSurface) ?? PAPER_COLORS[0]).fill;
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
       ctx.strokeStyle = paperFill;
@@ -2160,6 +2232,7 @@ export function SketchModal({
       })),
       texts: cur.texts.map((t) => ({ ...t })),
       bg: cur.bg,
+      paper: cur.paper ? { ...cur.paper } : undefined,
     };
     pagesRef.current.splice(pageIndex + 1, 0, clone);
     pageIdsRef.current.splice(pageIndex + 1, 0, newSketchId('page'));
@@ -2213,6 +2286,9 @@ export function SketchModal({
         ...page.strokes.map((s) => strokeToDocStroke(s, idFor(s))),
         ...page.texts.map((t) => textToDocText(t, idForText(t))),
       ],
+      // Persist the per-page paper override only when it actually
+      // holds something — keeps the doc clean for the common case.
+      ...(page.paper && Object.keys(page.paper).length > 0 ? { paper: { ...page.paper } } : {}),
     }));
     return {
       schemaVersion: 1,
@@ -2446,6 +2522,19 @@ export function SketchModal({
   // Save/Export are enabled when ANY page has content — multi-page
   // PDF export ships whatever pages have strokes or a background.
   const hasContent = pagesRef.current.some((p) => p.strokes.length > 0 || p.texts.length > 0 || !!p.bg);
+  // Effective paper settings for the *current* page — a per-page
+  // override wins over the document-wide value. Drives the Paper
+  // popover's selected-pill highlight. `curPageOverride` is read
+  // straight off pagesRef (mutated in place by setPaperProp; the
+  // `force()` re-render keeps this in sync).
+  const curPageOverride = pagesRef.current[pageIndex]?.paper;
+  const effPaper = {
+    size: (curPageOverride?.size as PageFormat | undefined) ?? pageFormat,
+    background: (curPageOverride?.background as PageBackground | undefined) ?? pageBackground,
+    surface: (curPageOverride?.surface as PaperColor | undefined) ?? paperColor,
+    margins: curPageOverride?.margins ?? marginGuides,
+  };
+  const pageHasOverride = !!curPageOverride && Object.keys(curPageOverride).length > 0;
 
   return createPortal(
     <div
@@ -2535,10 +2624,10 @@ export function SketchModal({
           />
           <button
             type="button"
-            onClick={fitPaperToView}
+            onClick={() => fitPaperToView()}
             onPointerUp={(e) => { if (e.pointerType === 'pen') fitPaperToView(); }}
             style={{ cursor: 'pointer' }}
-            title={pageFormat === 'auto' ? 'Reset view' : 'Fit page to screen'}
+            title={effPaper.size === 'auto' ? 'Reset view' : 'Fit page to screen'}
             className="select-none rounded-full px-2 py-0.5 text-[10px] text-zinc-600 hover:bg-white dark:text-zinc-400 dark:hover:bg-zinc-950"
           >
             Fit
@@ -2889,13 +2978,33 @@ export function SketchModal({
           />
           {openMenu === 'paper' && (
             <div className="fixed bottom-[5.5rem] right-2 z-[75] max-h-[55vh] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+              {/* Scope — does a change apply to the whole document
+                * or just the current page? "All pages" also clears
+                * any matching per-page override so it's truly all. */}
+              <SketchMenuRow label="Apply to">
+                <SketchOptionPill
+                  label="All pages"
+                  active={paperScope === 'all'}
+                  onActivate={() => setPaperScope('all')}
+                />
+                <SketchOptionPill
+                  label={`This page (${pageIndex + 1})`}
+                  active={paperScope === 'page'}
+                  onActivate={() => setPaperScope('page')}
+                />
+              </SketchMenuRow>
+              {pageHasOverride && (
+                <p className="px-1 pb-1 text-[10px] text-amber-600 dark:text-amber-400">
+                  Page {pageIndex + 1} has its own paper settings.
+                </p>
+              )}
               <SketchMenuRow label="Size">
                 {PAGE_FORMATS.map((f) => (
                   <SketchOptionPill
                     key={f.id}
                     label={f.label}
-                    active={pageFormat === f.id}
-                    onActivate={() => setPageFormat(f.id)}
+                    active={effPaper.size === f.id}
+                    onActivate={() => setPaperProp('size', f.id)}
                   />
                 ))}
               </SketchMenuRow>
@@ -2904,8 +3013,8 @@ export function SketchModal({
                   <SketchOptionPill
                     key={id}
                     label={id.charAt(0).toUpperCase() + id.slice(1)}
-                    active={pageBackground === id}
-                    onActivate={() => setPageBackground(id)}
+                    active={effPaper.background === id}
+                    onActivate={() => setPaperProp('background', id)}
                   />
                 ))}
               </SketchMenuRow>
@@ -2915,17 +3024,17 @@ export function SketchModal({
                     key={p.id}
                     label={p.label}
                     swatch={p.fill}
-                    active={paperColor === p.id}
-                    onActivate={() => setPaperColor(p.id)}
+                    active={effPaper.surface === p.id}
+                    onActivate={() => setPaperProp('surface', p.id)}
                   />
                 ))}
               </SketchMenuRow>
-              {pageFormat !== 'auto' && (
+              {effPaper.size !== 'auto' && (
                 <SketchMenuRow label="Margins">
                   <SketchOptionPill
-                    label={marginGuides ? 'Shown' : 'Hidden'}
-                    active={marginGuides}
-                    onActivate={() => setMarginGuides((v) => !v)}
+                    label={effPaper.margins ? 'Shown' : 'Hidden'}
+                    active={effPaper.margins}
+                    onActivate={() => setPaperProp('margins', !effPaper.margins)}
                   />
                 </SketchMenuRow>
               )}
