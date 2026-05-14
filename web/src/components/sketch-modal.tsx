@@ -46,7 +46,7 @@ import { createPortal } from 'react-dom';
 import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
-  ChevronLeft, ChevronRight, Plus as PlusIcon, FileX, Lasso, Copy,
+  ChevronLeft, ChevronRight, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
 } from 'lucide-react';
 import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-hit-test';
 import { toast } from 'sonner';
@@ -264,6 +264,23 @@ export function SketchModal({
   const [pageCount, setPageCount] = useState(1);
   const [pageFormat, setPageFormat] = useState<PageFormat>('auto');
   const [pageBackground, setPageBackground] = useState<PageBackground>('blank');
+  /** View transform — pan offset + zoom scale, in CSS-px units.
+   *  `view_x = tx + scale * model_x`; the redraw applies the
+   *  matching transform to the canvas context, and every pointer-
+   *  event coord is converted view→model before reaching hit-test
+   *  / stroke building. Scale clamped to a sane range so a stray
+   *  pinch can't take the user to 1000× zoom. */
+  const [scale, setScale] = useState(1);
+  const [tx, setTx] = useState(0);
+  const [ty, setTy] = useState(0);
+  const scaleRef = useRef(scale);
+  const txRef = useRef(tx);
+  const tyRef = useRef(ty);
+  useEffect(() => { scaleRef.current = scale; }, [scale]);
+  useEffect(() => { txRef.current = tx; }, [tx]);
+  useEffect(() => { tyRef.current = ty; }, [ty]);
+  const ZOOM_MIN = 0.25;
+  const ZOOM_MAX = 8;
 
   /* Mount marker for createPortal — typeof document is undefined
    * during SSR; we only render the portal on the client tick. */
@@ -368,6 +385,14 @@ export function SketchModal({
       setPageFormat('auto');
       setPageBackground('blank');
     }
+    // Reset the view transform on every open so the user starts at
+    // 100% zoom + no pan — predictable starting state.
+    setScale(1);
+    setTx(0);
+    setTy(0);
+    scaleRef.current = 1;
+    txRef.current = 0;
+    tyRef.current = 0;
     setPageIndex(0);
     strokesRef.current = pagesRef.current[0].strokes;
     redoRef.current = [];
@@ -454,11 +479,22 @@ export function SketchModal({
     };
 
     const rectOf = () => c.getBoundingClientRect();
+    /** Convert a client (viewport) point to MODEL coordinates by
+     *  reversing the view-transform (pan + zoom). Strokes, hit-
+     *  tests, lasso polygons all live in model space so they stay
+     *  pixel-stable across zoom changes. */
+    const toModel = (clientX: number, clientY: number) => {
+      const r = rectOf();
+      const vx = clientX - r.left;
+      const vy = clientY - r.top;
+      return {
+        x: (vx - txRef.current) / scaleRef.current,
+        y: (vy - tyRef.current) / scaleRef.current,
+      };
+    };
 
     const beginStroke = (clientX: number, clientY: number, pressure: number, ptype: string) => {
-      const r = rectOf();
-      const x = clientX - r.left;
-      const y = clientY - r.top;
+      const { x, y } = toModel(clientX, clientY);
       const spec = getToolSpec(tool);
       drawingRef.current = {
         tool,
@@ -473,9 +509,7 @@ export function SketchModal({
     };
     const continueStroke = (clientX: number, clientY: number, pressure: number, ptype: string) => {
       if (!drawingRef.current) return;
-      const r = rectOf();
-      const nx = clientX - r.left;
-      const ny = clientY - r.top;
+      const { x: nx, y: ny } = toModel(clientX, clientY);
       const pts = drawingRef.current.points;
       // Line tool: replace the SECOND point on every move so the
       // stroke stays as a straight segment from down-point to current.
@@ -492,16 +526,15 @@ export function SketchModal({
         return;
       }
       // Drop noise: Pencil fires ~120 Hz so successive samples may
-      // land sub-pixel apart. Skip points closer than 2 CSS px from
-      // the previous one — a more aggressive filter than the prior
-      // 1.2 px makes the rendered curve visibly smoother (fewer
-      // micro-segments fighting the Bezier smoothing) and shrinks
-      // serialized strokes by ~55%, lowering autosave payload size.
+      // land sub-pixel apart. The threshold is in MODEL units so a
+      // zoom-in lets the user lay finer points without the filter
+      // killing them. 2 px at scale=1; 1 px at scale=2 (zoom-in); etc.
+      const noiseThresh = 2 / scaleRef.current;
       if (pts.length > 0) {
         const last = pts[pts.length - 1];
         const dx = nx - last.x;
         const dy = ny - last.y;
-        if (dx * dx + dy * dy < 2 * 2) return;
+        if (dx * dx + dy * dy < noiseThresh * noiseThresh) return;
       }
       pts.push({ x: nx, y: ny, w: widthFor(pressure, ptype) });
       setDebug(`move · ${ptype} · p=${pressure.toFixed(2)} · pts=${pts.length}`);
@@ -525,20 +558,23 @@ export function SketchModal({
     /** Hit-test threshold in CSS px. A 10 px halo around the
      *  rendered stroke is generous on touch + Pencil without
      *  bleeding into adjacent lines. */
-    const HIT_THRESHOLD = 10;
-    const localXY = (clientX: number, clientY: number) => {
-      const r = rectOf();
-      return { x: clientX - r.left, y: clientY - r.top };
-    };
+    const HIT_THRESHOLD_VIEW_PX = 10;
+    /** Local helper for editing-tool handlers — same view→model
+     *  reverse-transform as `toModel`, just named for the editing
+     *  context (lasso / obj-eraser / move-drag) where the coord
+     *  meaning is "where on the page did the user point." */
+    const localXY = (clientX: number, clientY: number) => toModel(clientX, clientY);
 
     const pickStrokeAt = (px: number, py: number): Stroke | null => {
-      // Iterate in reverse so the topmost stroke wins — matches how
-      // the renderer paints them (later strokes paint over earlier).
+      // Hit halo in MODEL units = view px / scale, so the tap halo
+      // stays ~10 screen-px regardless of zoom level.
+      const halo_view = HIT_THRESHOLD_VIEW_PX;
+      const halo_model = halo_view / scaleRef.current;
       const list = strokesRef.current;
       for (let i = list.length - 1; i >= 0; i--) {
         const s = list[i];
-        const halo = HIT_THRESHOLD + (s.points.reduce((a, p) => a + p.w, 0) / Math.max(1, s.points.length)) / 2;
-        if (distanceToPolyline(px, py, s.points) <= halo) return s;
+        const strokeHalo = halo_model + (s.points.reduce((a, p) => a + p.w, 0) / Math.max(1, s.points.length)) / 2;
+        if (distanceToPolyline(px, py, s.points) <= strokeHalo) return s;
       }
       return null;
     };
@@ -694,13 +730,31 @@ export function SketchModal({
       activeInputRef.current = null;
     };
 
+    // --- Two-finger pinch/pan state. When two touches are active
+    // we suspend drawing and translate / scale the view. End of
+    // pinch (back to ≤1 touch) clears the state and the next 1-
+    // finger gesture starts a fresh stroke.
+    let pinch: { d: number; midX: number; midY: number } | null = null;
+    const dist = (a: Touch, b: Touch) => Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    const midpoint = (a: Touch, b: Touch) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+
     // --- Touch Events fallback (iOS Safari < 13, and the cases
     // where pointer events mysteriously don't fire for the first
     // tap on a fresh canvas)
     const onTouchStart = (e: TouchEvent) => {
       if (activeInputRef.current === 'pointer') return;
-      activeInputRef.current = 'touch';
       e.preventDefault();
+      if (e.touches.length >= 2) {
+        // Two-finger pinch starts — bail out of any in-flight stroke
+        // and switch to view-transform mode.
+        drawingRef.current = null;
+        activeInputRef.current = 'touch';
+        const t1 = e.touches[0], t2 = e.touches[1];
+        const m = midpoint(t1, t2);
+        pinch = { d: dist(t1, t2), midX: m.x, midY: m.y };
+        return;
+      }
+      activeInputRef.current = 'touch';
       const t = e.touches[0];
       if (!t) return;
       if (tool === 'obj-eraser' || tool === 'lasso') {
@@ -711,8 +765,43 @@ export function SketchModal({
       beginStroke(t.clientX, t.clientY, pressure, 'touch');
     };
     const onTouchMove = (e: TouchEvent) => {
-      if (activeInputRef.current !== 'touch') return;
       e.preventDefault();
+      // Two-finger pinch+pan path. Mid-point pin: the model point
+      // under the current pinch midpoint should stay under the new
+      // pinch midpoint after the transform updates. Combines zoom-
+      // around-pinch-center with pan in one math.
+      if (pinch && e.touches.length >= 2) {
+        const t1 = e.touches[0], t2 = e.touches[1];
+        const nd = dist(t1, t2);
+        const m = midpoint(t1, t2);
+        const r = c.getBoundingClientRect();
+        const prevMidX = pinch.midX - r.left;
+        const prevMidY = pinch.midY - r.top;
+        const curMidX = m.x - r.left;
+        const curMidY = m.y - r.top;
+        // Scale change ratio. Clamp the resulting scale.
+        const desired = (scaleRef.current * nd) / Math.max(1, pinch.d);
+        const newScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, desired));
+        // The pinch midpoint at time of last move corresponded to
+        // model (mx, my). After updating scale we want the new
+        // midpoint to map to that same (mx, my) → solve for new
+        // tx, ty. Then add the pan delta (curMid - prevMid) so the
+        // two-finger drag also translates.
+        const mx = (prevMidX - txRef.current) / scaleRef.current;
+        const my = (prevMidY - tyRef.current) / scaleRef.current;
+        const newTx = curMidX - newScale * mx;
+        const newTy = curMidY - newScale * my;
+        setScale(newScale);
+        setTx(newTx);
+        setTy(newTy);
+        scaleRef.current = newScale;
+        txRef.current = newTx;
+        tyRef.current = newTy;
+        pinch = { d: nd, midX: m.x, midY: m.y };
+        redraw();
+        return;
+      }
+      if (activeInputRef.current !== 'touch') return;
       const t = e.touches[0];
       if (!t) return;
       if (tool === 'obj-eraser' || tool === 'lasso') {
@@ -723,14 +812,48 @@ export function SketchModal({
       continueStroke(t.clientX, t.clientY, pressure, 'touch');
     };
     const onTouchEnd = (e: TouchEvent) => {
-      if (activeInputRef.current !== 'touch') return;
       e.preventDefault();
+      if (pinch) {
+        // End of pinch when we drop below 2 touches; the remaining
+        // one (if any) DOES NOT auto-resume drawing — Apple Notes
+        // semantics. The user lifts both, then starts fresh.
+        if (e.touches.length < 2) pinch = null;
+        if (e.touches.length === 0) activeInputRef.current = null;
+        return;
+      }
+      if (activeInputRef.current !== 'touch') return;
       if (tool === 'obj-eraser' || tool === 'lasso') {
         upEditing();
       } else {
         endStroke('touch');
       }
       activeInputRef.current = null;
+    };
+
+    // --- Mouse-wheel zoom (desktop). Zooms around the cursor —
+    // same midpoint-pin math as pinch, just with a single point
+    // (the cursor). Negative deltaY = zoom in, positive = zoom out.
+    const onWheel = (e: WheelEvent) => {
+      // Modifier-free wheel scrolls the page normally; require Ctrl
+      // (or Meta on macOS) to engage zoom. Matches Figma / Miro.
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const r = c.getBoundingClientRect();
+      const px = e.clientX - r.left;
+      const py = e.clientY - r.top;
+      const factor = e.deltaY > 0 ? 0.9 : 1.1;
+      const newScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, scaleRef.current * factor));
+      const mx = (px - txRef.current) / scaleRef.current;
+      const my = (py - tyRef.current) / scaleRef.current;
+      const newTx = px - newScale * mx;
+      const newTy = py - newScale * my;
+      setScale(newScale);
+      setTx(newTx);
+      setTy(newTy);
+      scaleRef.current = newScale;
+      txRef.current = newTx;
+      tyRef.current = newTy;
+      redraw();
     };
 
     c.addEventListener('pointerdown', onPointerDown);
@@ -740,6 +863,7 @@ export function SketchModal({
     c.addEventListener('touchstart', onTouchStart, { passive: false });
     c.addEventListener('touchmove',  onTouchMove,  { passive: false });
     c.addEventListener('touchend',   onTouchEnd,   { passive: false });
+    c.addEventListener('wheel', onWheel, { passive: false });
     c.addEventListener('touchcancel', onTouchEnd,  { passive: false });
 
     return () => {
@@ -751,6 +875,7 @@ export function SketchModal({
       c.removeEventListener('touchmove', onTouchMove);
       c.removeEventListener('touchend', onTouchEnd);
       c.removeEventListener('touchcancel', onTouchEnd);
+      c.removeEventListener('wheel', onWheel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tool, color, widthOverride]);
@@ -765,50 +890,68 @@ export function SketchModal({
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.scale(dpr, dpr);
+    // View-transform — pan + zoom. Applied AFTER the DPR scale so
+    // tx/ty/scale read in CSS px / model units. Strokes / lasso /
+    // selection halos / background pattern all render in model
+    // space below this transform, so changing scale is pixel-stable.
+    ctx.translate(tx, ty);
+    ctx.scale(scale, scale);
     // Paper-style background pattern, drawn first so seed images
-    // and strokes paint on top of it. Patterns render in CSS-px
-    // (post-scale) so they look consistent across DPRs.
+    // and strokes paint on top of it. Patterns render in MODEL
+    // space — they pan + zoom with the rest of the page. We extend
+    // the visible area by 50% on each side so panning doesn't
+    // expose unpatterned edges.
     if (pageBackground !== 'blank') {
-      const cw = c.clientWidth || c.width / dpr;
-      const ch = c.clientHeight || c.height / dpr;
+      // Compute the visible MODEL bounds from the inverse of the
+      // current transform, then iterate the pattern across that
+      // range. Lets the user pan / zoom and the lines keep coming —
+      // no clipped edges, no per-frame allocations beyond the loop.
+      const viewW = c.clientWidth || c.width / dpr;
+      const viewH = c.clientHeight || c.height / dpr;
+      const mxMin = -tx / scale;
+      const mxMax = (viewW - tx) / scale;
+      const myMin = -ty / scale;
+      const myMax = (viewH - ty) / scale;
+      // Line width in MODEL units so the rendered line stays ~1
+      // view-px regardless of zoom level.
+      const linePxModel = 1 / scale;
       ctx.save();
       const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
       const lineColor = isDark ? 'rgba(200,200,210,0.10)' : 'rgba(40,40,50,0.10)';
       const dotColor = isDark ? 'rgba(200,200,210,0.18)' : 'rgba(40,40,50,0.18)';
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = linePxModel;
+      const snapStart = (min: number, pitch: number) => Math.ceil(min / pitch) * pitch;
       if (pageBackground === 'lined') {
-        // Horizontal rule every 28 CSS px — typical notebook ruling.
-        ctx.strokeStyle = lineColor;
-        ctx.lineWidth = 1;
-        for (let y = 28; y < ch; y += 28) {
+        const pitch = 28;
+        for (let y = snapStart(myMin, pitch); y <= myMax; y += pitch) {
           ctx.beginPath();
-          ctx.moveTo(0, y + 0.5);
-          ctx.lineTo(cw, y + 0.5);
+          ctx.moveTo(mxMin, y);
+          ctx.lineTo(mxMax, y);
           ctx.stroke();
         }
       } else if (pageBackground === 'grid' || pageBackground === 'graph') {
-        // Both are square grids; graph uses a finer pitch.
         const pitch = pageBackground === 'graph' ? 16 : 32;
-        ctx.strokeStyle = lineColor;
-        ctx.lineWidth = 1;
-        for (let x = pitch; x < cw; x += pitch) {
+        for (let x = snapStart(mxMin, pitch); x <= mxMax; x += pitch) {
           ctx.beginPath();
-          ctx.moveTo(x + 0.5, 0);
-          ctx.lineTo(x + 0.5, ch);
+          ctx.moveTo(x, myMin);
+          ctx.lineTo(x, myMax);
           ctx.stroke();
         }
-        for (let y = pitch; y < ch; y += pitch) {
+        for (let y = snapStart(myMin, pitch); y <= myMax; y += pitch) {
           ctx.beginPath();
-          ctx.moveTo(0, y + 0.5);
-          ctx.lineTo(cw, y + 0.5);
+          ctx.moveTo(mxMin, y);
+          ctx.lineTo(mxMax, y);
           ctx.stroke();
         }
       } else if (pageBackground === 'dotted') {
         ctx.fillStyle = dotColor;
         const pitch = 24;
-        for (let y = pitch; y < ch; y += pitch) {
-          for (let x = pitch; x < cw; x += pitch) {
+        const r = 1 / scale;
+        for (let y = snapStart(myMin, pitch); y <= myMax; y += pitch) {
+          for (let x = snapStart(mxMin, pitch); x <= mxMax; x += pitch) {
             ctx.beginPath();
-            ctx.arc(x, y, 1, 0, Math.PI * 2);
+            ctx.arc(x, y, r, 0, Math.PI * 2);
             ctx.fill();
           }
         }
@@ -816,6 +959,10 @@ export function SketchModal({
       ctx.restore();
     }
     if (bgImageRef.current) {
+      // Background image lives at canvas-origin model coords —
+      // fits the *initial* CSS viewport on first open (scale=1).
+      // After zoom/pan, it stays anchored to model space so the
+      // user can zoom in on it like any other content.
       const cw = c.clientWidth || c.width / dpr;
       const ch = c.clientHeight || c.height / dpr;
       const iw = bgImageRef.current.naturalWidth;
@@ -833,7 +980,7 @@ export function SketchModal({
     if (selectedRef.current.size > 0) {
       ctx.save();
       ctx.strokeStyle = 'rgba(59, 130, 246, 0.55)';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3 / scale; // stay ~3 view-px regardless of zoom
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       for (const s of selectedRef.current) {
@@ -845,25 +992,23 @@ export function SketchModal({
         }
         ctx.stroke();
       }
-      // Selection bounding box (dashed) — visually communicates
-      // "drag inside here to move" affordance.
       const bb = polylineBBox(
         Array.from(selectedRef.current).flatMap((s) => s.points.map((p) => ({ x: p.x, y: p.y }))),
       );
       if (bb) {
-        ctx.setLineDash([4, 3]);
+        ctx.setLineDash([4 / scale, 3 / scale]);
         ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(bb.minX - 4, bb.minY - 4, (bb.maxX - bb.minX) + 8, (bb.maxY - bb.minY) + 8);
+        ctx.lineWidth = 1 / scale;
+        const pad = 4 / scale;
+        ctx.strokeRect(bb.minX - pad, bb.minY - pad, (bb.maxX - bb.minX) + 2 * pad, (bb.maxY - bb.minY) + 2 * pad);
       }
       ctx.restore();
     }
-    // Live lasso polyline — dashed amber outline.
     if (lassoRef.current && lassoRef.current.length > 0) {
       ctx.save();
-      ctx.setLineDash([5, 4]);
+      ctx.setLineDash([5 / scale, 4 / scale]);
       ctx.strokeStyle = 'rgba(234, 88, 12, 0.85)';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.5 / scale;
       ctx.beginPath();
       ctx.moveTo(lassoRef.current[0].x, lassoRef.current[0].y);
       for (let i = 1; i < lassoRef.current.length; i++) {
@@ -1058,6 +1203,39 @@ export function SketchModal({
     setPageIndex(pagesRef.current.length - 1);
     if (onAutoSave) onAutoSave(buildDoc());
   }
+  /** Programmatic zoom around the canvas centre. Used by the
+   *  toolbar's +/- pills; the same midpoint-pin math is in the
+   *  inline wheel handler but lives there because it needs the
+   *  cursor position. */
+  function zoomBy(factor: number) {
+    const c = canvasRef.current;
+    if (!c) return;
+    const r = c.getBoundingClientRect();
+    const px = r.width / 2;
+    const py = r.height / 2;
+    const newScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, scaleRef.current * factor));
+    const mx = (px - txRef.current) / scaleRef.current;
+    const my = (py - tyRef.current) / scaleRef.current;
+    const newTx = px - newScale * mx;
+    const newTy = py - newScale * my;
+    setScale(newScale);
+    setTx(newTx);
+    setTy(newTy);
+    scaleRef.current = newScale;
+    txRef.current = newTx;
+    tyRef.current = newTy;
+    redraw();
+  }
+  function resetView() {
+    setScale(1);
+    setTx(0);
+    setTy(0);
+    scaleRef.current = 1;
+    txRef.current = 0;
+    tyRef.current = 0;
+    redraw();
+  }
+
   function deleteCurrentPage() {
     if (pagesRef.current.length <= 1) {
       // Last page — clear it instead of removing the document.
@@ -1346,6 +1524,33 @@ export function SketchModal({
             icon={<FileX className="h-3.5 w-3.5" />}
             disabled={uploading}
             onActivate={deleteCurrentPage}
+          />
+        </div>
+        {/* Zoom controls — same dual-handler pattern as the rest of
+          * the toolbar so Pencil taps fire reliably. The middle pill
+          * shows the current scale and resets to 100% on tap. */}
+        <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-1 py-0.5 text-[11px] dark:bg-zinc-800">
+          <SketchIconButton
+            label="Zoom out"
+            icon={<Minus className="h-3.5 w-3.5" />}
+            disabled={uploading || scale <= ZOOM_MIN}
+            onActivate={() => zoomBy(0.8)}
+          />
+          <button
+            type="button"
+            onClick={() => resetView()}
+            onPointerUp={(e) => { if (e.pointerType === 'pen') resetView(); }}
+            style={{ cursor: 'pointer' }}
+            title="Reset zoom (100%)"
+            className="select-none rounded-full px-2 py-0.5 font-mono text-[10px] text-zinc-600 hover:bg-white dark:text-zinc-400 dark:hover:bg-zinc-950"
+          >
+            {Math.round(scale * 100)}%
+          </button>
+          <SketchIconButton
+            label="Zoom in"
+            icon={<PlusIcon className="h-3.5 w-3.5" />}
+            disabled={uploading || scale >= ZOOM_MAX}
+            onActivate={() => zoomBy(1.25)}
           />
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1">
