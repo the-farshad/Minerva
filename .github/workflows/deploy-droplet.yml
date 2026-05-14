@@ -86,39 +86,15 @@ jobs:
             "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}" \
             "set -e
              cd /opt/minerva
-             # Sync to origin/main forcefully — discards any local
-             # edits to tracked files (a one-time sudo sed for a
-             # hot-patch was enough to wedge git pull --rebase with
-             # 'unstaged changes' and silently break every subsequent
-             # CI deploy until someone SSH'd in to discard). Untracked
-             # files (docker-compose.override.yml lives there
-             # intentionally) are preserved by reset --hard.
              git fetch origin main
              git reset --hard origin/main
              cd docs
-             # Reclaim disk BEFORE pulling, not after. The 24 GB box
-             # fills fast — every web-publish pulls a fresh ~1.5 GB
-             # image and Compose never evicts the previous one. A
-             # full disk makes `docker compose pull` fail; with the
-             # `|| true` now gone from the pull, that fails the whole
-             # deploy. Prune ALL unused images, not just ones older
-             # than 12h — rapid deploy bursts pile up superseded
-             # images faster than that window, which is exactly how
-             # the box reached 95% and stranded several deploys. `-a`
-             # only removes images no container references, so the
-             # running stack is never touched. `df` lines bracket it
-             # so the deploy log shows the disk reclaim.
+             echo '[deploy] reclaiming disk'
              df -h / | tail -1
              docker container prune -f 2>&1 | tail -1 || true
              docker image prune -af 2>&1 | tail -1 || true
              docker builder prune -af 2>&1 | tail -1 || true
              df -h / | tail -1
-             # Pull any newer minerva-web image that web-publish just
-             # pushed to Docker Hub. Capture the local image digest
-             # before+after so we can tell whether we actually need
-             # to recreate the container. NO `|| true` — a failed
-             # pull must fail the deploy loudly, not mask a stale
-             # image behind a green check.
              before=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
              echo '[deploy] pulling minerva-web'
              docker compose pull minerva-web
@@ -126,21 +102,32 @@ jobs:
              echo '[deploy] building minerva-services'
              docker compose build minerva-services
              if [ \"\$before\" != \"\$after\" ]; then
-               echo \"[deploy] web image changed: \$before -> \$after — force-recreating\"
+               echo '[deploy] web image changed, force-recreating minerva-web'
                docker compose up -d --force-recreate --no-deps minerva-web
              fi
-             # Bring up everything else (services / postgres / etc.)
-             # in idempotent mode — no-op when nothing changed.
              echo '[deploy] up -d (full stack)'
              docker compose up -d
-             # Post-deploy health check is INFORMATIONAL ONLY. The
-             # deploy is already done (images pulled, containers
-             # recreated) by this point. minerva-services is a Python
-             # app that takes longer than a few seconds to answer, so
-             # a curl right after `up -d` routinely catches it mid-
-             # start — and that timing race was failing otherwise-
-             # good deploys. Wrapped so it can never be fatal.
              sleep 10
-             (curl -sS --max-time 10 http://127.0.0.1:8765/health | head -c 200) || echo '[deploy] helper not answering yet (starts slowly) — deploy still OK'
+             (curl -sS --max-time 10 http://127.0.0.1:8765/health | head -c 200) || echo '[deploy] helper not answering yet, starts slowly - deploy still ok'
              echo
              echo '[deploy] done'"
+          # NOTE: keep the SSH command string above free of backticks
+          # and unescaped $ — it is a double-quoted argument in the
+          # runner's bash, which command-substitutes them locally
+          # before ssh ever runs. A stray backtick in a comment here
+          # (e.g. a literal '|| true' in backticks) is a local syntax
+          # error that fails the whole step. Rationale that used to
+          # live in inline comments now lives in this trailing block:
+          #  - git reset --hard: a past sudo-sed hot-patch wedged
+          #    'git pull --rebase' on every later deploy; reset is
+          #    immune. Untracked files (docker-compose.override.yml)
+          #    are preserved.
+          #  - prune-before-pull: the 24 GB box fills fast (each
+          #    web-publish is a fresh ~1.5 GB image); prune ALL unused
+          #    images (-a keeps anything a container references) so
+          #    the pull has room. A full disk used to fail the pull.
+          #  - the pull has no '|| true': a failed pull must fail the
+          #    deploy loudly, not strand a stale image behind green.
+          #  - the curl health check is informational only: the
+          #    deploy is already done by then, and minerva-services
+          #    (Python) is slow to answer, so it must never be fatal.
