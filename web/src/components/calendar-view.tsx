@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import type { Row } from '@/lib/row';
 
-type Row = { id: string; data: Record<string, unknown>; updatedAt: string; sectionSlug?: string };
 type Section = { schema: { headers: string[] } };
 
 const DATE_CANDIDATES = ['due', 'deadline', 'date', 'when', 'start'];

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen } from 'lucide-react';
 import { readingMinutes, formatReadingMinutes, MINUTES_PER_PAGE, WORDS_PER_MINUTE } from '@/lib/reading-time';
 import { relativeTime, formatDateTime } from '@/lib/relative-time';
+import type { Row } from '@/lib/row';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -21,7 +22,7 @@ import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
 import { GroupNotes } from './group-notes';
 
-export type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
+export type { Row } from '@/lib/row';
 
 function OfflineBadges({ marker }: { marker: string }) {
   const has = (p: string) => marker.split(' · ').some((s) => s.trim().startsWith(p));

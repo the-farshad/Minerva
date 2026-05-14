@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref } from '@/lib/prefs';
+import type { Row } from '@/lib/row';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp, ArrowDownUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useServerEvents } from '@/hooks/use-server-events';
@@ -19,7 +20,6 @@ import { GroupedGrid } from '@/components/grouped-grid';
 import { KanbanView } from '@/components/kanban-view';
 import { CalendarView } from '@/components/calendar-view';
 
-type Row = { id: string; data: Record<string, unknown>; createdAt?: string; updatedAt: string };
 type Section = {
   id: string;
   slug: string;

@@ -8,8 +8,7 @@ import { notify } from '@/lib/notify';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
 import { readPref, writePref } from '@/lib/prefs';
-
-type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
+import type { Row } from '@/lib/row';
 type Section = { slug: string; schema: { headers: string[]; types: string[] } };
 
 const STATUS_CANDIDATES = ['status', 'state', 'stage', 'column'];

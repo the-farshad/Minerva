@@ -6,8 +6,7 @@ import { toast } from 'sonner';
 import { appConfirm } from './confirm';
 import { appPrompt } from './prompt';
 import { notify } from '@/lib/notify';
-
-type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
+import type { Row } from '@/lib/row';
 
 /**
  * Chip bar for the section's category column. Combines the
