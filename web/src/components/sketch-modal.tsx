@@ -119,6 +119,14 @@ type SketchPage = { strokes: Stroke[]; bg: HTMLImageElement | null };
  *  paper aspect ratio. */
 type PageFormat = 'auto' | 'a4-portrait' | 'a4-landscape' | 'letter-portrait' | 'letter-landscape' | 'square';
 type PageBackground = 'blank' | 'lined' | 'grid' | 'dotted' | 'graph';
+type PaperColor = 'white' | 'cream' | 'light' | 'dark' | 'black';
+const PAPER_COLORS: { id: PaperColor; label: string; fill: string; ink: 'dark' | 'light' }[] = [
+  { id: 'white',  label: 'White',  fill: '#ffffff', ink: 'dark' },
+  { id: 'cream',  label: 'Cream',  fill: '#fbf5e8', ink: 'dark' },
+  { id: 'light',  label: 'Light',  fill: '#f4f4f5', ink: 'dark' },
+  { id: 'dark',   label: 'Dark',   fill: '#27272a', ink: 'light' },
+  { id: 'black',  label: 'Black',  fill: '#0a0a0a', ink: 'light' },
+];
 
 const PAGE_FORMATS: { id: PageFormat; label: string; pxW: number; pxH: number }[] = [
   // pxW/pxH are CSS-px dimensions used for the PDF page size; the
@@ -336,6 +344,8 @@ export function SketchModal({
   const [pageCount, setPageCount] = useState(1);
   const [pageFormat, setPageFormat] = useState<PageFormat>('auto');
   const [pageBackground, setPageBackground] = useState<PageBackground>('blank');
+  const [paperColor, setPaperColor] = useState<PaperColor>('white');
+  const [marginGuides, setMarginGuides] = useState(false);
   /** View transform — pan offset + zoom scale, in CSS-px units.
    *  `view_x = tx + scale * model_x`; the redraw applies the
    *  matching transform to the canvas context, and every pointer-
@@ -459,7 +469,7 @@ export function SketchModal({
     if (!open) return;
     redraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageBackground, pageFormat, scale, tx, ty, open]);
+  }, [pageBackground, pageFormat, scale, tx, ty, paperColor, marginGuides, open]);
 
   /* When the user picks a paper format, auto-fit the canvas so the
    * paper rectangle is visible inside the viewport. Without this,
@@ -1224,14 +1234,28 @@ export function SketchModal({
     if (pageFormat !== 'auto') {
       const fmtRef = PAGE_FORMATS.find((f) => f.id === pageFormat);
       if (fmtRef && fmtRef.pxW > 0 && fmtRef.pxH > 0) {
+        const paper = PAPER_COLORS.find((p) => p.id === paperColor) ?? PAPER_COLORS[0];
         ctx.save();
-        // White paper fill — survives in dark mode too so the user
-        // sees a clear "this is your page" region.
-        ctx.fillStyle = '#ffffff';
+        // Paper fill — picks the user-selected paper colour (default
+        // white). Survives in dark mode too so the user sees a clear
+        // "this is your page" region.
+        ctx.fillStyle = paper.fill;
         ctx.fillRect(0, 0, fmtRef.pxW, fmtRef.pxH);
-        ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+        // Border colour adapts to paper darkness so the edge stays
+        // visible on dark / black paper.
+        ctx.strokeStyle = paper.ink === 'light' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.18)';
         ctx.lineWidth = 1 / scale;
         ctx.strokeRect(0, 0, fmtRef.pxW, fmtRef.pxH);
+        // Margin guides: dashed rectangle 5 % in from the paper
+        // edge — common print margin. Toggleable so a sketch
+        // without printing intent stays uncluttered.
+        if (marginGuides) {
+          const mx = fmtRef.pxW * 0.05;
+          const my = fmtRef.pxH * 0.05;
+          ctx.setLineDash([6 / scale, 4 / scale]);
+          ctx.strokeStyle = paper.ink === 'light' ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.22)';
+          ctx.strokeRect(mx, my, fmtRef.pxW - 2 * mx, fmtRef.pxH - 2 * my);
+        }
         ctx.restore();
       }
     }
@@ -2334,6 +2358,36 @@ export function SketchModal({
             <option value="graph">Graph</option>
           </select>
         </label>
+        {/* Paper colour — only relevant when a non-auto paper
+          * format is in play (the paper rect is what gets coloured).
+          * Defaults to white. */}
+        {pageFormat !== 'auto' && (
+          <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Paper colour for the page rect + PDF export">
+            <span>Paper colour</span>
+            <select
+              value={paperColor}
+              onChange={(e) => setPaperColor(e.target.value as PaperColor)}
+              className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+            >
+              {PAPER_COLORS.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {/* Margin guides — dashed 5 % print margin shown inside the
+          * paper rect. Useful for sketching that's going to print. */}
+        {pageFormat !== 'auto' && (
+          <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Show a dashed 5% print-margin guide inside the paper">
+            <input
+              type="checkbox"
+              checked={marginGuides}
+              onChange={(e) => setMarginGuides(e.target.checked)}
+              className="cursor-pointer"
+            />
+            Margins
+          </label>
+        )}
       </footer>
     </div>,
     document.body,
