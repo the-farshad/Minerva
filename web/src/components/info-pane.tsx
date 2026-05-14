@@ -208,23 +208,34 @@ export function InfoPane({
         )}
         {/* Meta footer — row timestamps. Relative ("3 days ago")
           * with the absolute date on hover. Only rendered when the
-          * caller threaded the timestamps through. */}
-        {(createdAt || updatedAt) && (
-          <div className="mt-3 space-y-1 border-t border-zinc-200 pt-2 text-[10px] text-zinc-400 dark:border-zinc-800">
-            {createdAt && (
-              <div className="grid grid-cols-[5.5rem_1fr] gap-2" title={formatDateTime(createdAt)}>
-                <span className="text-zinc-500">Created</span>
-                <span>{relativeTime(createdAt)}</span>
-              </div>
-            )}
-            {updatedAt && (
-              <div className="grid grid-cols-[5.5rem_1fr] gap-2" title={formatDateTime(updatedAt)}>
-                <span className="text-zinc-500">Edited</span>
-                <span>{relativeTime(updatedAt)}</span>
-              </div>
-            )}
-          </div>
-        )}
+          * caller threaded the timestamps through. "Opened" comes
+          * off data._accessedAt (set by the touch endpoint). */}
+        {(() => {
+          const accessedAt = typeof data._accessedAt === 'string' ? data._accessedAt : '';
+          if (!createdAt && !updatedAt && !accessedAt) return null;
+          return (
+            <div className="mt-3 space-y-1 border-t border-zinc-200 pt-2 text-[10px] text-zinc-400 dark:border-zinc-800">
+              {createdAt && (
+                <div className="grid grid-cols-[5.5rem_1fr] gap-2" title={formatDateTime(createdAt)}>
+                  <span className="text-zinc-500">Created</span>
+                  <span>{relativeTime(createdAt)}</span>
+                </div>
+              )}
+              {updatedAt && (
+                <div className="grid grid-cols-[5.5rem_1fr] gap-2" title={formatDateTime(updatedAt)}>
+                  <span className="text-zinc-500">Edited</span>
+                  <span>{relativeTime(updatedAt)}</span>
+                </div>
+              )}
+              {accessedAt && (
+                <div className="grid grid-cols-[5.5rem_1fr] gap-2" title={formatDateTime(accessedAt)}>
+                  <span className="text-zinc-500">Opened</span>
+                  <span>{relativeTime(accessedAt)}</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </dl>
     </aside>
   );

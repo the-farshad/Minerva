@@ -60,7 +60,11 @@ export function SectionView({
   /** Row sort. Persisted per section. `title-*` only mean anything
    *  when the section actually has a title/name column; the sorted
    *  memo falls back to insertion order otherwise. */
-  type SortKey = 'title-asc' | 'title-desc' | 'edited-desc' | 'edited-asc' | 'created-desc' | 'created-asc';
+  type SortKey =
+    | 'title-asc' | 'title-desc'
+    | 'edited-desc' | 'edited-asc'
+    | 'created-desc' | 'created-asc'
+    | 'opened-desc';
   const SORT_PREF_KEY = `section.sort.${section.slug}`;
   const [sortKey, setSortKey] = useState<SortKey>(
     () => readPref<SortKey>(SORT_PREF_KEY, 'title-asc'),
@@ -141,6 +145,19 @@ export function SectionView({
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     });
+    // Record the open as an access. Debounced: a re-open within
+    // five minutes doesn't write again. Fire-and-forget — the
+    // touch endpoint does NOT bump updatedAt, so it can't pollute
+    // the "edited" sort. The local row is updated optimistically
+    // so the info pane / "Recently opened" sort reflect it now.
+    const last = typeof r.data._accessedAt === 'string' ? Date.parse(r.data._accessedAt) : 0;
+    if (Date.now() - (Number.isNaN(last) ? 0 : last) > 5 * 60_000) {
+      const now = new Date().toISOString();
+      void fetch(`/api/sections/${section.slug}/rows/${r.id}/touch`, { method: 'POST' }).catch(() => {});
+      setRows((rs) => rs.map((x) => (x.id === r.id
+        ? { ...x, data: { ...x.data, _accessedAt: now } }
+        : x)));
+    }
   }
 
   async function patchRow(rowId: string, patch: Record<string, unknown>) {
@@ -268,6 +285,10 @@ export function SectionView({
     } else if (sortKey === 'created-desc' || sortKey === 'created-asc') {
       const dir = sortKey === 'created-asc' ? 1 : -1;
       out.sort((a, b) => dir * (a.createdAt || '').localeCompare(b.createdAt || ''));
+    } else if (sortKey === 'opened-desc') {
+      // Rows never opened (no _accessedAt) sort last.
+      const acc = (r: Row) => (typeof r.data._accessedAt === 'string' ? r.data._accessedAt : '');
+      out.sort((a, b) => acc(b).localeCompare(acc(a)));
     } else if (titleField) {
       const dir = sortKey === 'title-desc' ? -1 : 1;
       out.sort((a, b) => dir * naturalCompare(
@@ -531,6 +552,7 @@ export function SectionView({
               <option value="edited-asc">Oldest edited</option>
               <option value="created-desc">Newest first</option>
               <option value="created-asc">Oldest first</option>
+              <option value="opened-desc">Recently opened</option>
             </select>
           </label>
           {section.preset === 'notes' ? (
