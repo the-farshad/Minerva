@@ -53,6 +53,7 @@ export default async function SectionPage({
         initialRows={rows.map((r) => ({
           id: r.id,
           data: r.data as Record<string, unknown>,
+          createdAt: r.createdAt.toISOString(),
           updatedAt: r.updatedAt.toISOString(),
         }))}
       />

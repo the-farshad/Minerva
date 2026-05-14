@@ -19,7 +19,7 @@ import { GroupedGrid } from '@/components/grouped-grid';
 import { KanbanView } from '@/components/kanban-view';
 import { CalendarView } from '@/components/calendar-view';
 
-type Row = { id: string; data: Record<string, unknown>; updatedAt: string };
+type Row = { id: string; data: Record<string, unknown>; createdAt?: string; updatedAt: string };
 type Section = {
   id: string;
   slug: string;
@@ -60,7 +60,7 @@ export function SectionView({
   /** Row sort. Persisted per section. `title-*` only mean anything
    *  when the section actually has a title/name column; the sorted
    *  memo falls back to insertion order otherwise. */
-  type SortKey = 'title-asc' | 'title-desc' | 'edited-desc' | 'edited-asc';
+  type SortKey = 'title-asc' | 'title-desc' | 'edited-desc' | 'edited-asc' | 'created-desc' | 'created-asc';
   const SORT_PREF_KEY = `section.sort.${section.slug}`;
   const [sortKey, setSortKey] = useState<SortKey>(
     () => readPref<SortKey>(SORT_PREF_KEY, 'title-asc'),
@@ -79,12 +79,13 @@ export function SectionView({
   // propagate through this same path within ~1 RTT.
   useServerEvents((event) => {
     if (event.kind === 'row.created' && event.sectionSlug === section.slug) {
+      const now = new Date().toISOString();
       setRows((rs) => rs.some((x) => x.id === event.rowId)
         ? rs
-        : [{ id: event.rowId, data: event.data, updatedAt: new Date().toISOString() }, ...rs]);
+        : [{ id: event.rowId, data: event.data, createdAt: now, updatedAt: now }, ...rs]);
     } else if (event.kind === 'row.updated' && event.sectionSlug === section.slug) {
       setRows((rs) => rs.map((r) => r.id === event.rowId
-        ? { id: r.id, data: event.data, updatedAt: new Date().toISOString() }
+        ? { id: r.id, data: event.data, createdAt: r.createdAt, updatedAt: new Date().toISOString() }
         : r));
     } else if (event.kind === 'row.deleted' && event.sectionSlug === section.slug) {
       setRows((rs) => rs.filter((r) => r.id !== event.rowId));
@@ -262,6 +263,9 @@ export function SectionView({
     if (sortKey === 'edited-desc' || sortKey === 'edited-asc') {
       const dir = sortKey === 'edited-asc' ? 1 : -1;
       out.sort((a, b) => dir * (a.updatedAt || '').localeCompare(b.updatedAt || ''));
+    } else if (sortKey === 'created-desc' || sortKey === 'created-asc') {
+      const dir = sortKey === 'created-asc' ? 1 : -1;
+      out.sort((a, b) => dir * (a.createdAt || '').localeCompare(b.createdAt || ''));
     } else if (titleField) {
       const dir = sortKey === 'title-desc' ? -1 : 1;
       out.sort((a, b) => dir * naturalCompare(
@@ -523,6 +527,8 @@ export function SectionView({
               {titleField && <option value="title-desc">Title Z–A</option>}
               <option value="edited-desc">Recently edited</option>
               <option value="edited-asc">Oldest edited</option>
+              <option value="created-desc">Newest first</option>
+              <option value="created-asc">Oldest first</option>
             </select>
           </label>
           {section.preset === 'notes' ? (
