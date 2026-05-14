@@ -346,6 +346,25 @@ export function SketchModal({
   const [pageBackground, setPageBackground] = useState<PageBackground>('blank');
   const [paperColor, setPaperColor] = useState<PaperColor>('white');
   const [marginGuides, setMarginGuides] = useState(false);
+  /** Handwriting smoothing level applied on stroke commit. A
+   *  windowed moving-average over the point array — wider window
+   *  = smoother but less faithful to fast detail. `med` is the
+   *  default: enough to kill Pencil jitter without rounding off
+   *  intentional sharp corners. Persisted in localStorage. */
+  type SmoothLevel = 'none' | 'low' | 'med' | 'high';
+  const SMOOTH_KEY = 'minerva.v2.sketch.smoothing';
+  const [smoothing, setSmoothing] = useState<SmoothLevel>(() => {
+    if (typeof window === 'undefined') return 'med';
+    try {
+      const v = localStorage.getItem(SMOOTH_KEY);
+      return (v === 'none' || v === 'low' || v === 'med' || v === 'high') ? v : 'med';
+    } catch { return 'med'; }
+  });
+  const smoothingRef = useRef<SmoothLevel>(smoothing);
+  useEffect(() => {
+    smoothingRef.current = smoothing;
+    try { localStorage.setItem(SMOOTH_KEY, smoothing); } catch { /* ignore */ }
+  }, [smoothing]);
   /** View transform — pan offset + zoom scale, in CSS-px units.
    *  `view_x = tx + scale * model_x`; the redraw applies the
    *  matching transform to the canvas context, and every pointer-
@@ -471,15 +490,19 @@ export function SketchModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageBackground, pageFormat, scale, tx, ty, paperColor, marginGuides, open]);
 
-  /* When the user picks a paper format, auto-fit the canvas so the
-   * paper rectangle is visible inside the viewport. Without this,
-   * picking "A4 portrait" (595×842) on a typical iPad-landscape
-   * canvas leaves the paper extending below the visible area and
-   * the dropdown reads as "did nothing visible". Skip for `auto`
-   * (full-bleed historical behaviour). */
-  useEffect(() => {
-    if (!open) return;
-    if (pageFormat === 'auto') return;
+  /** Imperative "fit the current paper format into the viewport".
+   *  Called once on open (so a saved A4 doc lands centred + fully
+   *  visible) and on demand via the toolbar's Fit button. NOT
+   *  called on every pageFormat change — repositioning the view
+   *  out from under a half-finished drawing is disorienting; the
+   *  user picks a new format, the paper rect just appears at model
+   *  origin, and they press Fit if/when they want to recentre. */
+  function fitPaperToView() {
+    if (pageFormat === 'auto') {
+      // No paper rect to fit — just reset to identity.
+      resetView();
+      return;
+    }
     const fmt = PAGE_FORMATS.find((f) => f.id === pageFormat);
     if (!fmt || fmt.pxW <= 0 || fmt.pxH <= 0) return;
     const c = canvasRef.current;
@@ -487,8 +510,6 @@ export function SketchModal({
     const dpr = window.devicePixelRatio || 1;
     const viewW = c.clientWidth || c.width / dpr;
     const viewH = c.clientHeight || c.height / dpr;
-    // Fit with 5 % margin on each side so the paper doesn't crash
-    // into the chrome.
     const fit = Math.min((viewW * 0.9) / fmt.pxW, (viewH * 0.9) / fmt.pxH);
     const fitScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
     const centerTx = (viewW - fitScale * fmt.pxW) / 2;
@@ -499,6 +520,22 @@ export function SketchModal({
     scaleRef.current = fitScale;
     txRef.current = centerTx;
     tyRef.current = centerTy;
+    redraw();
+  }
+
+  /* One-time fit on open: when a saved doc hydrates with a non-
+   * auto pageFormat, fit it into the viewport so the user sees
+   * their whole page. `fitDoneRef` guards against the seedDoc-
+   * hydration sequence (open fires the effect while pageFormat is
+   * still 'auto', then pageFormat updates) — we wait for the real
+   * format before fitting, and fit at most once per open. */
+  const fitDoneRef = useRef(false);
+  useEffect(() => {
+    if (!open) { fitDoneRef.current = false; return; }
+    if (fitDoneRef.current) return;
+    if (pageFormat === 'auto') return; // wait for a real format (may arrive via seedDoc)
+    fitDoneRef.current = true;
+    fitPaperToView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageFormat, open]);
 
@@ -705,7 +742,32 @@ export function SketchModal({
     };
     const endStroke = (ptype: string) => {
       if (!drawingRef.current) return;
-      strokesRef.current.push(drawingRef.current);
+      const finished = drawingRef.current;
+      // Handwriting refinement: a windowed moving-average smoothing
+      // pass over the committed point array. Skipped for the 2-point
+      // shape tools (line / rect / ellipse / arrow — they're already
+      // mathematically exact) and for `none`. Endpoints are kept
+      // anchored so the stroke doesn't visibly shrink at the tips.
+      const sm = smoothingRef.current;
+      const isShape = finished.tool === 'line' || finished.tool === 'rect'
+        || finished.tool === 'ellipse' || finished.tool === 'arrow';
+      if (!isShape && sm !== 'none' && finished.points.length >= 3) {
+        const win = sm === 'low' ? 1 : sm === 'med' ? 2 : 3;
+        const src = finished.points;
+        const out: Point[] = src.map((p, i) => {
+          if (i === 0 || i === src.length - 1) return { ...p };
+          let sx = 0, sy = 0, sw = 0, n = 0;
+          for (let k = Math.max(0, i - win); k <= Math.min(src.length - 1, i + win); k++) {
+            sx += src[k].x; sy += src[k].y; sw += src[k].w; n++;
+          }
+          const np: Point = { x: sx / n, y: sy / n, w: sw / n };
+          if (typeof p.tx === 'number') np.tx = p.tx;
+          if (typeof p.ty === 'number') np.ty = p.ty;
+          return np;
+        });
+        finished.points = out;
+      }
+      strokesRef.current.push(finished);
       drawingRef.current = null;
       setDebug(`up · ${ptype} · strokes=${strokesRef.current.length}`);
       redraw();
@@ -991,9 +1053,18 @@ export function SketchModal({
           const bb = polylineBBox(polygon);
           const swept = bb && (bb.maxX - bb.minX > 4 / scaleRef.current || bb.maxY - bb.minY > 4 / scaleRef.current);
           if (polygon.length >= 2 && swept) {
-            // Select every stroke with ≥1 point inside the lasso.
+            // A stroke is selected when EITHER:
+            //  (a) it's enclosed — any of its points falls inside
+            //      the lasso polygon (the loop-around gesture), OR
+            //  (b) it's crossed — any lasso vertex lands within a
+            //      ~14 view-px halo of the stroke's polyline (the
+            //      scribble-across gesture, which has near-zero
+            //      enclosed area so (a) alone would miss it).
+            const crossHalo = 14 / scaleRef.current;
             for (const s of strokesRef.current) {
-              if (s.points.some((p) => pointInPolygon(p.x, p.y, polygon))) {
+              const enclosed = s.points.some((p) => pointInPolygon(p.x, p.y, polygon));
+              const crossed = !enclosed && polygon.some((lp) => distanceToPolyline(lp.x, lp.y, s.points) <= crossHalo);
+              if (enclosed || crossed) {
                 selectedRef.current.add(s);
               }
             }
@@ -1220,44 +1291,46 @@ export function SketchModal({
     // space below this transform, so changing scale is pixel-stable.
     ctx.translate(tx, ty);
     ctx.scale(scale, scale);
-    // Paper-style background pattern, drawn first so seed images
-    // and strokes paint on top of it. Patterns render in MODEL
-    // space — they pan + zoom with the rest of the page. We extend
-    // the visible area by 50% on each side so panning doesn't
-    // expose unpatterned edges.
-    // Paper boundary — when a non-auto format is selected, draw a
-    // translucent rectangle showing where the page edges sit.
-    // Centered on (0,0) in model space, sized to the chosen
-    // format. Gives the user a visible reference for what the PDF
-    // export will look like. Auto keeps the historical full-bleed
-    // canvas behaviour.
-    if (pageFormat !== 'auto') {
-      const fmtRef = PAGE_FORMATS.find((f) => f.id === pageFormat);
-      if (fmtRef && fmtRef.pxW > 0 && fmtRef.pxH > 0) {
-        const paper = PAPER_COLORS.find((p) => p.id === paperColor) ?? PAPER_COLORS[0];
-        ctx.save();
-        // Paper fill — picks the user-selected paper colour (default
-        // white). Survives in dark mode too so the user sees a clear
-        // "this is your page" region.
-        ctx.fillStyle = paper.fill;
-        ctx.fillRect(0, 0, fmtRef.pxW, fmtRef.pxH);
-        // Border colour adapts to paper darkness so the edge stays
-        // visible on dark / black paper.
+
+    // Resolve the paper colour once — it now applies in EVERY mode,
+    // not just when a paper format is set. In `auto` mode it fills
+    // the whole visible canvas (full light/dark control without
+    // touching the app theme); with a format it fills the paper
+    // rect. `paper.ink` ('dark' on light paper, 'light' on dark
+    // paper) drives the pattern + border + margin colours so they
+    // always contrast.
+    const paper = PAPER_COLORS.find((p) => p.id === paperColor) ?? PAPER_COLORS[0];
+    const paperFmtDraw = pageFormat !== 'auto'
+      ? PAGE_FORMATS.find((f) => f.id === pageFormat && f.pxW > 0 && f.pxH > 0)
+      : null;
+    {
+      const viewW0 = c.clientWidth || c.width / dpr;
+      const viewH0 = c.clientHeight || c.height / dpr;
+      ctx.save();
+      ctx.fillStyle = paper.fill;
+      if (paperFmtDraw) {
+        ctx.fillRect(0, 0, paperFmtDraw.pxW, paperFmtDraw.pxH);
         ctx.strokeStyle = paper.ink === 'light' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.18)';
         ctx.lineWidth = 1 / scale;
-        ctx.strokeRect(0, 0, fmtRef.pxW, fmtRef.pxH);
-        // Margin guides: dashed rectangle 5 % in from the paper
-        // edge — common print margin. Toggleable so a sketch
-        // without printing intent stays uncluttered.
+        ctx.strokeRect(0, 0, paperFmtDraw.pxW, paperFmtDraw.pxH);
         if (marginGuides) {
-          const mx = fmtRef.pxW * 0.05;
-          const my = fmtRef.pxH * 0.05;
+          const mx = paperFmtDraw.pxW * 0.05;
+          const my = paperFmtDraw.pxH * 0.05;
           ctx.setLineDash([6 / scale, 4 / scale]);
           ctx.strokeStyle = paper.ink === 'light' ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.22)';
-          ctx.strokeRect(mx, my, fmtRef.pxW - 2 * mx, fmtRef.pxH - 2 * my);
+          ctx.strokeRect(mx, my, paperFmtDraw.pxW - 2 * mx, paperFmtDraw.pxH - 2 * my);
         }
-        ctx.restore();
+      } else {
+        // Auto mode — fill the entire visible model region with the
+        // paper colour. Extend generously so panning doesn't expose
+        // an unfilled edge.
+        const fxMin = -tx / scale - viewW0;
+        const fyMin = -ty / scale - viewH0;
+        const fw = (viewW0 / scale) + 2 * viewW0;
+        const fh = (viewH0 / scale) + 2 * viewH0;
+        ctx.fillRect(fxMin, fyMin, fw, fh);
       }
+      ctx.restore();
     }
     if (pageBackground !== 'blank') {
       // Pattern bounds: clip to the paper rectangle when a non-auto
@@ -1284,9 +1357,14 @@ export function SketchModal({
       // view-px regardless of zoom level.
       const linePxModel = 1 / scale;
       ctx.save();
-      const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
-      const lineColor = isDark ? 'rgba(200,200,210,0.10)' : 'rgba(40,40,50,0.10)';
-      const dotColor = isDark ? 'rgba(200,200,210,0.18)' : 'rgba(40,40,50,0.18)';
+      // Pattern ink derives from the PAPER colour, not the app
+      // theme — dark ink on light paper, light ink on dark paper —
+      // so the lines are always visible. Bumped from 0.10 to 0.22
+      // so the pattern reads clearly on white paper (the old value
+      // was barely perceptible).
+      const onDarkPaper = paper.ink === 'light';
+      const lineColor = onDarkPaper ? 'rgba(220,220,228,0.22)' : 'rgba(40,40,50,0.22)';
+      const dotColor = onDarkPaper ? 'rgba(220,220,228,0.34)' : 'rgba(40,40,50,0.34)';
       ctx.strokeStyle = lineColor;
       ctx.lineWidth = linePxModel;
       const snapStart = (min: number, pitch: number) => Math.ceil(min / pitch) * pitch;
@@ -1420,7 +1498,19 @@ export function SketchModal({
       for (let i = 1; i < lassoRef.current.length; i++) {
         ctx.lineTo(lassoRef.current[i].x, lassoRef.current[i].y);
       }
-      ctx.stroke();
+      // Auto-close: draw the implied closing segment back to the
+      // start, lighter, so the user sees the region the lasso will
+      // actually enclose (pointInPolygon closes the polygon too).
+      if (lassoRef.current.length > 2) {
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(lassoRef.current[lassoRef.current.length - 1].x, lassoRef.current[lassoRef.current.length - 1].y);
+        ctx.lineTo(lassoRef.current[0].x, lassoRef.current[0].y);
+        ctx.strokeStyle = 'rgba(234, 88, 12, 0.4)';
+        ctx.stroke();
+      } else {
+        ctx.stroke();
+      }
       ctx.restore();
     }
     ctx.restore();
@@ -2083,6 +2173,16 @@ export function SketchModal({
             disabled={uploading || scale >= ZOOM_MAX}
             onActivate={() => zoomBy(1.25)}
           />
+          <button
+            type="button"
+            onClick={fitPaperToView}
+            onPointerUp={(e) => { if (e.pointerType === 'pen') fitPaperToView(); }}
+            style={{ cursor: 'pointer' }}
+            title={pageFormat === 'auto' ? 'Reset view' : 'Fit page to screen'}
+            className="select-none rounded-full px-2 py-0.5 text-[10px] text-zinc-600 hover:bg-white dark:text-zinc-400 dark:hover:bg-zinc-950"
+          >
+            Fit
+          </button>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1">
           <SketchIconButton
@@ -2358,23 +2458,37 @@ export function SketchModal({
             <option value="graph">Graph</option>
           </select>
         </label>
-        {/* Paper colour — only relevant when a non-auto paper
-          * format is in play (the paper rect is what gets coloured).
-          * Defaults to white. */}
-        {pageFormat !== 'auto' && (
-          <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Paper colour for the page rect + PDF export">
-            <span>Paper colour</span>
-            <select
-              value={paperColor}
-              onChange={(e) => setPaperColor(e.target.value as PaperColor)}
-              className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-            >
-              {PAPER_COLORS.map((p) => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
-            </select>
-          </label>
-        )}
+        {/* Paper colour — applies in EVERY mode now: fills the
+          * whole canvas in `auto`, the paper rect with a format.
+          * This is the light/dark control for the drawing surface,
+          * independent of the app theme. */}
+        <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Drawing-surface colour — light/dark for the canvas, independent of the app theme">
+          <span>Surface</span>
+          <select
+            value={paperColor}
+            onChange={(e) => setPaperColor(e.target.value as PaperColor)}
+            className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            {PAPER_COLORS.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+        </label>
+        {/* Handwriting smoothing level — windowed moving-average
+          * applied on stroke commit. */}
+        <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Handwriting smoothing — stronger = less jitter, less faithful to fast detail">
+          <span>Smooth</span>
+          <select
+            value={smoothing}
+            onChange={(e) => setSmoothing(e.target.value as SmoothLevel)}
+            className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <option value="none">None</option>
+            <option value="low">Low</option>
+            <option value="med">Med</option>
+            <option value="high">High</option>
+          </select>
+        </label>
         {/* Margin guides — dashed 5 % print margin shown inside the
           * paper rect. Useful for sketching that's going to print. */}
         {pageFormat !== 'auto' && (
