@@ -42,7 +42,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
@@ -474,6 +474,23 @@ export function SketchModal({
   useEffect(() => { scaleRef.current = scale; }, [scale]);
   useEffect(() => { txRef.current = tx; }, [tx]);
   useEffect(() => { tyRef.current = ty; }, [ty]);
+  /* Render-state refs. redraw() reads paper format / background /
+   * surface colour / margin guides through these refs, not the
+   * component-state closures, so imperative redraws fired from
+   * frozen closures — the ResizeObserver `sync`, the seed-image
+   * onload — always paint with the *current* paper settings. This
+   * is the same stale-closure fix already applied to scale/tx/ty:
+   * without it, a resize after a paper-format change repainted with
+   * the open-time 'auto' format, snapping the canvas back to the
+   * full-bleed view and hiding the selection. */
+  const pageFormatRef = useRef(pageFormat);
+  const pageBackgroundRef = useRef(pageBackground);
+  const paperColorRef = useRef(paperColor);
+  const marginGuidesRef = useRef(marginGuides);
+  useEffect(() => { pageFormatRef.current = pageFormat; }, [pageFormat]);
+  useEffect(() => { pageBackgroundRef.current = pageBackground; }, [pageBackground]);
+  useEffect(() => { paperColorRef.current = paperColor; }, [paperColor]);
+  useEffect(() => { marginGuidesRef.current = marginGuides; }, [marginGuides]);
   const ZOOM_MIN = 0.25;
   const ZOOM_MAX = 8;
 
@@ -1237,6 +1254,10 @@ export function SketchModal({
     const onPointerUp = (e: PointerEvent) => {
       if (penOnlyRef.current && e.pointerType === 'touch') return;
       if (tool === 'text') {
+        // Finger taps are handled by onTouchEnd; pen + mouse here.
+        // Without this split, a finger tap fires both paths and
+        // opens the editor twice.
+        if (e.pointerType === 'touch') return;
         e.preventDefault();
         const { x, y } = toModel(e.clientX, e.clientY);
         openTextEditor(x, y, pickTextAt(x, y));
@@ -1438,6 +1459,12 @@ export function SketchModal({
     const scale = scaleRef.current;
     const tx = txRef.current;
     const ty = tyRef.current;
+    // Likewise read the paper settings from refs — same stale-
+    // closure hazard as the transform above.
+    const pageFormat = pageFormatRef.current;
+    const pageBackground = pageBackgroundRef.current;
+    const paperColor = paperColorRef.current;
+    const marginGuides = marginGuidesRef.current;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
@@ -1694,9 +1721,17 @@ export function SketchModal({
     if (s.points.length === 0) return;
     ctx.save();
     if (s.tool === 'eraser') {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.strokeStyle = '#000';
-      ctx.fillStyle = '#000';
+      // Erase by painting back to the current paper colour, NOT by
+      // `destination-out`. destination-out punches a transparent
+      // hole that reveals the canvas backdrop — on any non-white
+      // surface, or in dark mode, that backdrop differs from the
+      // paper, so the "erased" path showed up as a wrong-coloured
+      // streak: the eraser looked like it was drawing a line.
+      const paperFill = (PAPER_COLORS.find((p) => p.id === paperColorRef.current) ?? PAPER_COLORS[0]).fill;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = paperFill;
+      ctx.fillStyle = paperFill;
     } else {
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = s.alpha;
@@ -1906,18 +1941,25 @@ export function SketchModal({
    *  When `index` is given the existing text object is re-edited;
    *  otherwise a new object is staged at the tapped point. */
   function openTextEditor(mx: number, my: number, index: number | null) {
+    let next: { x: number; y: number; value: string; editIndex: number | null; color: string; fontSize: number };
     if (index !== null) {
       const t = textsRef.current[index];
       if (!t) return;
       editingTextIndexRef.current = index;
-      setTextEditor({ x: t.x, y: t.y, value: t.text, editIndex: index, color: t.color, fontSize: t.fontSize });
+      next = { x: t.x, y: t.y, value: t.text, editIndex: index, color: t.color, fontSize: t.fontSize };
     } else {
       editingTextIndexRef.current = -1;
-      setTextEditor({ x: mx, y: my, value: '', editIndex: null, color, fontSize: TEXT_FONT_SIZE });
+      next = { x: mx, y: my, value: '', editIndex: null, color, fontSize: TEXT_FONT_SIZE };
     }
+    // flushSync so the <textarea> is mounted + positioned *before*
+    // we focus it. The focus() call must run synchronously inside
+    // the triggering pointer/touch gesture — iOS Safari only raises
+    // the keyboard for a focus() made during a user gesture, and a
+    // deferred setTimeout focus (the old approach) silently failed
+    // on iPad: the box appeared but couldn't be typed into.
+    flushSync(() => setTextEditor(next));
     redraw();
-    // Focus on the next tick once the textarea has mounted.
-    setTimeout(() => textEditorRef.current?.focus(), 0);
+    textEditorRef.current?.focus();
   }
 
   /** Commit (or discard) the text editing overlay. Empty text is
@@ -2676,10 +2718,15 @@ export function SketchModal({
         * size / style / surface / margins under "Paper". Bottom
         * placement so Pencil reach is short on iPad. */}
       <footer className="relative z-[70] flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-        {/* Tool selector */}
+        {/* Tool selector. The two eraser modes (pixel `eraser` +
+          * whole-object `obj-eraser`) share a single "Eraser"
+          * button — obj-eraser is filtered out of the row and its
+          * mode is picked from the inline switch below. */}
         <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
-          {TOOLS.map((t) => {
-            const active = tool === t.id;
+          {TOOLS.filter((t) => t.id !== 'obj-eraser').map((t) => {
+            const active = t.id === 'eraser'
+              ? (tool === 'eraser' || tool === 'obj-eraser')
+              : tool === t.id;
             return (
               <SketchToolButton
                 key={t.id}
@@ -2692,8 +2739,36 @@ export function SketchModal({
           })}
         </div>
 
-        {/* Color palette (hidden when eraser is active) */}
-        {tool !== 'eraser' && (
+        {/* Eraser options — one tool, two modes. Pick pixel vs
+          * whole-object erasing, and (pixel mode) the size. */}
+        {(tool === 'eraser' || tool === 'obj-eraser') && (
+          <div className="inline-flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
+              <SketchOptionPill label="Pixel" active={tool === 'eraser'} onActivate={() => setTool('eraser')} />
+              <SketchOptionPill label="Object" active={tool === 'obj-eraser'} onActivate={() => setTool('obj-eraser')} />
+            </div>
+            {tool === 'eraser' && (() => {
+              const min = activeSpec.minWidth;
+              const max = activeSpec.maxWidth;
+              const TIERS = [min, min + (max - min) * 0.25, (min + max) / 2, min + (max - min) * 0.75, max];
+              return (
+                <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
+                  {TIERS.map((w, i) => (
+                    <SketchWidthButton
+                      key={i}
+                      width={w}
+                      active={Math.abs(effectiveWidth - w) < 0.5}
+                      onActivate={() => setWidthOverride(w)}
+                    />
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Color palette (hidden for the eraser modes) */}
+        {tool !== 'eraser' && tool !== 'obj-eraser' && (
           <div className="flex items-center gap-1.5">
             {PALETTE.map((c) => (
               <SketchColorButton
@@ -2718,7 +2793,7 @@ export function SketchModal({
           * in localStorage so the next session keeps them. Hidden
           * when empty; hidden for the eraser tool (which doesn't
           * use colour). */}
-        {tool !== 'eraser' && recentColors.length > 0 && (
+        {tool !== 'eraser' && tool !== 'obj-eraser' && recentColors.length > 0 && (
           <div className="inline-flex items-center gap-1" title="Recent colours">
             <span className="text-[9px] uppercase tracking-wide text-zinc-500">Recent</span>
             {recentColors.map((c) => (
