@@ -62,34 +62,41 @@ type ToolSpec = {
   id: Tool;
   label: string;
   Icon: typeof Pen;
+  /** Width range exposed by the size tiers — `minWidth` is the
+   *  thinnest tier, `maxWidth` the thickest. Kept wide so the user
+   *  has both very fine and very bold options. */
   minWidth: number;
   maxWidth: number;
+  /** Width used when no tier is explicitly picked (and for non-
+   *  pressure input). Decoupled from the range so widening the
+   *  tiers doesn't drag the natural default thicker. */
+  defaultWidth: number;
   alpha: number;
 };
 
 const TOOLS: ToolSpec[] = [
-  { id: 'pen',         label: 'Pen',         Icon: Pen,         minWidth: 2,  maxWidth: 8,  alpha: 1    },
-  { id: 'pencil',      label: 'Pencil',      Icon: PencilIcon,  minWidth: 1,  maxWidth: 4,  alpha: 0.85 },
-  { id: 'marker',      label: 'Marker',      Icon: Brush,       minWidth: 6,  maxWidth: 16, alpha: 0.6  },
-  { id: 'highlighter', label: 'Highlighter', Icon: Highlighter, minWidth: 12, maxWidth: 28, alpha: 0.35 },
-  { id: 'line',        label: 'Line',        Icon: Slash,       minWidth: 2,  maxWidth: 8,  alpha: 1    },
+  { id: 'pen',         label: 'Pen',         Icon: Pen,         minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'pencil',      label: 'Pencil',      Icon: PencilIcon,  minWidth: 0.5,  maxWidth: 16, defaultWidth: 2,  alpha: 0.85 },
+  { id: 'marker',      label: 'Marker',      Icon: Brush,       minWidth: 3,    maxWidth: 48, defaultWidth: 10, alpha: 0.6  },
+  { id: 'highlighter', label: 'Highlighter', Icon: Highlighter, minWidth: 6,    maxWidth: 64, defaultWidth: 18, alpha: 0.35 },
+  { id: 'line',        label: 'Line',        Icon: Slash,       minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
   // Vector shape tools — same 2-point start/end gesture as line;
   // the renderer derives the shape geometry from the bounding
   // rect (rect / ellipse) or anchor→endpoint (arrow).
-  { id: 'rect',        label: 'Rect',        Icon: Square,      minWidth: 2,  maxWidth: 8,  alpha: 1    },
-  { id: 'ellipse',     label: 'Ellipse',     Icon: Circle,      minWidth: 2,  maxWidth: 8,  alpha: 1    },
-  { id: 'arrow',       label: 'Arrow',       Icon: ArrowRight,  minWidth: 2,  maxWidth: 8,  alpha: 1    },
-  { id: 'eraser',      label: 'Eraser',      Icon: Eraser,      minWidth: 8,  maxWidth: 32, alpha: 1    },
+  { id: 'rect',        label: 'Rect',        Icon: Square,      minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'ellipse',     label: 'Ellipse',     Icon: Circle,      minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'arrow',       label: 'Arrow',       Icon: ArrowRight,  minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'eraser',      label: 'Eraser',      Icon: Eraser,      minWidth: 4,    maxWidth: 80, defaultWidth: 18, alpha: 1    },
   // Vector-aware tools enabled by the SketchDoc model.
   // `obj-eraser` removes whole strokes per tap/swipe; `lasso`
   // selects strokes inside a freehand loop so the user can delete
   // / duplicate / drag-move them as a unit.
-  { id: 'obj-eraser',  label: 'Erase obj',   Icon: Trash2,      minWidth: 6,  maxWidth: 16, alpha: 1    },
-  { id: 'lasso',       label: 'Lasso',       Icon: Lasso,       minWidth: 2,  maxWidth: 2,  alpha: 0.6  },
+  { id: 'obj-eraser',  label: 'Erase obj',   Icon: Trash2,      minWidth: 4,    maxWidth: 40, defaultWidth: 12, alpha: 1    },
+  { id: 'lasso',       label: 'Lasso',       Icon: Lasso,       minWidth: 2,    maxWidth: 2,  defaultWidth: 2,  alpha: 0.6  },
   // Text tool — taps place a <textarea> editing overlay. On iPadOS
   // that textarea is Scribble-enabled, so Apple Pencil handwriting
   // is converted to text on-device. Width/alpha are unused.
-  { id: 'text',        label: 'Text',        Icon: TypeIcon,    minWidth: 1,  maxWidth: 1,  alpha: 1    },
+  { id: 'text',        label: 'Text',        Icon: TypeIcon,    minWidth: 1,    maxWidth: 1,  defaultWidth: 1,  alpha: 1    },
 ];
 
 /** Expanded 16-swatch palette — two rows of inks (greys + dark
@@ -680,12 +687,19 @@ export function SketchModal({
       setPageCount(seedDoc.pages.length);
       setPageFormat(docSizeToPaper(seedDoc.paper?.size ?? 'auto'));
       setPageBackground(((seedDoc.paper?.background as PageBackground) ?? 'blank'));
+      // Surface colour + margin guide are document-wide paper props,
+      // persisted alongside size/background — restore them so the
+      // sketch reopens looking exactly as the user left it.
+      setPaperColor(((seedDoc.paper?.surface as PaperColor) ?? 'white'));
+      setMarginGuides(seedDoc.paper?.margins ?? false);
     } else {
       pagesRef.current = [{ strokes: [], texts: [], bg: null }];
       pageIdsRef.current = [newSketchId('page')];
       setPageCount(1);
       setPageFormat('auto');
       setPageBackground('blank');
+      setPaperColor('white');
+      setMarginGuides(false);
     }
     // Reset the view transform on every open so the user starts at
     // 100% zoom + no pan — predictable starting state.
@@ -780,9 +794,9 @@ export function SketchModal({
       if (tool === 'pen' && pointerType === 'pen' && basePressure > 0) {
         return spec.minWidth + (spec.maxWidth - spec.minWidth) * Math.max(0.1, basePressure);
       }
-      // Sensible default in the middle of the range for non-
-      // pressure inputs (mouse, finger) and non-pen tools.
-      return (spec.minWidth + spec.maxWidth) / 2;
+      // The tool's natural default for non-pressure inputs (mouse,
+      // finger) and non-pen tools.
+      return spec.defaultWidth;
     };
 
     const rectOf = () => c.getBoundingClientRect();
@@ -2203,7 +2217,12 @@ export function SketchModal({
     return {
       schemaVersion: 1,
       documentId: documentId || 'sketch',
-      paper: { size: paperToDocSize(pageFormat), background: pageBackground },
+      paper: {
+        size: paperToDocSize(pageFormat),
+        background: pageBackground,
+        surface: paperColor,
+        margins: marginGuides,
+      },
       pages,
     };
   }
@@ -2423,7 +2442,7 @@ export function SketchModal({
   if (!mounted || !open) return null;
 
   const activeSpec = getToolSpec(tool);
-  const effectiveWidth = widthOverride ?? (activeSpec.minWidth + activeSpec.maxWidth) / 2;
+  const effectiveWidth = widthOverride ?? activeSpec.defaultWidth;
   // Save/Export are enabled when ANY page has content — multi-page
   // PDF export ships whatever pages have strokes or a background.
   const hasContent = pagesRef.current.some((p) => p.strokes.length > 0 || p.texts.length > 0 || !!p.bg);
@@ -2816,7 +2835,7 @@ export function SketchModal({
                 onActivate={() => setOpenMenu((m) => (m === 'pen' ? null : 'pen'))}
               />
               {openMenu === 'pen' && (
-                <div className="absolute bottom-full right-0 z-10 mb-2 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+                <div className="fixed bottom-[5.5rem] right-2 z-[75] max-h-[55vh] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
                   <SketchMenuRow label="Width">
                     {WIDTH_TIERS.map((w, i) => (
                       <SketchWidthButton
@@ -2869,7 +2888,7 @@ export function SketchModal({
             onActivate={() => setOpenMenu((m) => (m === 'paper' ? null : 'paper'))}
           />
           {openMenu === 'paper' && (
-            <div className="absolute bottom-full right-0 z-10 mb-2 w-80 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="fixed bottom-[5.5rem] right-2 z-[75] max-h-[55vh] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
               <SketchMenuRow label="Size">
                 {PAGE_FORMATS.map((f) => (
                   <SketchOptionPill

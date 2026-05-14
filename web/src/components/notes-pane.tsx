@@ -77,6 +77,19 @@ export function NotesPane({
     if (!sketchOpen) setCurrentSketchDoc(initialSketchDoc);
   }, [initialSketchDoc, rowId, sketchOpen]);
 
+  /** A sketch note IS its sketch — opening such a row drops
+   *  straight into the editor instead of showing a static preview
+   *  + an "Edit sketch" button. Auto-opened once per row; closing
+   *  the editor doesn't re-trigger it (the preview shows then, and
+   *  the button reopens on demand). */
+  const autoOpenedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (noteType === 'sketch' && autoOpenedForRef.current !== rowId) {
+      autoOpenedForRef.current = rowId;
+      setSketchOpen(true);
+    }
+  }, [noteType, rowId]);
+
   /** Single-flight autosave for the sketch vector doc. SketchModal
    *  fires onAutoSave on every stroke completion (plus undo / redo /
    *  clear / page-add / page-delete / manual Save). On iPad a

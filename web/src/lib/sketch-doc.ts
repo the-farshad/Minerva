@@ -77,9 +77,15 @@ export type SketchDocPaperSize =
 
 export type SketchDocPaperBackground = 'blank' | 'grid' | 'lined' | 'dotted' | 'graph';
 
+export type SketchDocPaperColor = 'white' | 'cream' | 'light' | 'dark' | 'black';
+
 export type SketchDocPaper = {
   size: SketchDocPaperSize;
   background?: SketchDocPaperBackground;
+  /** Drawing-surface colour (light ↔ dark). Absent → 'white'. */
+  surface?: SketchDocPaperColor;
+  /** Whether the dashed print-margin guide is shown. Absent → false. */
+  margins?: boolean;
 };
 
 export type SketchDocPage = {
