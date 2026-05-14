@@ -36,6 +36,7 @@ export async function GET(
   return NextResponse.json(rows.map((r) => ({
     id: r.id,
     data: r.data,
+    createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   })));
 }
@@ -68,6 +69,7 @@ export async function POST(
   return NextResponse.json({
     id: inserted.id,
     data: inserted.data,
+    createdAt: inserted.createdAt.toISOString(),
     updatedAt: inserted.updatedAt.toISOString(),
   });
 }
