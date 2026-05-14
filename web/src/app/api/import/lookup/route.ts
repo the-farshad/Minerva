@@ -164,7 +164,7 @@ async function youtubePlaylist(listId: string) {
   const helper = (process.env.HELPER_BASE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
   const target = `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`;
   const r = await fetch(`${helper}/proxy?${encodeURIComponent(target)}`, { cache: 'no-store' });
-  if (!r.ok) return { name: '', items: [] as Array<{ url: string; title: string; channel: string; thumbnail: string; playlist?: string }> };
+  if (!r.ok) return { name: '', items: [] as Array<{ url: string; title: string; channel: string; thumbnail: string; playlist?: string; position?: number }> };
   const html = await r.text();
 
   // Playlist name — YouTube HTML moves it around between updates, so
@@ -190,7 +190,7 @@ async function youtubePlaylist(listId: string) {
   const ownerMatch = html.match(/"ownerText":\{"runs":\[\{"text":"([^"]+)"/);
   const owner = ownerMatch ? ownerMatch[1].replace(/\\u0026/g, '&') : '';
 
-  const items: { url: string; title: string; channel: string; thumbnail: string; playlist?: string }[] = [];
+  const items: { url: string; title: string; channel: string; thumbnail: string; playlist?: string; position?: number }[] = [];
   const seen = new Set<string>();
   const re = /"playlistVideoRenderer":\s*\{[^}]*?"videoId":"([\w-]{11})"[\s\S]*?"title":\{"runs":\[\{"text":"([^"]+)"/g;
   let m: RegExpExecArray | null;
@@ -204,6 +204,11 @@ async function youtubePlaylist(listId: string) {
       channel: owner,
       thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
       playlist: name || listId,
+      // 1-based index in the playlist. The regex scans the HTML in
+      // document order, which is the playlist's own order — persist
+      // it so the rows can be sorted back into playlist order
+      // regardless of import/insert timing.
+      position: items.length + 1,
     });
     if (items.length >= 200) break;
   }
