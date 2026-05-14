@@ -735,11 +735,11 @@ function WatchedBar({ row }: { row: Row }) {
   const filled = Math.max(0, Math.min(1, pct));
   return (
     <div
-      className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800"
+      className="progress-track mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800"
       title={`${Math.floor(watched / 60)} min watched of ${Math.floor(duration / 60)} (${Math.round(filled * 100)}%)`}
     >
       <div
-        className={filled >= 0.95 ? 'h-full bg-emerald-500' : filled >= 0.5 ? 'h-full bg-amber-500' : 'h-full bg-blue-500'}
+        className={`progress-fill h-full ${filled >= 0.95 ? 'bg-emerald-500' : filled >= 0.5 ? 'bg-amber-500' : 'bg-blue-500'}`}
         style={{ width: `${filled * 100}%` }}
       />
     </div>
@@ -849,16 +849,16 @@ function PlaylistProgress({ rows, size = 'chip' }: { rows: Row[]; size?: 'chip' 
           <span className="font-medium tracking-wide">{mm(totalWatched)} watched</span>
           <span className="font-mono text-[10px] text-zinc-500">of {mm(totalDur)} · {Math.round(pct * 100)}%</span>
         </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-          <div className={`h-full ${fill} transition-[width] duration-300`} style={{ width: `${pct * 100}%` }} />
+        <div className="progress-track h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+          <div className={`progress-fill h-full ${fill} transition-[width] duration-300`} style={{ width: `${pct * 100}%` }} />
         </div>
       </div>
     );
   }
   return (
     <div className="flex items-center gap-1.5 text-[10px] text-zinc-500" title={`${known} of ${rows.length} videos have durations`}>
-      <div className="h-1 w-24 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-        <div className={`h-full ${fill}`} style={{ width: `${pct * 100}%` }} />
+      <div className="progress-track h-1 w-24 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+        <div className={`progress-fill h-full ${fill}`} style={{ width: `${pct * 100}%` }} />
       </div>
       <span>{mm(totalWatched)} / {mm(totalDur)}</span>
     </div>

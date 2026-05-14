@@ -134,6 +134,32 @@ html[data-theme="vt323"] .dark\:text-zinc-900 { color: var(--background) !import
 /* Links keep the foreground green with an underline. */
 html[data-theme="vt323"] .text-blue-600 { color: var(--foreground) !important; text-decoration: underline; }
 
+/* Progress bars (.progress-track / .progress-fill — watched bars,
+ * aggregate group bars, …). The per-theme blanket rules above
+ * collapse the `bg-zinc-100` track onto the page background, so the
+ * track goes invisible; and the emerald/amber/blue fills sit poorly
+ * on parchment (amber-on-cream especially). Re-theme both parts for
+ * sepia + vt323 so the bar stays legible. Light/dark are already
+ * fine — zinc tracks + saturated fills both contrast there — so
+ * they're left untouched. Placed after the blanket rules so the
+ * equal-specificity `!important` tiebreak resolves in our favour. */
+html[data-theme="sepia"] .progress-track,
+html[data-theme="vt323"] .progress-track {
+  background-color: color-mix(in oklab, var(--foreground) 20%, transparent) !important;
+}
+html[data-theme="sepia"] .progress-fill,
+html[data-theme="vt323"] .progress-fill {
+  background-color: var(--foreground) !important;
+}
+/* Range sliders — `accent-color` isn't a `bg-*` utility so the
+ * blanket rules never reach it; `accent-zinc-900` vanishes on the
+ * vt323 near-black background. Pin every slider's accent to the
+ * theme foreground for guaranteed contrast. */
+html[data-theme="sepia"] input[type="range"],
+html[data-theme="vt323"] input[type="range"] {
+  accent-color: var(--foreground) !important;
+}
+
 /* Font picker — applied via <html data-font="..."> */
 html[data-font="serif"]   body, html[data-font="serif"]   body * { font-family: ui-serif, Georgia, "Times New Roman", serif !important; }
 html[data-font="mono"]    body, html[data-font="mono"]    body * { font-family: ui-monospace, SFMono-Regular, "Cascadia Code", monospace !important; }
