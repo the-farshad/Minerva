@@ -212,6 +212,34 @@ export const pollResponses = pgTable('pollResponses', {
   byPoll: index('pollResponses_poll_idx').on(t.pollId, t.createdAt),
 }));
 
+/** Queue table for the local-worker yt-dlp pattern. The droplet's
+ *  IP is hard-blocked by YouTube anti-bot, so save-offline enqueues
+ *  a job here and a trusted home-machine worker pulls them via
+ *  /api/worker/jobs/next, runs yt-dlp on a residential IP, and
+ *  posts the resulting Drive fileId back. The droplet only stores
+ *  the queue + does the row's offline-marker patch — bytes never
+ *  cross the droplet's network. */
+export const downloadJobs = pgTable('download_jobs', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  rowId: text('rowId').notNull().references(() => rows.id, { onDelete: 'cascade' }),
+  sectionSlug: text('sectionSlug').notNull(),
+  url: text('url').notNull(),
+  format: text('format').default('mp4').notNull(),
+  quality: text('quality').default('best').notNull(),
+  /** pending | claimed | done | failed. Lifecycle in the migration's
+   *  header comment. */
+  status: text('status').default('pending').notNull(),
+  attempts: integer('attempts').default(0).notNull(),
+  lastError: text('lastError'),
+  createdAt: timestamp('createdAt').defaultNow().notNull(),
+  claimedAt: timestamp('claimedAt'),
+  completedAt: timestamp('completedAt'),
+}, (t) => ({
+  byStatusCreated: index('download_jobs_status_created_idx').on(t.status, t.createdAt),
+  byUser: index('download_jobs_user_idx').on(t.userId),
+}));
+
 /** Activity log — each user's recent operations for an "undo" surface
  * + audit trail. */
 export const events = pgTable('events', {

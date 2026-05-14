@@ -38,6 +38,12 @@ type SaveOfflineResult = {
   kind: 'video' | 'paper';
   filename?: string;
   skipped?: boolean;
+  /** Set when the video was handed off to the local-worker queue
+   *  instead of being downloaded synchronously. `fileId` is empty
+   *  in that case; the row's offline marker is patched later by
+   *  the worker's complete-callback. */
+  queued?: boolean;
+  jobId?: string;
 };
 
 class StatusError extends Error {
@@ -130,6 +136,35 @@ async function saveOffline(
     const defaultQuality = (await getServerPref<string>(userId, 'yt_quality').catch(() => null)) || 'best';
     const quality = String(body.quality || defaultQuality || 'best').trim().toLowerCase();
     const format = quality === 'audio' ? 'mp3' : 'mp4';
+
+    // Local-worker queue. When WORKER_QUEUE_ENABLED is set, video
+    // downloads enqueue here and a home-machine worker (running on
+    // a residential IP — DO IP is hard-blocked by YouTube
+    // anti-bot) picks the job up via /api/worker/jobs/next, runs
+    // yt-dlp locally, and posts the resulting Drive fileId back to
+    // /api/worker/jobs/:id/complete which finishes the row's
+    // offline-marker patch. Until the worker reports back, the row
+    // has no `drive:` token — the UI shows "Queued for download".
+    //
+    // When the flag is OFF, fall through to the synchronous helper
+    // path (legacy behaviour, works for non-YouTube providers and
+    // for cookies-on-good-days runs).
+    if (process.env.WORKER_QUEUE_ENABLED === '1') {
+      const [job] = await db.insert(schema.downloadJobs).values({
+        userId,
+        rowId: row.id,
+        sectionSlug: sec.slug,
+        url: String(data.url || ''),
+        format,
+        quality: quality === 'audio' ? 'audio' : quality,
+      }).returning();
+      // SSE row.updated fires when the worker completes — not
+      // here. The NDJSON `done` event carries queued: true so the
+      // UI can flip to a "Downloading on worker…" pill while it
+      // waits.
+      return { fileId: '', kind: 'video', queued: true, jobId: job.id };
+    }
+
     const r = await fetch(`${HELPER}/download`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
