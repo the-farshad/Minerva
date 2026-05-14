@@ -68,11 +68,13 @@ src/
   arrow / object-eraser / lasso, pan + pinch-zoom, paper sizes &
   backgrounds and a light/dark drawing surface (all grouped under a
   "Paper" popover), width / opacity / handwriting-smoothing under a
-  "Pen" popover, and an **iPad text tool** — its editing overlay is
-  a real `<textarea>`, so Apple Pencil Scribble converts handwriting
-  to text on-device (the only way to reach Apple's handwriting model
-  from Safari). Persists as a vector `SketchDoc` (JSON in
-  `row.data._sketchDoc`) and exports to PDF / SVG.
+  "Pen" popover, a **Pencil-only** toggle (ignores finger/touch for
+  drawing and pinch-zoom so a resting palm can't draw), and an
+  **iPad text tool** — its editing overlay is a real `<textarea>`,
+  so Apple Pencil Scribble converts handwriting to text on-device
+  (the only way to reach Apple's handwriting model from Safari).
+  Persists as a vector `SketchDoc` (JSON in `row.data._sketchDoc`)
+  and exports to PDF / SVG.
 
 ## What's still TODO before sunsetting v1
 
