@@ -158,6 +158,13 @@ export function GroupedGrid({
   // either group wiped the underlying row from both.
   const groupColIsMulti = useMemo(() => {
     if (!groupCol) return false;
+    // `category` is conceptually always multi-value — a video can
+    // belong to several comma-separated categories — so it always
+    // comma-splits, regardless of whether the schema type-hint
+    // happens to say `multiselect(...)`. Without this, a row tagged
+    // "News, Tech" became its own group key and never grouped with
+    // plain "News" — i.e. "category does not group them".
+    if (groupCol === 'category') return true;
     const idx = section.schema.headers.indexOf(groupCol);
     if (idx < 0) return false;
     return /^multiselect\(/.test(String(section.schema.types?.[idx] || ''));
