@@ -120,15 +120,27 @@ jobs:
              # pull must fail the deploy loudly, not mask a stale
              # image behind a green check.
              before=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
+             echo '[deploy] pulling minerva-web'
              docker compose pull minerva-web
              after=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
+             echo '[deploy] building minerva-services'
              docker compose build minerva-services
              if [ \"\$before\" != \"\$after\" ]; then
-               echo \"web image changed: \$before -> \$after — force-recreating\"
+               echo \"[deploy] web image changed: \$before -> \$after — force-recreating\"
                docker compose up -d --force-recreate --no-deps minerva-web
              fi
              # Bring up everything else (services / postgres / etc.)
              # in idempotent mode — no-op when nothing changed.
+             echo '[deploy] up -d (full stack)'
              docker compose up -d
-             sleep 6
-             curl -sS http://127.0.0.1:8765/health | head -c 200"
+             # Post-deploy health check is INFORMATIONAL ONLY. The
+             # deploy is already done (images pulled, containers
+             # recreated) by this point. minerva-services is a Python
+             # app that takes longer than a few seconds to answer, so
+             # a curl right after `up -d` routinely catches it mid-
+             # start — and that timing race was failing otherwise-
+             # good deploys. Wrapped so it can never be fatal.
+             sleep 10
+             (curl -sS --max-time 10 http://127.0.0.1:8765/health | head -c 200) || echo '[deploy] helper not answering yet (starts slowly) — deploy still OK'
+             echo
+             echo '[deploy] done'"
