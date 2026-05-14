@@ -42,6 +42,14 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch: {}
+  # Known failure mode: a web-publish-triggered deploy can be
+  # cancelled by `cancel-in-progress` when a near-simultaneous
+  # non-web push (matching the paths filter above) lands its own
+  # deploy. That later deploy may `docker compose pull` before the
+  # web image finished pushing to Docker Hub, leaving the droplet
+  # on the previous web SHA. Recovery: re-run this workflow (push
+  # any paths-matching change, or use the Actions tab) — the pull
+  # is idempotent and will land the current :latest.
 
 # Only one deploy at a time; if a new push lands while one is
 # running, queue the new one but cancel any earlier queued runs.
