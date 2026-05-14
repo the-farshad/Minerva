@@ -6,7 +6,7 @@
 # build time, so a rebuild is what actually ships new SPA code.
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
-#   DROPLET_HOST     — IP or hostname of the droplet (e.g. 164.92.118.125)
+#   DROPLET_HOST     — IP or hostname of the droplet (e.g. 203.0.113.10)
 #   DROPLET_USER     — SSH user (root)
 #   DROPLET_SSH_KEY  — the matching private key (PEM, including BEGIN/END lines)
 #   DROPLET_HOST_KEY — the droplet's host key from `ssh-keyscan` for known_hosts

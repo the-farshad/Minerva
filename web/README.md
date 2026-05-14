@@ -63,12 +63,22 @@ src/
   the signed-in user).
 - Token refresh helper that keeps the user's Google access token
   fresh from the stored refresh_token.
+- Vector sketch editor (`components/sketch-modal.tsx`): multi-page
+  canvas with pen / pencil / marker / highlighter / line / shapes /
+  arrow / object-eraser / lasso, pan + pinch-zoom, paper sizes &
+  backgrounds and a light/dark drawing surface (all grouped under a
+  "Paper" popover), width / opacity / handwriting-smoothing under a
+  "Pen" popover, and an **iPad text tool** — its editing overlay is
+  a real `<textarea>`, so Apple Pencil Scribble converts handwriting
+  to text on-device (the only way to reach Apple's handwriting model
+  from Safari). Persists as a vector `SketchDoc` (JSON in
+  `row.data._sketchDoc`) and exports to PDF / SVG.
 
 ## What's still TODO before sunsetting v1
 
 - Full feature parity with v1 (preview modal, drag-drop, group sort,
   group notes, paper Drive mirror, YouTube downloads, FS Access
-  local-disk mirror, PDF.js editor, …).
+  local-disk mirror, …).
 - Sheets ↔ DB sync — currently DB is the only backend.
 - Helper proxy routes so the Python service still handles yt-dlp /
   PDF extract.
