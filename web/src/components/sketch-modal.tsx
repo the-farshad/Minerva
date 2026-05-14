@@ -254,6 +254,30 @@ export function SketchModal({
   const selectedRef = useRef<Set<Stroke>>(new Set());
   const lassoRef = useRef<{ x: number; y: number }[] | null>(null);
   const moveStartRef = useRef<{ x: number; y: number } | null>(null);
+  /** Active resize transform on the current selection. `handle` is
+   *  one of nw / n / ne / w / e / sw / s / se — the bbox handle the
+   *  user grabbed. `anchor` is the opposite corner / midpoint that
+   *  stays fixed during the resize. `originalBBox` snapshots the
+   *  pre-drag bbox so the running ratio is computed relative to it
+   *  (mutating the strokes mutates the live bbox too). */
+  type ResizeHandle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se';
+  const resizeRef = useRef<{
+    handle: ResizeHandle;
+    anchor: { x: number; y: number };
+    originalBBox: { minX: number; minY: number; maxX: number; maxY: number };
+    snapshot: { stroke: Stroke; points: { x: number; y: number; w: number }[] }[];
+  } | null>(null);
+  /** Active rotation. `pivot` is the selection bbox centre; `start`
+   *  is the angle from pivot to the down-point so the running
+   *  angle is reported as a delta against it. `snapshot` is the
+   *  point coordinates at down-time so a stable rotation can be
+   *  reapplied each move (rotating the live points instead would
+   *  accumulate floating-point drift visibly). */
+  const rotateRef = useRef<{
+    pivot: { x: number; y: number };
+    startAngle: number;
+    snapshot: { stroke: Stroke; points: { x: number; y: number; w: number }[] }[];
+  } | null>(null);
   const strokesRef = useRef<Stroke[]>(pagesRef.current[0].strokes);
   const redoRef = useRef<Stroke[]>([]);
   const drawingRef = useRef<Stroke | null>(null);
@@ -729,12 +753,68 @@ export function SketchModal({
         return;
       }
       if (tool === 'lasso') {
-        // If we already have a selection and the click lands inside
-        // its bbox, start a move-drag instead of a new lasso.
         const bb = selectionBBox();
-        if (bb && selectedRef.current.size > 0 && x >= bb.minX - 6 && x <= bb.maxX + 6 && y >= bb.minY - 6 && y <= bb.maxY + 6) {
-          moveStartRef.current = { x, y };
-          return;
+        if (bb && selectedRef.current.size > 0) {
+          // Handle hit-test FIRST. Handles sit ~10 model px outside
+          // the bbox; the hit halo is ~12 view-px wide so they're
+          // tappable with a finger / Pencil.
+          const haloModel = 12 / scaleRef.current;
+          const pad = 10 / scaleRef.current;
+          const handles: { id: ResizeHandle; cx: number; cy: number }[] = [
+            { id: 'nw', cx: bb.minX - pad, cy: bb.minY - pad },
+            { id: 'n',  cx: (bb.minX + bb.maxX) / 2, cy: bb.minY - pad },
+            { id: 'ne', cx: bb.maxX + pad, cy: bb.minY - pad },
+            { id: 'w',  cx: bb.minX - pad, cy: (bb.minY + bb.maxY) / 2 },
+            { id: 'e',  cx: bb.maxX + pad, cy: (bb.minY + bb.maxY) / 2 },
+            { id: 'sw', cx: bb.minX - pad, cy: bb.maxY + pad },
+            { id: 's',  cx: (bb.minX + bb.maxX) / 2, cy: bb.maxY + pad },
+            { id: 'se', cx: bb.maxX + pad, cy: bb.maxY + pad },
+          ];
+          const hit = handles.find((h) => Math.hypot(x - h.cx, y - h.cy) <= haloModel);
+          if (hit) {
+            // Anchor = opposite handle's centre. Sub-frame fast-path
+            // by case so we don't compute all 8 again.
+            const anchor = (() => {
+              switch (hit.id) {
+                case 'nw': return { x: bb.maxX, y: bb.maxY };
+                case 'n':  return { x: (bb.minX + bb.maxX) / 2, y: bb.maxY };
+                case 'ne': return { x: bb.minX, y: bb.maxY };
+                case 'w':  return { x: bb.maxX, y: (bb.minY + bb.maxY) / 2 };
+                case 'e':  return { x: bb.minX, y: (bb.minY + bb.maxY) / 2 };
+                case 'sw': return { x: bb.maxX, y: bb.minY };
+                case 's':  return { x: (bb.minX + bb.maxX) / 2, y: bb.minY };
+                case 'se': return { x: bb.minX, y: bb.minY };
+              }
+            })();
+            const snapshot = Array.from(selectedRef.current).map((s) => ({
+              stroke: s,
+              points: s.points.map((p) => ({ x: p.x, y: p.y, w: p.w })),
+            }));
+            resizeRef.current = { handle: hit.id, anchor, originalBBox: bb, snapshot };
+            return;
+          }
+          // Rotation handle: ~24 model-px above the n-handle.
+          const rotR = 24 / scaleRef.current;
+          const rotCx = (bb.minX + bb.maxX) / 2;
+          const rotCy = bb.minY - pad - rotR;
+          if (Math.hypot(x - rotCx, y - rotCy) <= haloModel) {
+            const pivot = { x: (bb.minX + bb.maxX) / 2, y: (bb.minY + bb.maxY) / 2 };
+            const snapshot = Array.from(selectedRef.current).map((s) => ({
+              stroke: s,
+              points: s.points.map((p) => ({ x: p.x, y: p.y, w: p.w })),
+            }));
+            rotateRef.current = {
+              pivot,
+              startAngle: Math.atan2(y - pivot.y, x - pivot.x),
+              snapshot,
+            };
+            return;
+          }
+          // Inside the bbox = move-drag (existing behaviour).
+          if (x >= bb.minX - 6 && x <= bb.maxX + 6 && y >= bb.minY - 6 && y <= bb.maxY + 6) {
+            moveStartRef.current = { x, y };
+            return;
+          }
         }
         // Otherwise clear selection and start a new lasso polyline.
         selectedRef.current.clear();
@@ -754,6 +834,77 @@ export function SketchModal({
         return;
       }
       if (tool === 'lasso') {
+        if (resizeRef.current) {
+          // Compute scale factor from the anchor (opposite handle).
+          // Each axis independently so the user can pinch only one
+          // dimension via a side handle. The snapshot points are
+          // re-projected each move so floating-point drift can't
+          // accumulate across many move events.
+          const r = resizeRef.current;
+          const o = r.originalBBox;
+          const aw = r.anchor.x;
+          const ah = r.anchor.y;
+          // Per-axis effective sign: which side of the anchor the
+          // user is dragging. Skip axes the handle doesn't touch
+          // (e.g. 'n' is vertical-only).
+          let sx = 1;
+          let sy = 1;
+          if (r.handle === 'nw' || r.handle === 'w' || r.handle === 'sw') {
+            const dxOrig = o.minX - aw;
+            const dxNow = x - aw;
+            sx = dxOrig !== 0 ? dxNow / dxOrig : 1;
+          } else if (r.handle === 'ne' || r.handle === 'e' || r.handle === 'se') {
+            const dxOrig = o.maxX - aw;
+            const dxNow = x - aw;
+            sx = dxOrig !== 0 ? dxNow / dxOrig : 1;
+          }
+          if (r.handle === 'nw' || r.handle === 'n' || r.handle === 'ne') {
+            const dyOrig = o.minY - ah;
+            const dyNow = y - ah;
+            sy = dyOrig !== 0 ? dyNow / dyOrig : 1;
+          } else if (r.handle === 'sw' || r.handle === 's' || r.handle === 'se') {
+            const dyOrig = o.maxY - ah;
+            const dyNow = y - ah;
+            sy = dyOrig !== 0 ? dyNow / dyOrig : 1;
+          }
+          // Clamp to a minimum scale so the user can't flip the
+          // selection inside-out by dragging past the anchor.
+          if (Math.abs(sx) < 0.05) sx = sx < 0 ? -0.05 : 0.05;
+          if (Math.abs(sy) < 0.05) sy = sy < 0 ? -0.05 : 0.05;
+          for (const snap of r.snapshot) {
+            for (let i = 0; i < snap.points.length; i++) {
+              const op = snap.points[i];
+              const np = snap.stroke.points[i];
+              np.x = aw + (op.x - aw) * sx;
+              np.y = ah + (op.y - ah) * sy;
+              // Stroke widths scale with the average of |sx|, |sy|
+              // so a 2x resize doubles line thickness — feels right.
+              np.w = op.w * (Math.abs(sx) + Math.abs(sy)) / 2;
+            }
+          }
+          redraw();
+          return;
+        }
+        if (rotateRef.current) {
+          const r = rotateRef.current;
+          const angleNow = Math.atan2(y - r.pivot.y, x - r.pivot.x);
+          const delta = angleNow - r.startAngle;
+          const cosA = Math.cos(delta);
+          const sinA = Math.sin(delta);
+          for (const snap of r.snapshot) {
+            for (let i = 0; i < snap.points.length; i++) {
+              const op = snap.points[i];
+              const np = snap.stroke.points[i];
+              const dx = op.x - r.pivot.x;
+              const dy = op.y - r.pivot.y;
+              np.x = r.pivot.x + dx * cosA - dy * sinA;
+              np.y = r.pivot.y + dx * sinA + dy * cosA;
+              np.w = op.w;
+            }
+          }
+          redraw();
+          return;
+        }
         if (moveStartRef.current) {
           const dx = x - moveStartRef.current.x;
           const dy = y - moveStartRef.current.y;
@@ -793,6 +944,16 @@ export function SketchModal({
         return;
       }
       if (tool === 'lasso') {
+        if (resizeRef.current) {
+          resizeRef.current = null;
+          if (onAutoSave) onAutoSave(buildDoc());
+          return;
+        }
+        if (rotateRef.current) {
+          rotateRef.current = null;
+          if (onAutoSave) onAutoSave(buildDoc());
+          return;
+        }
         if (moveStartRef.current) {
           moveStartRef.current = null;
           if (onAutoSave) onAutoSave(buildDoc());
@@ -1172,6 +1333,44 @@ export function SketchModal({
         ctx.lineWidth = 1 / scale;
         const pad = 4 / scale;
         ctx.strokeRect(bb.minX - pad, bb.minY - pad, (bb.maxX - bb.minX) + 2 * pad, (bb.maxY - bb.minY) + 2 * pad);
+        // 8 resize handles + 1 rotation handle, drawn as small
+        // filled circles in MODEL coords but sized in view-px so
+        // they stay tappable at any zoom.
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
+        ctx.lineWidth = 1.5 / scale;
+        const handleR = 5 / scale;
+        const handlePad = 10 / scale;
+        const positions: [number, number][] = [
+          [bb.minX - handlePad, bb.minY - handlePad],
+          [(bb.minX + bb.maxX) / 2, bb.minY - handlePad],
+          [bb.maxX + handlePad, bb.minY - handlePad],
+          [bb.minX - handlePad, (bb.minY + bb.maxY) / 2],
+          [bb.maxX + handlePad, (bb.minY + bb.maxY) / 2],
+          [bb.minX - handlePad, bb.maxY + handlePad],
+          [(bb.minX + bb.maxX) / 2, bb.maxY + handlePad],
+          [bb.maxX + handlePad, bb.maxY + handlePad],
+        ];
+        for (const [hx, hy] of positions) {
+          ctx.beginPath();
+          ctx.arc(hx, hy, handleR, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        // Rotation handle: a circle 24 view-px above the top edge,
+        // joined to the bbox by a short stem.
+        const rotR = 24 / scale;
+        const rotCx = (bb.minX + bb.maxX) / 2;
+        const rotCy = bb.minY - handlePad - rotR;
+        ctx.beginPath();
+        ctx.moveTo(rotCx, bb.minY - handlePad);
+        ctx.lineTo(rotCx, rotCy + handleR);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(rotCx, rotCy, handleR + 1 / scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       }
       ctx.restore();
     }
