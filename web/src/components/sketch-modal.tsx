@@ -45,7 +45,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
-  Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
+  Brush, Loader2, Undo2, Redo2, FileDown, Slash,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
   Square, Circle, ArrowRight, FileText, SlidersHorizontal, Info, Type as TypeIcon, Hand,
 } from 'lucide-react';
@@ -2212,7 +2212,7 @@ export function SketchModal({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key === 'Escape') { void closeWithSave(); return; }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
       if ((e.metaKey || e.ctrlKey) &&  e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); redo(); }
     };
@@ -2241,57 +2241,50 @@ export function SketchModal({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function save() {
+  /** Persist + close. There is no explicit Save button: strokes
+   *  autosave to the vector doc on every pointerup (`onAutoSave`),
+   *  so closing only needs to flush the PNG thumbnail the row
+   *  preview renders. Nothing is confirmed and nothing is cleared —
+   *  reopening rehydrates from the autosaved vector doc. */
+  async function closeWithSave() {
     const c = canvasRef.current;
-    if (!c) return;
-    if (strokesRef.current.length === 0 && !bgImageRef.current) {
-      notify.error('Sketch is empty — draw something first.');
-      return;
-    }
+    if (!c) { onClose(); return; }
+    const hasAny = strokesRef.current.length > 0
+      || textsRef.current.length > 0
+      || !!bgImageRef.current
+      || pagesRef.current.some((p) => p.strokes.length > 0 || p.texts.length > 0 || !!p.bg);
+    if (!hasAny) { onClose(); return; }
     setUploading(true);
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const name = `sketch-${stamp}.png`;
       if (saveMode === 'inline') {
-        // Caller stores bytes directly in row.data — no upload.
-        const url = c.toDataURL('image/png');
-        // Flush the vector doc alongside the thumbnail so the row's
-        // _sketchDoc + content fields stay in step across the save.
-        if (onAutoSave) onAutoSave(buildDoc());
-        onSaved(url, name);
+        // Bytes go straight into row.data — no upload.
+        onSaved(c.toDataURL('image/png'), name);
       } else {
         const blob: Blob | null = await new Promise((res) => c.toBlob(res, 'image/png'));
-        if (!blob) throw new Error('Canvas export failed.');
-        const fd = new FormData();
-        fd.append('file', blob, name);
-        fd.append('name', name);
-        fd.append('kind', 'misc');
-        const r = await fetch('/api/drive/upload', { method: 'POST', body: fd });
-        const j = (await r.json().catch(() => ({}))) as { fileId?: string; error?: string };
-        if (!r.ok || !j.fileId) throw new Error(j.error || `upload: ${r.status}`);
-        const url = `/api/drive/file?id=${encodeURIComponent(j.fileId)}`;
-        onSaved(url, name);
+        if (blob) {
+          const fd = new FormData();
+          fd.append('file', blob, name);
+          fd.append('name', name);
+          fd.append('kind', 'misc');
+          const r = await fetch('/api/drive/upload', { method: 'POST', body: fd });
+          const j = (await r.json().catch(() => ({}))) as { fileId?: string; error?: string };
+          if (r.ok && j.fileId) onSaved(`/api/drive/file?id=${encodeURIComponent(j.fileId)}`, name);
+        }
       }
-      // Save persists ONLY the visible canvas (current page) as a
-      // PNG. If the user has drawn on other pages too, surface a
-      // toast so they know to use Export → PDF for the multi-page
-      // version. Single-page workflow (the common case) is
-      // unaffected.
       const otherPagesWithContent = pagesRef.current.reduce(
         (n, p, i) => n + (i !== pageIndex && (p.strokes.length > 0 || p.texts.length > 0 || !!p.bg) ? 1 : 0),
         0,
       );
       if (otherPagesWithContent > 0) {
-        toast.success(`Sketch saved (current page only — ${otherPagesWithContent} other page${otherPagesWithContent === 1 ? '' : 's'} in this document; use Export → PDF for all).`);
-      } else {
-        toast.success('Sketch saved.');
+        toast.success(`Saved (preview is the current page — use Export → PDF for all ${otherPagesWithContent + 1}).`);
       }
-      clearAll();
-      onClose();
     } catch (e) {
       notify.error((e as Error).message);
     } finally {
       setUploading(false);
+      onClose();
     }
   }
 
@@ -2568,13 +2561,6 @@ export function SketchModal({
             disabled={!hasContent || uploading}
             onActivate={() => void exportPdf()}
           />
-          <SketchButton
-            label={uploading ? 'Saving…' : 'Save'}
-            icon={uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SaveIcon className="h-3.5 w-3.5" />}
-            primary
-            disabled={!hasContent || uploading}
-            onActivate={save}
-          />
           <SketchIconButton
             label={penOnly ? 'Pencil only — finger ignored (tap to allow finger)' : 'Allow finger drawing (tap for Pencil-only)'}
             icon={<Hand className={`h-4 w-4 ${penOnly ? 'text-zinc-400' : 'text-zinc-900 dark:text-white'}`} />}
@@ -2585,10 +2571,13 @@ export function SketchModal({
             icon={<Info className={`h-4 w-4 ${showDebug ? 'text-zinc-900 dark:text-white' : 'text-zinc-400'}`} />}
             onActivate={() => setShowDebug((v) => !v)}
           />
+          {/* No explicit Save — strokes autosave on every pointerup;
+            * closing flushes the PNG thumbnail and persists. */}
           <SketchIconButton
-            label="Close (Esc)"
-            icon={<X className="h-4 w-4" />}
-            onActivate={onClose}
+            label={uploading ? 'Saving…' : 'Done (Esc) — saves and closes'}
+            icon={uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+            disabled={uploading}
+            onActivate={closeWithSave}
           />
         </div>
       </header>

@@ -63,6 +63,19 @@ export function NotesPane({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [uploading, setUploading] = useState(false);
   const [sketchOpen, setSketchOpen] = useState(false);
+  /** The live vector sketch doc. Seeded from the `initialSketchDoc`
+   *  prop, but kept *current* by `sketchDocAutoSave` — otherwise the
+   *  prop stays frozen at page-load value and reopening the editor
+   *  after a save rehydrates from a stale (often empty) doc, so the
+   *  drawing comes back as a flat PNG you can't edit. */
+  const [currentSketchDoc, setCurrentSketchDoc] =
+    useState<SketchDoc | string | null | undefined>(initialSketchDoc);
+  // Adopt a fresh doc from the parent (row switch, or an SSE
+  // row.updated from another device) only while the editor is
+  // closed — never clobber an in-flight edit.
+  useEffect(() => {
+    if (!sketchOpen) setCurrentSketchDoc(initialSketchDoc);
+  }, [initialSketchDoc, rowId, sketchOpen]);
 
   /** Single-flight autosave for the sketch vector doc. SketchModal
    *  fires onAutoSave on every stroke completion (plus undo / redo /
@@ -93,6 +106,9 @@ export function NotesPane({
     }
   }
   function sketchDocAutoSave(doc: SketchDoc) {
+    // Keep the local doc current so a close→reopen rehydrates the
+    // real strokes, not the stale page-load prop.
+    setCurrentSketchDoc(doc);
     setSaving('pending');
     if (sketchPatchInFlightRef.current) {
       sketchPendingDocRef.current = doc;
@@ -529,13 +545,14 @@ export function NotesPane({
         onClose={() => setSketchOpen(false)}
         seed={effType === 'sketch' ? value : undefined}
         seedDoc={effType === 'sketch' ? (() => {
-          // Caller can pass the doc as a parsed object OR as a raw
-          // string straight off row.data._sketchDoc. Parse the string
-          // path defensively so a malformed legacy save can't break
-          // the modal's hydration; falls back to the PNG seed path.
-          if (!initialSketchDoc) return undefined;
-          if (typeof initialSketchDoc === 'string') return parseSketchDoc(initialSketchDoc) ?? undefined;
-          return initialSketchDoc;
+          // Use the *live* doc (kept current by sketchDocAutoSave),
+          // not the frozen prop. Caller may hold it as a parsed
+          // object OR a raw string off row.data._sketchDoc; parse
+          // the string path defensively so a malformed legacy save
+          // can't break hydration — falls back to the PNG seed.
+          if (!currentSketchDoc) return undefined;
+          if (typeof currentSketchDoc === 'string') return parseSketchDoc(currentSketchDoc) ?? undefined;
+          return currentSketchDoc;
         })() : undefined}
         documentId={rowId}
         onAutoSave={effType === 'sketch' ? sketchDocAutoSave : undefined}
