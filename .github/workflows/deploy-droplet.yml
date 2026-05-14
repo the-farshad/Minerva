@@ -42,25 +42,20 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch: {}
-  # Known failure mode: a web-publish-triggered deploy can be
-  # cancelled by `cancel-in-progress` when a near-simultaneous
-  # non-web push (matching the paths filter above) lands its own
-  # deploy. That later deploy may `docker compose pull` before the
-  # web image finished pushing to Docker Hub, leaving the droplet
-  # on the previous web SHA. Recovery: re-run this workflow (push
-  # any paths-matching change, or use the Actions tab) — the pull
-  # is idempotent and will land the current :latest.
-
-# Only one deploy at a time; if a new push lands while one is
-# running, queue the new one but cancel any earlier queued runs.
+# One deploy at a time, but QUEUE — don't cancel.
 concurrency:
   group: deploy-droplet
-  # Cancel an in-flight deploy when a newer push arrives, so the
-  # droplet doesn't land on the older SHA after the newer one was
-  # already in the workflow queue. The trade-off (a half-finished
-  # build is thrown away) is fine for this app — the build is
-  # idempotent and re-runs cheaply.
-  cancel-in-progress: true
+  # `cancel-in-progress: false` is deliberate. Each deploy starts
+  # with `git reset --hard origin/main` + `docker compose pull`, so
+  # *every* deploy ships whatever is current — there is no "older
+  # SHA" risk that cancelling would protect against. Cancelling, by
+  # contrast, was actively harmful: during a burst of pushes each
+  # new deploy cancelled the previous mid-run, so no deploy ever
+  # reached the `up -d` step and the droplet stayed on a stale
+  # build until pushes stopped for a full ~10-min cycle. Queueing
+  # means every deploy runs to completion; redundant intermediate
+  # runs are cheap and the last one still lands the latest.
+  cancel-in-progress: false
 
 jobs:
   deploy:
