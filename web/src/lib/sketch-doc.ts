@@ -42,7 +42,11 @@ export type SketchDocStrokeStyle = {
   join: 'round' | 'miter' | 'bevel';
 };
 
-export type SketchDocTool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line' | 'rect' | 'ellipse' | 'arrow' | 'obj-eraser' | 'lasso';
+export type SketchDocTool =
+  | 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser'
+  | 'line' | 'rect' | 'ellipse' | 'arrow'
+  | 'triangle' | 'diamond' | 'star' | 'hexagon'
+  | 'obj-eraser' | 'lasso';
 
 export type SketchDocStroke = {
   id: string;

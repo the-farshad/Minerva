@@ -48,6 +48,7 @@ import {
   Brush, Loader2, Undo2, Redo2, FileDown, Slash,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
   Square, Circle, ArrowRight, FileText, SlidersHorizontal, Info, Type as TypeIcon, Hand,
+  Triangle, Diamond, Star, Hexagon, Shapes as ShapesIcon, Palette,
 } from 'lucide-react';
 import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-hit-test';
 import { toast } from 'sonner';
@@ -56,7 +57,20 @@ import { jsPDF } from 'jspdf';
 import type { SketchDoc, SketchDocStroke, SketchDocText, SketchDocPage, SketchDocPaper, SketchDocPaperSize } from '@/lib/sketch-doc';
 import { newSketchId } from '@/lib/sketch-doc';
 
-type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line' | 'rect' | 'ellipse' | 'arrow' | 'obj-eraser' | 'lasso' | 'text';
+type Tool =
+  | 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser'
+  | 'line' | 'rect' | 'ellipse' | 'arrow'
+  | 'triangle' | 'diamond' | 'star' | 'hexagon'
+  | 'obj-eraser' | 'lasso' | 'text';
+
+/** Shape tools share the same 2-point start/end gesture; the
+ *  renderer derives the geometry from the bounding rect. Kept in a
+ *  set so the toolbar can tuck them all behind one "Shapes" sub-nav
+ *  and the gesture/commit code can branch on "is this a shape?". */
+const SHAPE_TOOL_IDS = ['line', 'rect', 'ellipse', 'arrow', 'triangle', 'diamond', 'star', 'hexagon'] as const;
+function isShapeTool(t: Tool): boolean {
+  return (SHAPE_TOOL_IDS as readonly string[]).includes(t);
+}
 
 type ToolSpec = {
   id: Tool;
@@ -79,13 +93,17 @@ const TOOLS: ToolSpec[] = [
   { id: 'pencil',      label: 'Pencil',      Icon: PencilIcon,  minWidth: 0.5,  maxWidth: 16, defaultWidth: 2,  alpha: 0.85 },
   { id: 'marker',      label: 'Marker',      Icon: Brush,       minWidth: 3,    maxWidth: 48, defaultWidth: 10, alpha: 0.6  },
   { id: 'highlighter', label: 'Highlighter', Icon: Highlighter, minWidth: 6,    maxWidth: 64, defaultWidth: 18, alpha: 0.35 },
-  { id: 'line',        label: 'Line',        Icon: Slash,       minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
   // Vector shape tools — same 2-point start/end gesture as line;
-  // the renderer derives the shape geometry from the bounding
-  // rect (rect / ellipse) or anchor→endpoint (arrow).
-  { id: 'rect',        label: 'Rect',        Icon: Square,      minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  // the renderer derives the geometry from the bounding rect. All
+  // live behind the toolbar's "Shapes" sub-nav (see SHAPE_TOOL_IDS).
+  { id: 'line',        label: 'Line',        Icon: Slash,       minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'rect',        label: 'Rectangle',   Icon: Square,      minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
   { id: 'ellipse',     label: 'Ellipse',     Icon: Circle,      minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
   { id: 'arrow',       label: 'Arrow',       Icon: ArrowRight,  minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'triangle',    label: 'Triangle',    Icon: Triangle,    minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'diamond',     label: 'Diamond',     Icon: Diamond,     minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'star',        label: 'Star',        Icon: Star,        minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
+  { id: 'hexagon',     label: 'Hexagon',     Icon: Hexagon,     minWidth: 0.75, maxWidth: 22, defaultWidth: 3,  alpha: 1    },
   { id: 'eraser',      label: 'Eraser',      Icon: Eraser,      minWidth: 4,    maxWidth: 80, defaultWidth: 18, alpha: 1    },
   // Vector-aware tools enabled by the SketchDoc model.
   // `obj-eraser` removes whole strokes per tap/swipe; `lasso`
@@ -410,7 +428,7 @@ export function SketchModal({
    *  collects size / style / surface / margins; `pen` collects
    *  width / opacity / smoothing — the Notes-style pen options.
    *  Only one is open at a time; tapping anywhere else closes it. */
-  const [openMenu, setOpenMenu] = useState<'paper' | 'pen' | null>(null);
+  const [openMenu, setOpenMenu] = useState<'paper' | 'pen' | 'color' | 'shapes' | null>(null);
   /** Active text-tool editing overlay. When set, a <textarea> is
    *  rendered on top of the canvas at the model anchor (x/y); on
    *  iPadOS that textarea is Scribble-enabled, so Apple Pencil
@@ -919,7 +937,7 @@ export function SketchModal({
       // endpoint, up = commit. Renderer derives the shape from
       // the two stored points.
       const shapeTool = drawingRef.current.tool;
-      if (shapeTool === 'line' || shapeTool === 'rect' || shapeTool === 'ellipse' || shapeTool === 'arrow') {
+      if (isShapeTool(shapeTool)) {
         const pt: Point = { x: nx, y: ny, w: widthFor(pressure, ptype) };
         if (typeof tx === 'number') pt.tx = tx;
         if (typeof ty === 'number') pt.ty = ty;
@@ -956,8 +974,7 @@ export function SketchModal({
       // mathematically exact) and for `none`. Endpoints are kept
       // anchored so the stroke doesn't visibly shrink at the tips.
       const sm = smoothingRef.current;
-      const isShape = finished.tool === 'line' || finished.tool === 'rect'
-        || finished.tool === 'ellipse' || finished.tool === 'arrow';
+      const isShape = isShapeTool(finished.tool);
       if (!isShape && sm !== 'none' && finished.points.length >= 3) {
         // window half-width per level; `max` also runs a second
         // pass so high-frequency Pencil jitter is fully ironed out.
@@ -1893,6 +1910,45 @@ export function SketchModal({
         ctx.restore();
         return;
       }
+      // Polygon shapes — triangle / diamond / hexagon / star. Each
+      // derives its vertices from the bounding rect of the two
+      // anchor points, then strokes one closed path.
+      if (s.tool === 'triangle' || s.tool === 'diamond' || s.tool === 'star' || s.tool === 'hexagon') {
+        const minX = Math.min(a.x, b.x);
+        const minY = Math.min(a.y, b.y);
+        const maxX = Math.max(a.x, b.x);
+        const maxY = Math.max(a.y, b.y);
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const rx = (maxX - minX) / 2;
+        const ry = (maxY - minY) / 2;
+        let pts: { x: number; y: number }[];
+        if (s.tool === 'triangle') {
+          pts = [{ x: cx, y: minY }, { x: maxX, y: maxY }, { x: minX, y: maxY }];
+        } else if (s.tool === 'diamond') {
+          pts = [{ x: cx, y: minY }, { x: maxX, y: cy }, { x: cx, y: maxY }, { x: minX, y: cy }];
+        } else if (s.tool === 'hexagon') {
+          pts = [];
+          for (let i = 0; i < 6; i++) {
+            const ang = -Math.PI / 2 + (i * Math.PI) / 3;
+            pts.push({ x: cx + rx * Math.cos(ang), y: cy + ry * Math.sin(ang) });
+          }
+        } else {
+          // 5-point star: alternating outer (bbox) / inner radius.
+          pts = [];
+          for (let i = 0; i < 10; i++) {
+            const ang = -Math.PI / 2 + (i * Math.PI) / 5;
+            const f = i % 2 === 0 ? 1 : 0.4;
+            pts.push({ x: cx + rx * f * Math.cos(ang), y: cy + ry * f * Math.sin(ang) });
+          }
+        }
+        ctx.beginPath();
+        pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
       // Plain line (and any other 2-point fallback).
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -2815,12 +2871,13 @@ export function SketchModal({
         * size / style / surface / margins under "Paper". Bottom
         * placement so Pencil reach is short on iPad. */}
       <footer className="relative z-[70] flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-        {/* Tool selector. The two eraser modes (pixel `eraser` +
-          * whole-object `obj-eraser`) share a single "Eraser"
-          * button — obj-eraser is filtered out of the row and its
-          * mode is picked from the inline switch below. */}
+        {/* Tool selector. Primary tools stay visible; the eight
+          * shape tools tuck behind one "Shapes" sub-nav button. The
+          * two eraser modes (pixel + whole-object) share one
+          * "Eraser" button — obj-eraser is filtered out and its
+          * mode is the inline switch below. */}
         <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
-          {TOOLS.filter((t) => t.id !== 'obj-eraser').map((t) => {
+          {TOOLS.filter((t) => t.id !== 'obj-eraser' && !isShapeTool(t.id)).map((t) => {
             const active = t.id === 'eraser'
               ? (tool === 'eraser' || tool === 'obj-eraser')
               : tool === t.id;
@@ -2834,7 +2891,35 @@ export function SketchModal({
               />
             );
           })}
+          {(() => {
+            const shapeActive = isShapeTool(tool);
+            const ShapeIcon = shapeActive ? getToolSpec(tool).Icon : ShapesIcon;
+            return (
+              <SketchToolButton
+                label={shapeActive ? getToolSpec(tool).label : 'Shapes'}
+                icon={<ShapeIcon className="h-4 w-4" />}
+                active={shapeActive}
+                onActivate={() => setOpenMenu((m) => (m === 'shapes' ? null : 'shapes'))}
+              />
+            );
+          })()}
         </div>
+        {/* Shapes sub-nav popover — every shape tool behind one tap */}
+        {openMenu === 'shapes' && (
+          <div className="fixed bottom-[5.5rem] right-2 z-[75] max-h-[55vh] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <SketchMenuRow label="Shapes">
+              {TOOLS.filter((t) => isShapeTool(t.id)).map((t) => (
+                <SketchToolButton
+                  key={t.id}
+                  label={t.label}
+                  icon={<t.Icon className="h-4 w-4" />}
+                  active={tool === t.id}
+                  onActivate={() => { setTool(t.id); setWidthOverride(null); setOpenMenu(null); }}
+                />
+              ))}
+            </SketchMenuRow>
+          </div>
+        )}
 
         {/* Eraser options — one tool, two modes. Pick pixel vs
           * whole-object erasing, and (pixel mode) the size. */}
@@ -2864,43 +2949,65 @@ export function SketchModal({
           </div>
         )}
 
-        {/* Color palette (hidden for the eraser modes) */}
+        {/* Colour — current swatch + up to 3 recents inline; the
+          * Palette button (or tapping the current swatch) opens the
+          * full picker. Hidden for the eraser modes (no colour). */}
         {tool !== 'eraser' && tool !== 'obj-eraser' && (
-          <div className="flex items-center gap-1.5">
-            {PALETTE.map((c) => (
-              <SketchColorButton
-                key={c}
-                color={c}
-                active={color === c}
-                onActivate={() => { setColor(c); pushRecentColor(c); }}
-              />
-            ))}
-            <label className="ml-1 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-dashed border-zinc-300 text-[10px] text-zinc-500 dark:border-zinc-600">
-              +
-              <input
-                type="color"
-                value={color}
-                onChange={(e) => { setColor(e.target.value); pushRecentColor(e.target.value); }}
-                className="sr-only"
-              />
-            </label>
-          </div>
-        )}
-        {/* Recent colors strip — eight most-recent picks, persisted
-          * in localStorage so the next session keeps them. Hidden
-          * when empty; hidden for the eraser tool (which doesn't
-          * use colour). */}
-        {tool !== 'eraser' && tool !== 'obj-eraser' && recentColors.length > 0 && (
-          <div className="inline-flex items-center gap-1" title="Recent colours">
-            <span className="text-[9px] uppercase tracking-wide text-zinc-500">Recent</span>
-            {recentColors.map((c) => (
+          <div className="inline-flex items-center gap-1.5">
+            <SketchColorButton
+              color={color}
+              active
+              onActivate={() => setOpenMenu((m) => (m === 'color' ? null : 'color'))}
+            />
+            {recentColors.filter((c) => c !== color).slice(0, 3).map((c) => (
               <SketchColorButton
                 key={`recent-${c}`}
                 color={c}
-                active={color === c}
+                active={false}
                 onActivate={() => setColor(c)}
               />
             ))}
+            <SketchIconButton
+              label="More colours"
+              icon={<Palette className="h-4 w-4" />}
+              onActivate={() => setOpenMenu((m) => (m === 'color' ? null : 'color'))}
+            />
+          </div>
+        )}
+        {/* Full colour picker popover — palette + custom + recents */}
+        {openMenu === 'color' && tool !== 'eraser' && tool !== 'obj-eraser' && (
+          <div className="fixed bottom-[5.5rem] right-2 z-[75] max-h-[55vh] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <SketchMenuRow label="Palette">
+              {PALETTE.map((c) => (
+                <SketchColorButton
+                  key={c}
+                  color={c}
+                  active={color === c}
+                  onActivate={() => { setColor(c); pushRecentColor(c); setOpenMenu(null); }}
+                />
+              ))}
+              <label className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-dashed border-zinc-300 text-[11px] text-zinc-500 dark:border-zinc-600" title="Custom colour">
+                +
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => { setColor(e.target.value); pushRecentColor(e.target.value); }}
+                  className="sr-only"
+                />
+              </label>
+            </SketchMenuRow>
+            {recentColors.length > 0 && (
+              <SketchMenuRow label="Recent">
+                {recentColors.map((c) => (
+                  <SketchColorButton
+                    key={`rc-${c}`}
+                    color={c}
+                    active={color === c}
+                    onActivate={() => { setColor(c); setOpenMenu(null); }}
+                  />
+                ))}
+              </SketchMenuRow>
+            )}
           </div>
         )}
         {/* Pen options — Notes-style popover grouping width,
