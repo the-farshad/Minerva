@@ -47,6 +47,7 @@ import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
+  Square, Circle, ArrowRight,
 } from 'lucide-react';
 import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-hit-test';
 import { toast } from 'sonner';
@@ -55,7 +56,7 @@ import { jsPDF } from 'jspdf';
 import type { SketchDoc, SketchDocStroke, SketchDocPage, SketchDocPaperSize } from '@/lib/sketch-doc';
 import { newSketchId } from '@/lib/sketch-doc';
 
-type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line' | 'obj-eraser' | 'lasso';
+type Tool = 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'line' | 'rect' | 'ellipse' | 'arrow' | 'obj-eraser' | 'lasso';
 
 type ToolSpec = {
   id: Tool;
@@ -72,6 +73,12 @@ const TOOLS: ToolSpec[] = [
   { id: 'marker',      label: 'Marker',      Icon: Brush,       minWidth: 6,  maxWidth: 16, alpha: 0.6  },
   { id: 'highlighter', label: 'Highlighter', Icon: Highlighter, minWidth: 12, maxWidth: 28, alpha: 0.35 },
   { id: 'line',        label: 'Line',        Icon: Slash,       minWidth: 2,  maxWidth: 8,  alpha: 1    },
+  // Vector shape tools — same 2-point start/end gesture as line;
+  // the renderer derives the shape geometry from the bounding
+  // rect (rect / ellipse) or anchor→endpoint (arrow).
+  { id: 'rect',        label: 'Rect',        Icon: Square,      minWidth: 2,  maxWidth: 8,  alpha: 1    },
+  { id: 'ellipse',     label: 'Ellipse',     Icon: Circle,      minWidth: 2,  maxWidth: 8,  alpha: 1    },
+  { id: 'arrow',       label: 'Arrow',       Icon: ArrowRight,  minWidth: 2,  maxWidth: 8,  alpha: 1    },
   { id: 'eraser',      label: 'Eraser',      Icon: Eraser,      minWidth: 8,  maxWidth: 32, alpha: 1    },
   // Vector-aware tools enabled by the SketchDoc model.
   // `obj-eraser` removes whole strokes per tap/swipe; `lasso`
@@ -653,13 +660,18 @@ export function SketchModal({
       // stroke stays as a straight segment from down-point to current.
       // The user sees a live preview as they drag; release commits
       // exactly two points (anchor + tip) — perfect ruler-line.
-      if (drawingRef.current.tool === 'line') {
+      // 2-point shape tools (line / rect / ellipse / arrow) all
+      // share the same gesture: down = anchor, move = update
+      // endpoint, up = commit. Renderer derives the shape from
+      // the two stored points.
+      const shapeTool = drawingRef.current.tool;
+      if (shapeTool === 'line' || shapeTool === 'rect' || shapeTool === 'ellipse' || shapeTool === 'arrow') {
         const pt: Point = { x: nx, y: ny, w: widthFor(pressure, ptype) };
         if (typeof tx === 'number') pt.tx = tx;
         if (typeof ty === 'number') pt.ty = ty;
         if (pts.length === 1) pts.push(pt);
         else pts[1] = pt;
-        setDebug(`line · ${ptype} · pts=2`);
+        setDebug(`${shapeTool} · ${ptype} · pts=2`);
         redraw();
         return;
       }
@@ -1414,6 +1426,65 @@ export function SketchModal({
     if (s.points.length === 2) {
       const [a, b] = s.points;
       ctx.lineWidth = (a.w + b.w) / 2;
+      // Rectangle: stroke the bounding rect derived from the two
+      // anchor points. The user drags from one corner to another.
+      if (s.tool === 'rect') {
+        const x = Math.min(a.x, b.x);
+        const y = Math.min(a.y, b.y);
+        const w = Math.abs(b.x - a.x);
+        const h = Math.abs(b.y - a.y);
+        ctx.strokeRect(x, y, w, h);
+        ctx.restore();
+        return;
+      }
+      // Ellipse: parametric, inscribed in the same bounding rect.
+      if (s.tool === 'ellipse') {
+        const cx = (a.x + b.x) / 2;
+        const cy = (a.y + b.y) / 2;
+        const rx = Math.abs(b.x - a.x) / 2;
+        const ry = Math.abs(b.y - a.y) / 2;
+        ctx.beginPath();
+        // ctx.ellipse handles the parametric draw cleanly with
+        // built-in arc subdivision — much smoother than sampling.
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
+      // Arrow: a line from a to b plus a filled arrowhead at b.
+      // Head size scales with the stroke width so a thick arrow
+      // gets a proportionally thicker tip.
+      if (s.tool === 'arrow') {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const headLen = Math.max(8, ctx.lineWidth * 3);
+        const headW = headLen * 0.6;
+        // Tip end-point pulled back slightly so the arrowhead's
+        // base meets the shaft cleanly without overshooting.
+        const ux = dx / len;
+        const uy = dy / len;
+        const tipX = b.x;
+        const tipY = b.y;
+        const baseX = tipX - ux * headLen;
+        const baseY = tipY - uy * headLen;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(baseX, baseY);
+        ctx.stroke();
+        // Arrowhead: filled triangle (tip, left-base, right-base).
+        const px = -uy;
+        const py = ux;
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(baseX + px * headW / 2, baseY + py * headW / 2);
+        ctx.lineTo(baseX - px * headW / 2, baseY - py * headW / 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
+      // Plain line (and any other 2-point fallback).
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
