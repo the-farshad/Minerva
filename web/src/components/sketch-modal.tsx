@@ -47,7 +47,7 @@ import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
-  Square, Circle, ArrowRight, FileText, SlidersHorizontal, Info, Type as TypeIcon,
+  Square, Circle, ArrowRight, FileText, SlidersHorizontal, Info, Type as TypeIcon, Hand,
 } from 'lucide-react';
 import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-hit-test';
 import { toast } from 'sonner';
@@ -84,7 +84,7 @@ const TOOLS: ToolSpec[] = [
   // `obj-eraser` removes whole strokes per tap/swipe; `lasso`
   // selects strokes inside a freehand loop so the user can delete
   // / duplicate / drag-move them as a unit.
-  { id: 'obj-eraser',  label: 'Object',      Icon: Trash2,      minWidth: 6,  maxWidth: 16, alpha: 1    },
+  { id: 'obj-eraser',  label: 'Erase obj',   Icon: Trash2,      minWidth: 6,  maxWidth: 16, alpha: 1    },
   { id: 'lasso',       label: 'Lasso',       Icon: Lasso,       minWidth: 2,  maxWidth: 2,  alpha: 0.6  },
   // Text tool — taps place a <textarea> editing overlay. On iPadOS
   // that textarea is Scribble-enabled, so Apple Pencil handwriting
@@ -321,6 +321,16 @@ export function SketchModal({
   const strokesRef = useRef<Stroke[]>(pagesRef.current[0].strokes);
   const textsRef = useRef<TextObj[]>(pagesRef.current[0].texts);
   const redoRef = useRef<Stroke[]>([]);
+  /** Undo/redo across both object kinds. `undoLogRef` records the
+   *  kind of each undoable action in chronological order so undo()
+   *  reverses the right array (strokes vs texts); `redoLogRef` +
+   *  `textRedoRef` are the matching redo side (strokes still reuse
+   *  the legacy `redoRef`). An empty log with strokes present falls
+   *  back to a plain stroke pop — covers seedDoc-hydrated strokes
+   *  that predate the log. */
+  const undoLogRef = useRef<('stroke' | 'text')[]>([]);
+  const redoLogRef = useRef<('stroke' | 'text')[]>([]);
+  const textRedoRef = useRef<TextObj[]>([]);
   const drawingRef = useRef<Stroke | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   /** Which event family started the current stroke — used to
@@ -405,6 +415,24 @@ export function SketchModal({
   useEffect(() => {
     try { localStorage.setItem(DEBUG_KEY, showDebug ? '1' : '0'); } catch { /* ignore */ }
   }, [showDebug]);
+  /** Pencil-only mode. When on, finger/touch input is ignored on
+   *  the canvas — no drawing AND no pinch-zoom — so a resting palm
+   *  or stray finger can't draw or shift the view while the Apple
+   *  Pencil is in use. Pen and mouse input are unaffected; zoom is
+   *  still available via the toolbar's +/- buttons. Mirrored into a
+   *  ref because the native pointer/touch listeners are bound once
+   *  per tool change and would otherwise close over a stale value.
+   *  Persisted in localStorage. */
+  const PEN_ONLY_KEY = 'minerva.v2.sketch.penOnly';
+  const [penOnly, setPenOnly] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try { return localStorage.getItem(PEN_ONLY_KEY) === '1'; } catch { return false; }
+  });
+  const penOnlyRef = useRef(penOnly);
+  useEffect(() => {
+    penOnlyRef.current = penOnly;
+    try { localStorage.setItem(PEN_ONLY_KEY, penOnly ? '1' : '0'); } catch { /* ignore */ }
+  }, [penOnly]);
   /** Handwriting smoothing level applied on stroke commit. A
    *  windowed moving-average over the point array — wider window
    *  = smoother but less faithful to fast detail. `med` is the
@@ -492,6 +520,9 @@ export function SketchModal({
     textsRef.current = page.texts;
     bgImageRef.current = page.bg;
     redoRef.current = [];
+    undoLogRef.current = [];
+    redoLogRef.current = [];
+    textRedoRef.current = [];
     drawingRef.current = null;
     activeInputRef.current = null;
     setTextEditor(null);
@@ -559,12 +590,11 @@ export function SketchModal({
   }, [pageBackground, pageFormat, scale, tx, ty, paperColor, marginGuides, open]);
 
   /** Imperative "fit the current paper format into the viewport".
-   *  Called once on open (so a saved A4 doc lands centred + fully
-   *  visible) and on demand via the toolbar's Fit button. NOT
-   *  called on every pageFormat change — repositioning the view
-   *  out from under a half-finished drawing is disorienting; the
-   *  user picks a new format, the paper rect just appears at model
-   *  origin, and they press Fit if/when they want to recentre. */
+   *  Runs on open, on every paper-format change (see the effect
+   *  below), and on demand via the toolbar's Fit button. Centring
+   *  the new page is the whole point — without it, picking a new
+   *  size leaves the page rendered at the previous format's view
+   *  transform, off-screen, reading as "the picker did nothing". */
   function fitPaperToView() {
     if (pageFormat === 'auto') {
       // No paper rect to fit — just reset to identity.
@@ -591,18 +621,16 @@ export function SketchModal({
     redraw();
   }
 
-  /* One-time fit on open: when a saved doc hydrates with a non-
-   * auto pageFormat, fit it into the viewport so the user sees
-   * their whole page. `fitDoneRef` guards against the seedDoc-
-   * hydration sequence (open fires the effect while pageFormat is
-   * still 'auto', then pageFormat updates) — we wait for the real
-   * format before fitting, and fit at most once per open. */
-  const fitDoneRef = useRef(false);
+  /* Fit the paper into the viewport on open and on every format
+   * change. Picking a new size must visibly recentre + rescale to
+   * that page; fitting only once (the old behaviour) left every
+   * later format change rendering at the previous format's view
+   * transform — off-screen, looking like the picker did nothing.
+   * `auto` resets to the identity (full-bleed) view. On open the
+   * effect first sees pageFormat='auto' (harmless reset), then
+   * fires again when a seedDoc's real format hydrates. */
   useEffect(() => {
-    if (!open) { fitDoneRef.current = false; return; }
-    if (fitDoneRef.current) return;
-    if (pageFormat === 'auto') return; // wait for a real format (may arrive via seedDoc)
-    fitDoneRef.current = true;
+    if (!open) return;
     fitPaperToView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageFormat, open]);
@@ -655,6 +683,9 @@ export function SketchModal({
     strokesRef.current = pagesRef.current[0].strokes;
     textsRef.current = pagesRef.current[0].texts;
     redoRef.current = [];
+    undoLogRef.current = [];
+    redoLogRef.current = [];
+    textRedoRef.current = [];
     bgImageRef.current = null;
     drawingRef.current = null;
     activeInputRef.current = null;
@@ -767,7 +798,10 @@ export function SketchModal({
         alpha: typeof opacity === 'number' ? opacity : spec.alpha,
         points: [firstPoint],
       };
-      redoRef.current = []; // any new stroke invalidates redo history
+      // Any new stroke invalidates redo history (both sides).
+      redoRef.current = [];
+      redoLogRef.current = [];
+      textRedoRef.current = [];
       setDebug(`down · ${ptype} · p=${pressure.toFixed(2)}`);
       redraw();
       force((n) => n + 1);
@@ -845,6 +879,7 @@ export function SketchModal({
         finished.points = out;
       }
       strokesRef.current.push(finished);
+      undoLogRef.current.push('stroke');
       drawingRef.current = null;
       setDebug(`up · ${ptype} · strokes=${strokesRef.current.length}`);
       redraw();
@@ -1154,6 +1189,9 @@ export function SketchModal({
 
     // --- Pointer Events (pen + mouse + most touch on modern browsers)
     const onPointerDown = (e: PointerEvent) => {
+      // Pencil-only mode: ignore finger/touch entirely (pen + mouse
+      // still draw). Stops a resting palm or stray finger.
+      if (penOnlyRef.current && e.pointerType === 'touch') return;
       if (activeInputRef.current === 'touch') return; // touch path already engaged
       // Text tool: a tap doesn't draw — it places / re-opens a text
       // editing overlay. Handled on pointerup so a stray micro-drag
@@ -1197,6 +1235,7 @@ export function SketchModal({
       }
     };
     const onPointerUp = (e: PointerEvent) => {
+      if (penOnlyRef.current && e.pointerType === 'touch') return;
       if (tool === 'text') {
         e.preventDefault();
         const { x, y } = toModel(e.clientX, e.clientY);
@@ -1226,6 +1265,9 @@ export function SketchModal({
     // where pointer events mysteriously don't fire for the first
     // tap on a fresh canvas)
     const onTouchStart = (e: TouchEvent) => {
+      // Pencil-only mode: finger touches do nothing — no drawing,
+      // and no two-finger pinch-zoom. Toolbar +/- still zooms.
+      if (penOnlyRef.current) return;
       if (activeInputRef.current === 'pointer') return;
       e.preventDefault();
       if (e.touches.length >= 2) {
@@ -1252,6 +1294,7 @@ export function SketchModal({
       beginStroke(t.clientX, t.clientY, pressure, 'touch');
     };
     const onTouchMove = (e: TouchEvent) => {
+      if (penOnlyRef.current) return;
       e.preventDefault();
       // Two-finger pinch+pan path. Mid-point pin: the model point
       // under the current pinch midpoint should stay under the new
@@ -1300,6 +1343,7 @@ export function SketchModal({
       continueStroke(t.clientX, t.clientY, pressure, 'touch');
     };
     const onTouchEnd = (e: TouchEvent) => {
+      if (penOnlyRef.current) return;
       e.preventDefault();
       if (pinch) {
         // End of pinch when we drop below 2 touches; the remaining
@@ -1802,15 +1846,29 @@ export function SketchModal({
   }
 
   function undo() {
-    const popped = strokesRef.current.pop();
-    if (popped) redoRef.current.push(popped);
+    const kind = undoLogRef.current.pop();
+    if (kind === 'text') {
+      const t = textsRef.current.pop();
+      if (t) { textRedoRef.current.push(t); redoLogRef.current.push('text'); }
+    } else {
+      // 'stroke' — or undefined (empty log): fall back to a stroke
+      // pop so seedDoc-hydrated strokes are still undoable.
+      const popped = strokesRef.current.pop();
+      if (popped) { redoRef.current.push(popped); redoLogRef.current.push('stroke'); }
+    }
     redraw();
     force((n) => n + 1);
     if (onAutoSave) onAutoSave(buildDoc());
   }
   function redo() {
-    const popped = redoRef.current.pop();
-    if (popped) strokesRef.current.push(popped);
+    const kind = redoLogRef.current.pop();
+    if (kind === 'text') {
+      const t = textRedoRef.current.pop();
+      if (t) { textsRef.current.push(t); undoLogRef.current.push('text'); }
+    } else {
+      const popped = redoRef.current.pop();
+      if (popped) { strokesRef.current.push(popped); undoLogRef.current.push('stroke'); }
+    }
     redraw();
     force((n) => n + 1);
     if (onAutoSave) onAutoSave(buildDoc());
@@ -1831,6 +1889,9 @@ export function SketchModal({
     strokesRef.current.length = 0;
     textsRef.current.length = 0;
     redoRef.current.length = 0;
+    undoLogRef.current.length = 0;
+    redoLogRef.current.length = 0;
+    textRedoRef.current.length = 0;
     drawingRef.current = null;
     editingTextIndexRef.current = -1;
     setTextEditor(null);
@@ -1877,6 +1938,11 @@ export function SketchModal({
       }
     } else if (value) {
       textsRef.current.push({ x: ed.x, y: ed.y, text: value, fontSize: ed.fontSize, color: ed.color });
+      // New text object — log it for undo, invalidate redo history.
+      undoLogRef.current.push('text');
+      redoRef.current = [];
+      redoLogRef.current = [];
+      textRedoRef.current = [];
     }
     editingTextIndexRef.current = -1;
     setTextEditor(null);
@@ -2428,13 +2494,13 @@ export function SketchModal({
           <SketchIconButton
             label="Undo (⌘Z)"
             icon={<Undo2 className="h-4 w-4" />}
-            disabled={strokesRef.current.length === 0 || uploading}
+            disabled={(strokesRef.current.length === 0 && textsRef.current.length === 0) || uploading}
             onActivate={undo}
           />
           <SketchIconButton
             label="Redo (⌘⇧Z)"
             icon={<Redo2 className="h-4 w-4" />}
-            disabled={redoRef.current.length === 0 || uploading}
+            disabled={(redoRef.current.length === 0 && textRedoRef.current.length === 0) || uploading}
             onActivate={redo}
           />
           <SketchIconButton
@@ -2466,6 +2532,11 @@ export function SketchModal({
             primary
             disabled={!hasContent || uploading}
             onActivate={save}
+          />
+          <SketchIconButton
+            label={penOnly ? 'Pencil only — finger ignored (tap to allow finger)' : 'Allow finger drawing (tap for Pencil-only)'}
+            icon={<Hand className={`h-4 w-4 ${penOnly ? 'text-zinc-400' : 'text-zinc-900 dark:text-white'}`} />}
+            onActivate={() => setPenOnly((v) => !v)}
           />
           <SketchIconButton
             label={showDebug ? 'Hide diagnostic strip' : 'Show diagnostic strip'}
@@ -2525,7 +2596,7 @@ export function SketchModal({
             spellCheck={false}
             placeholder="Type or write with Pencil…"
             rows={1}
-            className="absolute resize-none overflow-hidden whitespace-pre rounded border border-blue-400 bg-white/95 p-0 leading-[1.25] shadow-sm outline-none dark:bg-zinc-900/95"
+            className="absolute resize-none overflow-hidden whitespace-pre rounded-sm border border-dashed border-blue-400/70 bg-transparent p-0 leading-[1.25] outline-none"
             style={{
               left: tx + scale * textEditor.x,
               top: ty + scale * textEditor.y,
@@ -2533,6 +2604,7 @@ export function SketchModal({
               fontSize: scale * textEditor.fontSize,
               fontFamily: 'ui-sans-serif, system-ui, sans-serif',
               color: textEditor.color,
+              caretColor: textEditor.color,
               touchAction: 'auto',
             }}
           />
