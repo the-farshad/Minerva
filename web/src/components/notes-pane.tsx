@@ -70,12 +70,15 @@ export function NotesPane({
    *  drawing comes back as a flat PNG you can't edit. */
   const [currentSketchDoc, setCurrentSketchDoc] =
     useState<SketchDoc | string | null | undefined>(initialSketchDoc);
-  // Adopt a fresh doc from the parent (row switch, or an SSE
-  // row.updated from another device) only while the editor is
-  // closed — never clobber an in-flight edit.
+  // Adopt the parent's doc ONLY on a row switch. For the same row,
+  // `currentSketchDoc` is owned by sketchDocAutoSave — re-syncing
+  // from the frozen `initialSketchDoc` prop (which the old version
+  // did whenever the editor closed) threw away every stroke drawn
+  // this session, so the sketch reopened as an uneditable flat PNG.
   useEffect(() => {
-    if (!sketchOpen) setCurrentSketchDoc(initialSketchDoc);
-  }, [initialSketchDoc, rowId, sketchOpen]);
+    setCurrentSketchDoc(initialSketchDoc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowId]);
 
   /** A sketch note IS its sketch — opening such a row drops
    *  straight into the editor instead of showing a static preview
