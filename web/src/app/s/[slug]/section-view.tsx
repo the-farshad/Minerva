@@ -69,7 +69,7 @@ export function SectionView({
     setSortKey(next);
     writePref(SORT_PREF_KEY, next);
   }
-  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; originalFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; sectionPreset?: string | null; notes?: string; data?: Record<string, unknown> } | null>(null);
+  const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; originalFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; sectionPreset?: string | null; notes?: string; data?: Record<string, unknown>; createdAt?: string; updatedAt?: string } | null>(null);
   const qc = useQueryClient();
   const router = useRouter();
 
@@ -138,6 +138,8 @@ export function SectionView({
       sectionPreset: section.preset,
       notes: String(r.data.notes || ''),
       data: r.data,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
     });
   }
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Pencil, Check, X as XIcon, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
+import { relativeTime, formatDateTime } from '@/lib/relative-time';
 
 /**
  * Info pane for the preview modal. Renders row.data as a key/value
@@ -35,11 +36,14 @@ function visible(data: Record<string, unknown>): [string, string][] {
 }
 
 export function InfoPane({
-  rowId, sectionSlug, data, onSaved, sectionPreset,
+  rowId, sectionSlug, data, onSaved, sectionPreset, createdAt, updatedAt,
 }: {
   rowId: string;
   sectionSlug: string;
   data: Record<string, unknown>;
+  /** Row timestamps — shown in the meta footer when provided. */
+  createdAt?: string;
+  updatedAt?: string;
   /** Drives which suggested fields appear as empty inputs in Edit
    * mode — e.g. `doi` / `isbn` for papers, `channel` / `duration`
    * for YouTube. */
@@ -200,6 +204,25 @@ export function InfoPane({
                 <Plus className="h-3 w-3" /> Add
               </button>
             </dd>
+          </div>
+        )}
+        {/* Meta footer — row timestamps. Relative ("3 days ago")
+          * with the absolute date on hover. Only rendered when the
+          * caller threaded the timestamps through. */}
+        {(createdAt || updatedAt) && (
+          <div className="mt-3 space-y-1 border-t border-zinc-200 pt-2 text-[10px] text-zinc-400 dark:border-zinc-800">
+            {createdAt && (
+              <div className="grid grid-cols-[5.5rem_1fr] gap-2" title={formatDateTime(createdAt)}>
+                <span className="text-zinc-500">Created</span>
+                <span>{relativeTime(createdAt)}</span>
+              </div>
+            )}
+            {updatedAt && (
+              <div className="grid grid-cols-[5.5rem_1fr] gap-2" title={formatDateTime(updatedAt)}>
+                <span className="text-zinc-500">Edited</span>
+                <span>{relativeTime(updatedAt)}</span>
+              </div>
+            )}
           </div>
         )}
       </dl>

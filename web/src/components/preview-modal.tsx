@@ -39,6 +39,9 @@ type PreviewItem = {
   notes?: string;
   /** Full row.data for the "More info" pane. */
   data?: Record<string, unknown>;
+  /** Row timestamps, surfaced in the info pane. */
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 const YT_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/;
@@ -1011,6 +1014,8 @@ export function PreviewModal({
                 sectionSlug={view.sectionSlug}
                 sectionPreset={typeof view.data?._sectionPreset === 'string' ? view.data._sectionPreset : (pdf ? 'papers' : yt ? 'youtube' : null)}
                 data={view.data}
+                createdAt={view.createdAt}
+                updatedAt={view.updatedAt}
                 onSaved={(next) => {
                   setView((prev) => (prev ? { ...prev, data: next, title: String(next.title || prev.title || '') } : prev));
                   if (view.rowId) onRowDataChanged?.(view.rowId, next);
