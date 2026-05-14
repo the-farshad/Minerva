@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen } from 'lucide-react';
 import { readingMinutes, formatReadingMinutes, MINUTES_PER_PAGE, WORDS_PER_MINUTE } from '@/lib/reading-time';
+import { relativeTime, formatDateTime } from '@/lib/relative-time';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -695,6 +696,9 @@ export function GroupedGrid({
                       </div>
                       <div className="mt-1.5 line-clamp-1 text-xs text-zinc-500">
                         {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-zinc-400" title={`Last edited ${formatDateTime(r.updatedAt)}`}>
+                        edited {relativeTime(r.updatedAt)}
                       </div>
                     </button>
                     {section.preset === 'youtube' && <WatchedBar row={r} />}
