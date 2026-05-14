@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { naturalCompare, cn } from '@/lib/utils';
-import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp } from 'lucide-react';
+import { readPref, writePref } from '@/lib/prefs';
+import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp, ArrowDownUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useServerEvents } from '@/hooks/use-server-events';
 import { toast } from 'sonner';
@@ -56,6 +57,18 @@ export function SectionView({
   const [mode, setMode] = useState<'list' | 'grid' | 'kanban' | 'calendar'>(
     section.preset === 'tasks' ? 'kanban' : 'grid',
   );
+  /** Row sort. Persisted per section. `title-*` only mean anything
+   *  when the section actually has a title/name column; the sorted
+   *  memo falls back to insertion order otherwise. */
+  type SortKey = 'title-asc' | 'title-desc' | 'edited-desc' | 'edited-asc';
+  const SORT_PREF_KEY = `section.sort.${section.slug}`;
+  const [sortKey, setSortKey] = useState<SortKey>(
+    () => readPref<SortKey>(SORT_PREF_KEY, 'title-asc'),
+  );
+  function changeSort(next: SortKey) {
+    setSortKey(next);
+    writePref(SORT_PREF_KEY, next);
+  }
   const [previewItem, setPreviewItem] = useState<{ url: string; title?: string; driveFileId?: string; originalFileId?: string; hostPath?: string; rowId?: string; sectionSlug?: string; sectionPreset?: string | null; notes?: string; data?: Record<string, unknown> } | null>(null);
   const qc = useQueryClient();
   const router = useRouter();
@@ -246,16 +259,18 @@ export function SectionView({
 
   const sorted = useMemo(() => {
     const out = rows.slice();
-    if (titleField) {
-      out.sort((a, b) =>
-        naturalCompare(
-          String(a.data[titleField] || ''),
-          String(b.data[titleField] || ''),
-        ),
-      );
+    if (sortKey === 'edited-desc' || sortKey === 'edited-asc') {
+      const dir = sortKey === 'edited-asc' ? 1 : -1;
+      out.sort((a, b) => dir * (a.updatedAt || '').localeCompare(b.updatedAt || ''));
+    } else if (titleField) {
+      const dir = sortKey === 'title-desc' ? -1 : 1;
+      out.sort((a, b) => dir * naturalCompare(
+        String(a.data[titleField] || ''),
+        String(b.data[titleField] || ''),
+      ));
     }
     return out;
-  }, [rows, titleField]);
+  }, [rows, titleField, sortKey]);
 
   const effectivePreset = section.preset;
 
@@ -492,6 +507,24 @@ export function SectionView({
               </button>
             ))}
           </div>
+          {/* Row sort — a compact labelled select styled to match
+            * the view-mode toggle. Persisted per section. */}
+          <label
+            className="inline-flex items-center gap-1 rounded-full border border-zinc-200 py-1 pl-2 pr-1 text-xs text-zinc-500 dark:border-zinc-800"
+            title="Sort rows"
+          >
+            <ArrowDownUp className="h-3.5 w-3.5" />
+            <select
+              value={sortKey}
+              onChange={(e) => changeSort(e.target.value as SortKey)}
+              className="cursor-pointer rounded-full bg-transparent py-0.5 pr-1 text-xs text-zinc-600 outline-none dark:text-zinc-300"
+            >
+              {titleField && <option value="title-asc">Title A–Z</option>}
+              {titleField && <option value="title-desc">Title Z–A</option>}
+              <option value="edited-desc">Recently edited</option>
+              <option value="edited-asc">Oldest edited</option>
+            </select>
+          </label>
           {section.preset === 'notes' ? (
             <AddNote
               section={section}
