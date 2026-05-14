@@ -47,7 +47,7 @@ import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
-  Square, Circle, ArrowRight,
+  Square, Circle, ArrowRight, FileText, SlidersHorizontal, Info,
 } from 'lucide-react';
 import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-hit-test';
 import { toast } from 'sonner';
@@ -346,18 +346,41 @@ export function SketchModal({
   const [pageBackground, setPageBackground] = useState<PageBackground>('blank');
   const [paperColor, setPaperColor] = useState<PaperColor>('white');
   const [marginGuides, setMarginGuides] = useState(false);
+  /** Which grouped settings popover is open, if any. `paper`
+   *  collects size / style / surface / margins; `pen` collects
+   *  width / opacity / smoothing — the Notes-style pen options.
+   *  Only one is open at a time; tapping anywhere else closes it. */
+  const [openMenu, setOpenMenu] = useState<'paper' | 'pen' | null>(null);
+  /** Diagnostic strip in the canvas corner. Off by default — it's
+   *  a debugging aid, not something the user needs while drawing —
+   *  toggled from the header and persisted in localStorage. */
+  const DEBUG_KEY = 'minerva.v2.sketch.debugStrip';
+  const [showDebug, setShowDebug] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try { return localStorage.getItem(DEBUG_KEY) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(DEBUG_KEY, showDebug ? '1' : '0'); } catch { /* ignore */ }
+  }, [showDebug]);
   /** Handwriting smoothing level applied on stroke commit. A
    *  windowed moving-average over the point array — wider window
    *  = smoother but less faithful to fast detail. `med` is the
    *  default: enough to kill Pencil jitter without rounding off
    *  intentional sharp corners. Persisted in localStorage. */
-  type SmoothLevel = 'none' | 'low' | 'med' | 'high';
+  type SmoothLevel = 'none' | 'low' | 'med' | 'high' | 'max';
+  const SMOOTH_LEVELS: { id: SmoothLevel; label: string }[] = [
+    { id: 'none', label: 'None' },
+    { id: 'low', label: 'Low' },
+    { id: 'med', label: 'Med' },
+    { id: 'high', label: 'High' },
+    { id: 'max', label: 'Max' },
+  ];
   const SMOOTH_KEY = 'minerva.v2.sketch.smoothing';
   const [smoothing, setSmoothing] = useState<SmoothLevel>(() => {
     if (typeof window === 'undefined') return 'med';
     try {
       const v = localStorage.getItem(SMOOTH_KEY);
-      return (v === 'none' || v === 'low' || v === 'med' || v === 'high') ? v : 'med';
+      return (v === 'none' || v === 'low' || v === 'med' || v === 'high' || v === 'max') ? v : 'med';
     } catch { return 'med'; }
   });
   const smoothingRef = useRef<SmoothLevel>(smoothing);
@@ -752,9 +775,11 @@ export function SketchModal({
       const isShape = finished.tool === 'line' || finished.tool === 'rect'
         || finished.tool === 'ellipse' || finished.tool === 'arrow';
       if (!isShape && sm !== 'none' && finished.points.length >= 3) {
-        const win = sm === 'low' ? 1 : sm === 'med' ? 2 : 3;
-        const src = finished.points;
-        const out: Point[] = src.map((p, i) => {
+        // window half-width per level; `max` also runs a second
+        // pass so high-frequency Pencil jitter is fully ironed out.
+        const win = sm === 'low' ? 1 : sm === 'med' ? 2 : sm === 'high' ? 3 : 4;
+        const passes = sm === 'max' ? 2 : 1;
+        const smoothPass = (src: Point[]): Point[] => src.map((p, i) => {
           if (i === 0 || i === src.length - 1) return { ...p };
           let sx = 0, sy = 0, sw = 0, n = 0;
           for (let k = Math.max(0, i - win); k <= Math.min(src.length - 1, i + win); k++) {
@@ -765,6 +790,8 @@ export function SketchModal({
           if (typeof p.ty === 'number') np.ty = p.ty;
           return np;
         });
+        let out = finished.points;
+        for (let pass = 0; pass < passes; pass++) out = smoothPass(out);
         finished.points = out;
       }
       strokesRef.current.push(finished);
@@ -1281,6 +1308,17 @@ export function SketchModal({
     const ctx = c.getContext('2d');
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
+    // Read the view transform from the refs, not component state.
+    // redraw() is invoked from closures captured once on open (the
+    // ResizeObserver `sync`, the seed-image onload), which would
+    // otherwise paint with the stale tx/ty/scale from that render
+    // while the pointer handlers' `toModel` uses the live refs —
+    // producing a cursor/stroke offset after any zoom/fit followed
+    // by a layout-triggered resize. The refs are kept in lockstep
+    // with state, so reading them here is always correct.
+    const scale = scaleRef.current;
+    const tx = txRef.current;
+    const ty = tyRef.current;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
@@ -2228,6 +2266,11 @@ export function SketchModal({
             onActivate={save}
           />
           <SketchIconButton
+            label={showDebug ? 'Hide diagnostic strip' : 'Show diagnostic strip'}
+            icon={<Info className={`h-4 w-4 ${showDebug ? 'text-zinc-900 dark:text-white' : 'text-zinc-400'}`} />}
+            onActivate={() => setShowDebug((v) => !v)}
+          />
+          <SketchIconButton
             label="Close (Esc)"
             icon={<X className="h-4 w-4" />}
             onActivate={onClose}
@@ -2282,30 +2325,42 @@ export function SketchModal({
           </div>
         )}
         {/* Live diagnostic — proves whether events are arriving
-          * and which family. Includes body.pointer-events so a
-          * stuck Radix lock is visible without devtools. Wider
-          * so the whole event line is readable on iPad. */}
-        <div className="pointer-events-none absolute bottom-2 right-2 max-w-[90vw] rounded-md bg-black/75 px-2 py-1 font-mono text-[10px] leading-tight text-white">
-          <div>
-            canvas={canvasRef.current ? `${canvasRef.current.clientWidth}×${canvasRef.current.clientHeight}` : '?×?'}
-            {' '}· strokes={strokesRef.current.length}{drawingRef.current ? '+1' : ''}
-            {bgImageRef.current ? ' · bg' : ''}
+          * and which family. Off by default; toggled from the
+          * header Info button and persisted in localStorage. */}
+        {showDebug && (
+          <div className="pointer-events-none absolute bottom-2 right-2 max-w-[90vw] rounded-md bg-black/75 px-2 py-1 font-mono text-[10px] leading-tight text-white">
+            <div>
+              canvas={canvasRef.current ? `${canvasRef.current.clientWidth}×${canvasRef.current.clientHeight}` : '?×?'}
+              {' '}· strokes={strokesRef.current.length}{drawingRef.current ? '+1' : ''}
+              {bgImageRef.current ? ' · bg' : ''}
+            </div>
+            <div>event: {debug}</div>
+            <div>
+              body.pe=
+              {typeof document !== 'undefined' && document.body.style.pointerEvents === 'none'
+                ? <span className="text-red-400">none (STUCK)</span>
+                : 'ok'}
+              {' '}· tool={tool} · w={effectiveWidth.toFixed(1)}
+            </div>
           </div>
-          <div>event: {debug}</div>
-          <div>
-            body.pe=
-            {typeof document !== 'undefined' && document.body.style.pointerEvents === 'none'
-              ? <span className="text-red-400">none (STUCK)</span>
-              : 'ok'}
-            {' '}· tool={tool} · w={effectiveWidth.toFixed(1)}
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Bottom toolbar — Apple-Notes feel: tools / colors /
-        * width slider. Bottom placement so Pencil reach is short
-        * on iPad. */}
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+      {/* Outside-tap catcher — closes whichever grouped popover is
+        * open. Sits below the footer (z-[60] vs the footer's
+        * z-[70]) so the popover panels stay interactive. */}
+      {openMenu && (
+        <div
+          className="fixed inset-0 z-[60]"
+          onClick={() => setOpenMenu(null)}
+          onPointerUp={(e) => { if (e.pointerType === 'pen') setOpenMenu(null); }}
+        />
+      )}
+      {/* Bottom toolbar — Apple-Notes feel: tools / colours, with
+        * width / opacity / smoothing under a "Pen" popover and
+        * size / style / surface / margins under "Paper". Bottom
+        * placement so Pencil reach is short on iPad. */}
+      <footer className="relative z-[70] flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
         {/* Tool selector */}
         <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
           {TOOLS.map((t) => {
@@ -2361,147 +2416,124 @@ export function SketchModal({
             ))}
           </div>
         )}
-        {/* Opacity slider — overrides the current tool's default
-          * alpha. Hidden for eraser (alpha doesn't apply with
-          * destination-out). Resets to "tool default" on tool
-          * switch so changing tools doesn't drag a highlighter's
-          * 0.35 onto the pen. */}
-        {tool !== 'eraser' && (
-          <label className="inline-flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400" title="Override the tool's default alpha for new strokes">
-            <span>Opacity</span>
-            <input
-              type="range"
-              min={0.05}
-              max={1}
-              step={0.05}
-              value={typeof opacity === 'number' ? opacity : activeSpec.alpha}
-              onChange={(e) => setOpacity(Number(e.target.value))}
-              className="w-20 cursor-pointer accent-zinc-900 dark:accent-white"
-            />
-            <span className="w-7 font-mono text-[10px] text-zinc-500">{Math.round((typeof opacity === 'number' ? opacity : activeSpec.alpha) * 100)}%</span>
-          </label>
-        )}
-
-        {/* Width: five tap-able tiers + a fine-tune slider beside.
-          * Native range inputs were unresponsive to Apple Pencil
-          * taps on iPad — the tier buttons are full SketchButton
-          * pills that go through the same useDualActivate handler
-          * the rest of the toolbar uses, so they fire reliably. The
-          * slider is kept for users on a mouse who want continuous
-          * control. */}
-        <div className="inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-          <span>Width</span>
-          {(() => {
-            const min = activeSpec.minWidth;
-            const max = activeSpec.maxWidth;
-            const TIERS = [min, min + (max - min) * 0.25, (min + max) / 2, min + (max - min) * 0.75, max];
-            return (
-              <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
-                {TIERS.map((w, i) => {
-                  const active = Math.abs(effectiveWidth - w) < 0.5;
-                  return (
-                    <SketchWidthButton
-                      key={i}
-                      width={w}
-                      active={active}
-                      onActivate={() => setWidthOverride(w)}
+        {/* Pen options — Notes-style popover grouping width,
+          * opacity and handwriting smoothing. Hidden for the
+          * non-drawing tools (eraser / object-eraser / lasso),
+          * which don't use any of these. Every control is a pill
+          * through useDualActivate so Pencil + touch both fire —
+          * the old native <select>/<input range> controls were
+          * unresponsive to Apple Pencil taps. */}
+        {tool !== 'eraser' && tool !== 'obj-eraser' && tool !== 'lasso' && (() => {
+          const min = activeSpec.minWidth;
+          const max = activeSpec.maxWidth;
+          const WIDTH_TIERS = [min, min + (max - min) * 0.25, (min + max) / 2, min + (max - min) * 0.75, max];
+          const OPACITY_TIERS = [0.25, 0.5, 0.75, 1];
+          const curOpacity = typeof opacity === 'number' ? opacity : activeSpec.alpha;
+          return (
+            <div className="relative">
+              <SketchButton
+                label="Pen"
+                icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+                onActivate={() => setOpenMenu((m) => (m === 'pen' ? null : 'pen'))}
+              />
+              {openMenu === 'pen' && (
+                <div className="absolute bottom-full right-0 z-10 mb-2 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+                  <SketchMenuRow label="Width">
+                    {WIDTH_TIERS.map((w, i) => (
+                      <SketchWidthButton
+                        key={i}
+                        width={w}
+                        active={Math.abs(effectiveWidth - w) < 0.5}
+                        onActivate={() => setWidthOverride(w)}
+                      />
+                    ))}
+                  </SketchMenuRow>
+                  <SketchMenuRow label="Opacity">
+                    {OPACITY_TIERS.map((o) => (
+                      <SketchOptionPill
+                        key={o}
+                        label={`${Math.round(o * 100)}%`}
+                        active={opacity !== null && Math.abs(curOpacity - o) < 0.03}
+                        onActivate={() => setOpacity(o)}
+                      />
+                    ))}
+                    <SketchOptionPill
+                      label="Auto"
+                      active={opacity === null}
+                      onActivate={() => setOpacity(null)}
                     />
-                  );
-                })}
-              </div>
-            );
-          })()}
-          <input
-            type="range"
-            min={activeSpec.minWidth}
-            max={activeSpec.maxWidth}
-            step={0.5}
-            value={effectiveWidth}
-            onChange={(e) => setWidthOverride(Number(e.target.value))}
-            className="w-24 cursor-pointer accent-zinc-900 dark:accent-white"
-            title="Fine-tune (drag, mouse-only)"
+                  </SketchMenuRow>
+                  <SketchMenuRow label="Smooth">
+                    {SMOOTH_LEVELS.map((s) => (
+                      <SketchOptionPill
+                        key={s.id}
+                        label={s.label}
+                        active={smoothing === s.id}
+                        onActivate={() => setSmoothing(s.id)}
+                      />
+                    ))}
+                  </SketchMenuRow>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {/* Paper popover — size / style / surface / margins,
+          * grouped so the toolbar stays uncluttered. Size affects
+          * PDF/SVG export dimensions; style is the background
+          * pattern; surface is the light/dark drawing colour;
+          * margins draws a dashed 5% print guide. */}
+        <div className="relative">
+          <SketchButton
+            label="Paper"
+            icon={<FileText className="h-3.5 w-3.5" />}
+            onActivate={() => setOpenMenu((m) => (m === 'paper' ? null : 'paper'))}
           />
-          <span className="w-7 font-mono text-[10px] text-zinc-500">{effectiveWidth.toFixed(1)}</span>
+          {openMenu === 'paper' && (
+            <div className="absolute bottom-full right-0 z-10 mb-2 w-80 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+              <SketchMenuRow label="Size">
+                {PAGE_FORMATS.map((f) => (
+                  <SketchOptionPill
+                    key={f.id}
+                    label={f.label}
+                    active={pageFormat === f.id}
+                    onActivate={() => setPageFormat(f.id)}
+                  />
+                ))}
+              </SketchMenuRow>
+              <SketchMenuRow label="Style">
+                {(['blank', 'lined', 'grid', 'dotted', 'graph'] as PageBackground[]).map((id) => (
+                  <SketchOptionPill
+                    key={id}
+                    label={id.charAt(0).toUpperCase() + id.slice(1)}
+                    active={pageBackground === id}
+                    onActivate={() => setPageBackground(id)}
+                  />
+                ))}
+              </SketchMenuRow>
+              <SketchMenuRow label="Surface">
+                {PAPER_COLORS.map((p) => (
+                  <SketchOptionPill
+                    key={p.id}
+                    label={p.label}
+                    swatch={p.fill}
+                    active={paperColor === p.id}
+                    onActivate={() => setPaperColor(p.id)}
+                  />
+                ))}
+              </SketchMenuRow>
+              {pageFormat !== 'auto' && (
+                <SketchMenuRow label="Margins">
+                  <SketchOptionPill
+                    label={marginGuides ? 'Shown' : 'Hidden'}
+                    active={marginGuides}
+                    onActivate={() => setMarginGuides((v) => !v)}
+                  />
+                </SketchMenuRow>
+              )}
+            </div>
+          )}
         </div>
-        {/* Paper format — affects PDF export dimensions only. The
-          * canvas itself always fills the viewport so the user gets
-          * max drawing room regardless of choice. `auto` exports at
-          * the actual canvas size (back-compat with the single-page
-          * default). */}
-        <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Paper format used when exporting to PDF">
-          <span>Paper</span>
-          <select
-            value={pageFormat}
-            onChange={(e) => setPageFormat(e.target.value as PageFormat)}
-            className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            {PAGE_FORMATS.map((f) => (
-              <option key={f.id} value={f.id}>{f.label}</option>
-            ))}
-          </select>
-        </label>
-        {/* Paper-style background. Draws a lined / grid / dotted /
-          * graph pattern under the strokes — picks pitch and colour
-          * automatically for light vs dark mode. Persisted on
-          * SketchDoc.paper.background so it survives reopen. */}
-        <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Page background pattern">
-          <span>Style</span>
-          <select
-            value={pageBackground}
-            onChange={(e) => setPageBackground(e.target.value as PageBackground)}
-            className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            <option value="blank">Blank</option>
-            <option value="lined">Lined</option>
-            <option value="grid">Grid</option>
-            <option value="dotted">Dotted</option>
-            <option value="graph">Graph</option>
-          </select>
-        </label>
-        {/* Paper colour — applies in EVERY mode now: fills the
-          * whole canvas in `auto`, the paper rect with a format.
-          * This is the light/dark control for the drawing surface,
-          * independent of the app theme. */}
-        <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Drawing-surface colour — light/dark for the canvas, independent of the app theme">
-          <span>Surface</span>
-          <select
-            value={paperColor}
-            onChange={(e) => setPaperColor(e.target.value as PaperColor)}
-            className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            {PAPER_COLORS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-        </label>
-        {/* Handwriting smoothing level — windowed moving-average
-          * applied on stroke commit. */}
-        <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Handwriting smoothing — stronger = less jitter, less faithful to fast detail">
-          <span>Smooth</span>
-          <select
-            value={smoothing}
-            onChange={(e) => setSmoothing(e.target.value as SmoothLevel)}
-            className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            <option value="none">None</option>
-            <option value="low">Low</option>
-            <option value="med">Med</option>
-            <option value="high">High</option>
-          </select>
-        </label>
-        {/* Margin guides — dashed 5 % print margin shown inside the
-          * paper rect. Useful for sketching that's going to print. */}
-        {pageFormat !== 'auto' && (
-          <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Show a dashed 5% print-margin guide inside the paper">
-            <input
-              type="checkbox"
-              checked={marginGuides}
-              onChange={(e) => setMarginGuides(e.target.checked)}
-              className="cursor-pointer"
-            />
-            Margins
-          </label>
-        )}
       </footer>
     </div>,
     document.body,
@@ -2648,5 +2680,50 @@ function SketchWidthButton({ width, active, onActivate }: {
         style={{ width: dot, height: dot }}
       />
     </button>
+  );
+}
+
+/* Generic option pill used inside the grouped settings popovers
+ * (Pen / Paper). Goes through useDualActivate so a single Apple
+ * Pencil tap reliably selects the option — the native <select>
+ * controls these replaced were flaky under Pencil input. An
+ * optional colour swatch renders before the label (Surface row). */
+function SketchOptionPill({ label, active, onActivate, swatch }: {
+  label: string; active: boolean; onActivate: () => void; swatch?: string;
+}) {
+  const handlers = useDualActivate(onActivate);
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-pressed={active}
+      {...handlers}
+      style={{ cursor: 'pointer' }}
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] transition ${
+        active
+          ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+          : 'border border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800'
+      }`}
+    >
+      {swatch && (
+        <span
+          className="h-3 w-3 rounded-full border border-zinc-300 dark:border-zinc-600"
+          style={{ backgroundColor: swatch }}
+        />
+      )}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+/* One labelled row inside a settings popover — a fixed-width
+ * caption on the left, a wrapping cluster of option pills on the
+ * right. Keeps the Pen / Paper menus visually aligned. */
+function SketchMenuRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 py-1.5 first:pt-0 last:pb-0">
+      <span className="w-14 shrink-0 pt-1 text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
+      <div className="flex flex-wrap items-center gap-1">{children}</div>
+    </div>
   );
 }
