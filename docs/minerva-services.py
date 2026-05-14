@@ -466,11 +466,15 @@ def download():
             # filesize before yt-dlp goes "obviously the 4 K version
             # since it exists". Falls through to best-available at
             # that height even when no mp4 exists at exactly that cap.
+            # Do NOT pin the video stream to [ext=mp4] — YouTube only
+            # ships h264/mp4 up to ~1080p, so an mp4 filter caps the
+            # height long before the requested limit. Pick the best
+            # stream at-or-below the cap regardless of codec; m4a
+            # audio is preferred for a clean mp4 mux but not required.
             ydl_opts["format"] = (
-                f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]"
-                f"/best[height<={quality}][ext=mp4]"
-                f"/bestvideo[height<={quality}]+bestaudio"
-                f"/best[height<={quality}]"
+                f"bv*[height<={quality}]+ba[ext=m4a]"
+                f"/bv*[height<={quality}]+ba"
+                f"/b[height<={quality}]"
             )
         elif quality == "audio":
             # Quality=audio shortcut — drop the video stream, keep
@@ -481,7 +485,11 @@ def download():
                 {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
             ]
         else:
-            ydl_opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best"
+            # Best available video regardless of codec (VP9/AV1 webm
+            # is where YouTube's 1080p+ lives) merged into mp4. An
+            # [ext=mp4] video filter here was silently capping every
+            # download at 720p/1080p.
+            ydl_opts["format"] = "bv*+ba[ext=m4a]/bv*+ba/b"
 
     # YouTube ratchets anti-bot per-client. When the default client
     # gets blocked, retrying with `web_safari`, `ios`, or `web_embedded`

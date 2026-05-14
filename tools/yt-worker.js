@@ -57,14 +57,21 @@ function authedFetch(pathRel, init = {}) {
 }
 
 async function runYtDlp(url, format, quality, outdir) {
-  // Translate the API's `format`/`quality` shape into yt-dlp flags
-  // that mirror the helper's behaviour: best mp4 (1080+) or mp3.
+  // Translate the API's `format`/`quality` shape into yt-dlp flags.
+  // IMPORTANT: do NOT constrain the video stream to `[ext=mp4]`.
+  // YouTube only publishes h264/mp4 up to ~1080p (often only 720p);
+  // every resolution above that — and frequently 1080p itself — is
+  // VP9 or AV1 in a webm container. An `[ext=mp4]` filter therefore
+  // silently caps the download at 720p/1080p. We select the best
+  // stream regardless of codec and let `--merge-output-format mp4`
+  // remux it; m4a audio is still *preferred* (clean mp4 mux) but
+  // not required.
   const isAudio = quality === 'audio';
   const fmtSelector = isAudio
     ? 'bestaudio/best'
     : (quality && quality !== 'best'
-      ? `bestvideo[height<=${quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${quality}][ext=mp4]/bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]`
-      : 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best');
+      ? `bv*[height<=${quality}]+ba[ext=m4a]/bv*[height<=${quality}]+ba/b[height<=${quality}]`
+      : 'bv*+ba[ext=m4a]/bv*+ba/b');
   const args = [
     '-f', fmtSelector,
     '--merge-output-format', isAudio ? 'mp3' : 'mp4',
