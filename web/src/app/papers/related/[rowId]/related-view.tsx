@@ -60,6 +60,14 @@ export function RelatedView({
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [view, setView] = useState<'list' | 'graph' | 'sankey'>('list');
+  /** Incremental list reveal. The server returns up to 80 related
+   *  papers; rendering them all at once is a wall. Show 30
+   *  initially, "Load more" reveals another 30. Reset to 30 when
+   *  the filter set changes so a freshly-narrowed list starts at
+   *  the top. Graph / Sankey always get the full `filtered` set —
+   *  they're spatial, not a scroll list. */
+  const PAGE_STEP = 30;
+  const [listLimit, setListLimit] = useState(PAGE_STEP);
   const [yearPickerOpen, setYearPickerOpen] = useState(false);
   const yearPickerRef = useRef<HTMLDivElement>(null);
 
@@ -214,6 +222,15 @@ export function RelatedView({
   function clearFilters() {
     setYearFrom(''); setYearTo(''); setPdfOnly(false); setVenueFilter(''); setSortBy('relevance');
   }
+
+  // Reset the incremental reveal whenever the filtered set changes
+  // — a freshly-narrowed list should start at the top, not deep in
+  // a previous list's pagination.
+  useEffect(() => {
+    setListLimit(PAGE_STEP);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, yearFrom, yearTo, pdfOnly, venueFilter, sortBy, papers]);
+  const visible = useMemo(() => filtered.slice(0, listLimit), [filtered, listLimit]);
 
   async function addOne(p: Paper): Promise<boolean> {
     const key = paperKey(p);
@@ -707,7 +724,7 @@ export function RelatedView({
       )}
 
       <ul className={`mt-2 space-y-2 ${view !== 'list' ? 'hidden' : ''}`}>
-        {filtered.map((p) => {
+        {visible.map((p, idx) => {
           const key = paperKey(p);
           const url = paperUrl(p);
           const isAdded = added.has(key);
@@ -717,7 +734,7 @@ export function RelatedView({
           const authors = (p.authors || []).map((a) => a.name || '').filter(Boolean).join(', ');
           return (
             <li
-              key={key || (p.paperId ?? Math.random().toString(36))}
+              key={key || p.paperId || `idx-${idx}`}
               className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950"
             >
               <div className="flex items-start gap-3">
@@ -821,6 +838,17 @@ export function RelatedView({
           );
         })}
       </ul>
+      {view === 'list' && filtered.length > listLimit && (
+        <div className="mt-3 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setListLimit((n) => n + PAGE_STEP)}
+            className="rounded-full border border-zinc-200 bg-white px-4 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          >
+            Load more — showing {listLimit} of {filtered.length}
+          </button>
+        </div>
+      )}
     </main>
   );
 }

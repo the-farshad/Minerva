@@ -726,7 +726,10 @@ function UploadPaperButton({
   slug: string;
   onAdded: (row: Row) => void;
 }) {
-  const inputRef = useMemo(() => ({ current: null as HTMLInputElement | null }), []);
+  // Plain useRef — the new react-hooks lint rejects mutating a
+  // useMemo-wrapped pseudo-ref's `.current` from a ref callback.
+  // useRef + `ref={inputRef}` is the idiomatic, lint-clean form.
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   async function pick() {
     if (!inputRef.current) return;
@@ -766,7 +769,7 @@ function UploadPaperButton({
         <FileUp className="h-3.5 w-3.5" /> Upload PDF
       </button>
       <input
-        ref={(el) => { inputRef.current = el; }}
+        ref={inputRef}
         type="file"
         accept="application/pdf"
         className="hidden"

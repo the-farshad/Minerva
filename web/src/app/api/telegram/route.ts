@@ -5,7 +5,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
-import { readTelegramPrefs, writeTelegramPrefs, notifyTelegram } from '@/lib/telegram';
+import { readTelegramPrefs, writeTelegramPrefs } from '@/lib/telegram';
 
 export async function GET() {
   const session = await auth();

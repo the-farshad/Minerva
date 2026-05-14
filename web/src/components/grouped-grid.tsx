@@ -297,6 +297,7 @@ export function GroupedGrid({
         <div className="-mt-1 mb-3 flex flex-col items-center gap-1 text-zinc-500">
           <span className="text-[10px] uppercase tracking-wide">Section total</span>
           <ReadingTimeTotal rows={rows} size="wide" />
+          <BackfillPagesButton section={section} rows={rows} />
         </div>
       )}
       {groupCol && (
@@ -908,6 +909,55 @@ function ReadingTimeTotal({ rows, size = 'chip' }: { rows: Row[]; size?: 'chip' 
       <BookOpen className="h-3 w-3" />
       ~{summary}
     </div>
+  );
+}
+
+/** "Backfill page counts" button for the Papers section. Page-count
+ *  extraction only runs going forward (on upload / save-offline);
+ *  papers mirrored before that landed have no estimate. This calls
+ *  the backfill endpoint in a loop until `remaining` hits 0 — the
+ *  endpoint caps each call at 25 PDFs so a big library doesn't blow
+ *  the request timeout. Only shown when there's actually something
+ *  to backfill (≥1 paper with a Drive copy but no page count). */
+function BackfillPagesButton({ section, rows }: { section: Section; rows: Row[] }) {
+  const [busy, setBusy] = useState(false);
+  const pending = rows.filter((r) => {
+    const d = r.data as Record<string, unknown>;
+    return !d.pages && /drive:[\w-]{20,}/.test(String(d.offline || ''));
+  }).length;
+  if (pending === 0 && !busy) return null;
+  async function run() {
+    setBusy(true);
+    let updated = 0;
+    try {
+      // Loop until the server reports no rows remaining. Each call
+      // processes ≤25; a small library finishes in one round-trip.
+      for (let guard = 0; guard < 40; guard++) {
+        const r = await fetch(`/api/sections/${section.slug}/backfill-pages`, { method: 'POST' });
+        if (!r.ok) throw new Error(`backfill: ${r.status}`);
+        const j = (await r.json()) as { updated: number; remaining: number };
+        updated += j.updated;
+        if (j.remaining <= 0) break;
+      }
+      toast.success(`Backfilled page counts for ${updated} paper${updated === 1 ? '' : 's'}.`);
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={busy}
+      className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+      title="Extract PDF page counts for papers that don't have a reading-time estimate yet"
+    >
+      {busy
+        ? <><RefreshCw className="h-3 w-3 animate-spin" /> Backfilling…</>
+        : <><RefreshCw className="h-3 w-3" /> Backfill {pending} reading estimate{pending === 1 ? '' : 's'}</>}
+    </button>
   );
 }
 

@@ -12,10 +12,9 @@ export function FeedsCard() {
   const [feeds, setFeeds] = useState<Feeds | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    void load();
-  }, []);
-
+  // `load` declared before the effect that uses it — the new
+  // react-hooks lint rejects referencing it before declaration
+  // even though JS hoists the function.
   async function load() {
     try {
       const r = await fetch('/api/feeds');
@@ -25,6 +24,11 @@ export function FeedsCard() {
       notify.error('Could not load feeds: ' + (e as Error).message);
     }
   }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   async function rotate() {
     if (busy) return;
     const ok = await appConfirm('Rotate feed token?', { body: 'Old subscription URLs will stop working immediately.', dangerLabel: 'Rotate' });

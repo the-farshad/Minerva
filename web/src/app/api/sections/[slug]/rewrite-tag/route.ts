@@ -29,13 +29,6 @@ import { eq, and } from 'drizzle-orm';
 import { bus } from '@/lib/event-bus';
 import { syncPaperShortcuts } from '@/lib/drive';
 
-function splitList(v: unknown): string[] {
-  return String(v || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 /** Normalise HTML entities so "Spring &#39;06" (the way YouTube's
  *  older metadata endpoints encode apostrophes) matches the literal
  *  "Spring '06" the user may have typed back into the rename input.

@@ -156,7 +156,7 @@ export function RelatedSankey({
   if (!layout || layout.nodes.length === 0) {
     return (
       <p className="rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
-        No citation links between the visible papers. The Graph view's bibliographic-coupling edges still show shared-reference relationships.
+        No citation links between the visible papers. The Graph view&apos;s bibliographic-coupling edges still show shared-reference relationships.
       </p>
     );
   }

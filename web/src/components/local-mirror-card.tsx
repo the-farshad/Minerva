@@ -10,15 +10,16 @@ export function LocalMirrorCard() {
   const [supported, setSupported] = useState(false);
   const [folderName, setFolderName] = useState<string | null>(null);
 
-  useEffect(() => {
-    setSupported(localMirror.supported());
-    void refresh();
-  }, []);
-
   async function refresh() {
     const h = await localMirror.handle();
     setFolderName(h?.name ?? null);
   }
+
+  useEffect(() => {
+    setSupported(localMirror.supported());
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   async function pick() {
     try {
       const h = await localMirror.pick();
