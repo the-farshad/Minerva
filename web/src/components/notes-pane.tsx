@@ -486,29 +486,20 @@ export function NotesPane({
               <p className="text-xs text-zinc-500">No sketch yet — click <strong>Edit sketch</strong> to draw one.</p>
             )}
             {/* Dual handler: iPad Pencil sometimes doesn't fire
-              * `click` reliably from `pointerup`. Wiring both with
-              * a tiny dedupe window guarantees the modal opens
-              * regardless of which event family the device picks. */}
-            {(() => {
-              const lastRef = { current: 0 };
-              const open = () => {
-                const now = Date.now();
-                if (now - lastRef.current < 300) return;
-                lastRef.current = now;
-                setSketchOpen(true);
-              };
-              return (
-                <button
-                  type="button"
-                  onClick={open}
-                  onPointerUp={(e) => { if (e.pointerType === 'pen') open(); }}
-                  style={{ cursor: 'pointer' }}
-                  className="mt-4 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-                >
-                  <Pencil className="h-3.5 w-3.5" /> {value ? 'Edit sketch' : 'Draw sketch'}
-                </button>
-              );
-            })()}
+              * `click` reliably from `pointerup`. Both call the same
+              * handler; setSketchOpen(true) is idempotent so a
+              * double-fire is harmless — no dedupe ref needed (the
+              * previous one was recreated every render and so never
+              * actually dedup'd anyway). */}
+            <button
+              type="button"
+              onClick={() => setSketchOpen(true)}
+              onPointerUp={(e) => { if (e.pointerType === 'pen') setSketchOpen(true); }}
+              style={{ cursor: 'pointer' }}
+              className="mt-4 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+            >
+              <Pencil className="h-3.5 w-3.5" /> {value ? 'Edit sketch' : 'Draw sketch'}
+            </button>
           </div>
         ) : (
           <>
