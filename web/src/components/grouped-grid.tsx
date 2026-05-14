@@ -691,6 +691,12 @@ export function GroupedGrid({
                     </button>
                     {section.preset === 'youtube' && <WatchedBar row={r} />}
                     {section.preset === 'papers' && <PaperReadingBadge row={r} />}
+                    {Boolean((r.data as Record<string, unknown>)._queued) && (
+                      <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700 dark:bg-amber-950 dark:text-amber-300" title="A local worker is downloading this video">
+                        <Cloud className="h-3 w-3" />
+                        Downloading on worker…
+                      </div>
+                    )}
                     {/* Single overflow menu — three dots always
                       * visible in the corner. Inside: Info (opens a
                       * popover with full metadata), Save offline (for

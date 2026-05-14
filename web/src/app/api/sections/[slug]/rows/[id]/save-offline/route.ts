@@ -158,10 +158,24 @@ async function saveOffline(
         format,
         quality: quality === 'audio' ? 'audio' : quality,
       }).returning();
-      // SSE row.updated fires when the worker completes — not
-      // here. The NDJSON `done` event carries queued: true so the
-      // UI can flip to a "Downloading on worker…" pill while it
-      // waits.
+      // Stamp the row with a `_queued` marker so the UI can render
+      // a "Downloading on worker…" pill on the card without an
+      // extra API roundtrip. Cleared by the worker's complete /
+      // fail callbacks. Also fires SSE row.updated so other tabs
+      // see the queued state immediately.
+      const nextData: Record<string, unknown> = { ...(data as Record<string, unknown>), _queued: job.id };
+      await db.update(schema.rows)
+        .set({ data: nextData, updatedAt: new Date() })
+        .where(eq(schema.rows.id, row.id));
+      bus.emit(userId, {
+        kind: 'row.updated',
+        sectionSlug: sec.slug,
+        rowId: row.id,
+        data: nextData,
+      });
+      // SSE row.updated fires AGAIN when the worker completes; the
+      // NDJSON `done` event below carries queued: true so the UI
+      // can already flip to the pill before SSE arrives.
       return { fileId: '', kind: 'video', queued: true, jobId: job.id };
     }
 

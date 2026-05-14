@@ -46,7 +46,7 @@ import { createPortal } from 'react-dom';
 import {
   X, Trash2, Eraser, Pen, Pencil as PencilIcon, Highlighter,
   Brush, Save as SaveIcon, Loader2, Undo2, Redo2, FileDown, Slash,
-  ChevronLeft, ChevronRight, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
+  ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Plus as PlusIcon, FileX, Lasso, Copy, Minus,
 } from 'lucide-react';
 import { distanceToPolyline, pointInPolygon, polylineBBox } from '@/lib/sketch-hit-test';
 import { toast } from 'sonner';
@@ -1630,6 +1630,46 @@ export function SketchModal({
     if (onAutoSave) onAutoSave(buildDoc());
   }
 
+  /** Duplicate the current page — clones the strokes (deep-copy of
+   *  each point), inserts the clone right after the current page,
+   *  and switches to it. The clone gets a fresh page id so the
+   *  next autosave persists both. */
+  function duplicateCurrentPage() {
+    commitInFlight();
+    const cur = pagesRef.current[pageIndex];
+    if (!cur) return;
+    const clone: SketchPage = {
+      strokes: cur.strokes.map((s) => ({
+        tool: s.tool,
+        color: s.color,
+        alpha: s.alpha,
+        points: s.points.map((p) => ({ ...p })),
+      })),
+      bg: cur.bg,
+    };
+    pagesRef.current.splice(pageIndex + 1, 0, clone);
+    pageIdsRef.current.splice(pageIndex + 1, 0, newSketchId('page'));
+    setPageCount(pagesRef.current.length);
+    setPageIndex(pageIndex + 1);
+    if (onAutoSave) onAutoSave(buildDoc());
+  }
+  /** Reorder the current page by one slot. dir=-1 moves it left,
+   *  dir=+1 moves it right. No-op at the ends. Selection / lasso
+   *  state is wiped via the alias-sync effect, which fires when
+   *  pageIndex changes. */
+  function movePage(dir: -1 | 1) {
+    const from = pageIndex;
+    const to = from + dir;
+    if (to < 0 || to >= pagesRef.current.length) return;
+    commitInFlight();
+    const p = pagesRef.current.splice(from, 1)[0];
+    const id = pageIdsRef.current.splice(from, 1)[0];
+    pagesRef.current.splice(to, 0, p);
+    pageIdsRef.current.splice(to, 0, id);
+    setPageIndex(to);
+    if (onAutoSave) onAutoSave(buildDoc());
+  }
+
   /** Build a SketchDoc snapshot of the current editor state. The
    *  doc carries stable per-stroke + per-page ids so a subsequent
    *  autosave emits the same id for an unchanged stroke (PG patch
@@ -1896,6 +1936,24 @@ export function SketchModal({
             icon={<PlusIcon className="h-3.5 w-3.5" />}
             disabled={uploading}
             onActivate={addPage}
+          />
+          <SketchIconButton
+            label="Duplicate page"
+            icon={<Copy className="h-3.5 w-3.5" />}
+            disabled={uploading}
+            onActivate={duplicateCurrentPage}
+          />
+          <SketchIconButton
+            label="Move page earlier"
+            icon={<ChevronUp className="h-3.5 w-3.5" />}
+            disabled={uploading || pageIndex === 0}
+            onActivate={() => movePage(-1)}
+          />
+          <SketchIconButton
+            label="Move page later"
+            icon={<ChevronDown className="h-3.5 w-3.5" />}
+            disabled={uploading || pageIndex >= pageCount - 1}
+            onActivate={() => movePage(1)}
           />
           <SketchIconButton
             label="Delete this page"

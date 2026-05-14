@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, schema } from '@/db';
 import { eq } from 'drizzle-orm';
+import { bus } from '@/lib/event-bus';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,5 +53,28 @@ export async function POST(
       ...(next === 'failed' ? { completedAt: new Date() } : {}),
     })
     .where(eq(schema.downloadJobs.id, id));
+  // On terminal failure, clear the `_queued` marker on the row so
+  // the UI stops claiming a worker download is in flight. Retries
+  // (next='pending') keep the marker — the next worker poll will
+  // re-claim and complete.
+  if (next === 'failed') {
+    const row = await db.query.rows.findFirst({ where: eq(schema.rows.id, job.rowId) });
+    if (row) {
+      const data = (row.data as Record<string, unknown>) || {};
+      if (data._queued) {
+        const nextData = { ...data };
+        delete nextData._queued;
+        await db.update(schema.rows)
+          .set({ data: nextData, updatedAt: new Date() })
+          .where(eq(schema.rows.id, job.rowId));
+        bus.emit(job.userId, {
+          kind: 'row.updated',
+          sectionSlug: job.sectionSlug,
+          rowId: job.rowId,
+          data: nextData,
+        });
+      }
+    }
+  }
   return NextResponse.json({ ok: true, requeued: next === 'pending', attempts: job.attempts });
 }

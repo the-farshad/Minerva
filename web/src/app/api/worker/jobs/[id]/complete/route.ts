@@ -53,7 +53,10 @@ export async function POST(
     const parts = prevOffline ? prevOffline.split(' · ').filter(Boolean) : [];
     const without = parts.filter((p) => !p.startsWith('drive:'));
     without.push(`drive:${driveFileId}`);
-    const nextData = { ...data, offline: without.join(' · ') };
+    // Clear the `_queued` marker the save-offline route stamped on
+    // the row — the worker is done; the pill should disappear.
+    const nextData: Record<string, unknown> = { ...data, offline: without.join(' · ') };
+    delete nextData._queued;
     await db.update(schema.rows)
       .set({ data: nextData, updatedAt: new Date() })
       .where(eq(schema.rows.id, job.rowId));
