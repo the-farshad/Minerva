@@ -107,6 +107,7 @@ type SketchPage = { strokes: Stroke[]; bg: HTMLImageElement | null };
  *  at the actual canvas dimensions instead of forcing a standard
  *  paper aspect ratio. */
 type PageFormat = 'auto' | 'a4-portrait' | 'a4-landscape' | 'letter-portrait' | 'letter-landscape' | 'square';
+type PageBackground = 'blank' | 'lined' | 'grid' | 'dotted' | 'graph';
 
 const PAGE_FORMATS: { id: PageFormat; label: string; pxW: number; pxH: number }[] = [
   // pxW/pxH are CSS-px dimensions used for the PDF page size; the
@@ -262,6 +263,7 @@ export function SketchModal({
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCount, setPageCount] = useState(1);
   const [pageFormat, setPageFormat] = useState<PageFormat>('auto');
+  const [pageBackground, setPageBackground] = useState<PageBackground>('blank');
 
   /* Mount marker for createPortal — typeof document is undefined
    * during SSR; we only render the portal on the client tick. */
@@ -358,11 +360,13 @@ export function SketchModal({
       pageIdsRef.current = seedDoc.pages.map((p) => p.id);
       setPageCount(seedDoc.pages.length);
       setPageFormat(docSizeToPaper(seedDoc.paper?.size ?? 'auto'));
+      setPageBackground(((seedDoc.paper?.background as PageBackground) ?? 'blank'));
     } else {
       pagesRef.current = [{ strokes: [], bg: null }];
       pageIdsRef.current = [newSketchId('page')];
       setPageCount(1);
       setPageFormat('auto');
+      setPageBackground('blank');
     }
     setPageIndex(0);
     strokesRef.current = pagesRef.current[0].strokes;
@@ -761,6 +765,56 @@ export function SketchModal({
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.scale(dpr, dpr);
+    // Paper-style background pattern, drawn first so seed images
+    // and strokes paint on top of it. Patterns render in CSS-px
+    // (post-scale) so they look consistent across DPRs.
+    if (pageBackground !== 'blank') {
+      const cw = c.clientWidth || c.width / dpr;
+      const ch = c.clientHeight || c.height / dpr;
+      ctx.save();
+      const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+      const lineColor = isDark ? 'rgba(200,200,210,0.10)' : 'rgba(40,40,50,0.10)';
+      const dotColor = isDark ? 'rgba(200,200,210,0.18)' : 'rgba(40,40,50,0.18)';
+      if (pageBackground === 'lined') {
+        // Horizontal rule every 28 CSS px — typical notebook ruling.
+        ctx.strokeStyle = lineColor;
+        ctx.lineWidth = 1;
+        for (let y = 28; y < ch; y += 28) {
+          ctx.beginPath();
+          ctx.moveTo(0, y + 0.5);
+          ctx.lineTo(cw, y + 0.5);
+          ctx.stroke();
+        }
+      } else if (pageBackground === 'grid' || pageBackground === 'graph') {
+        // Both are square grids; graph uses a finer pitch.
+        const pitch = pageBackground === 'graph' ? 16 : 32;
+        ctx.strokeStyle = lineColor;
+        ctx.lineWidth = 1;
+        for (let x = pitch; x < cw; x += pitch) {
+          ctx.beginPath();
+          ctx.moveTo(x + 0.5, 0);
+          ctx.lineTo(x + 0.5, ch);
+          ctx.stroke();
+        }
+        for (let y = pitch; y < ch; y += pitch) {
+          ctx.beginPath();
+          ctx.moveTo(0, y + 0.5);
+          ctx.lineTo(cw, y + 0.5);
+          ctx.stroke();
+        }
+      } else if (pageBackground === 'dotted') {
+        ctx.fillStyle = dotColor;
+        const pitch = 24;
+        for (let y = pitch; y < ch; y += pitch) {
+          for (let x = pitch; x < cw; x += pitch) {
+            ctx.beginPath();
+            ctx.arc(x, y, 1, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+      ctx.restore();
+    }
     if (bgImageRef.current) {
       const cw = c.clientWidth || c.width / dpr;
       const ch = c.clientHeight || c.height / dpr;
@@ -1042,7 +1096,7 @@ export function SketchModal({
     return {
       schemaVersion: 1,
       documentId: documentId || 'sketch',
-      paper: { size: paperToDocSize(pageFormat) },
+      paper: { size: paperToDocSize(pageFormat), background: pageBackground },
       pages,
     };
   }
@@ -1511,6 +1565,24 @@ export function SketchModal({
             {PAGE_FORMATS.map((f) => (
               <option key={f.id} value={f.id}>{f.label}</option>
             ))}
+          </select>
+        </label>
+        {/* Paper-style background. Draws a lined / grid / dotted /
+          * graph pattern under the strokes — picks pitch and colour
+          * automatically for light vs dark mode. Persisted on
+          * SketchDoc.paper.background so it survives reopen. */}
+        <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400" title="Page background pattern">
+          <span>Style</span>
+          <select
+            value={pageBackground}
+            onChange={(e) => setPageBackground(e.target.value as PageBackground)}
+            className="cursor-pointer rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <option value="blank">Blank</option>
+            <option value="lined">Lined</option>
+            <option value="grid">Grid</option>
+            <option value="dotted">Dotted</option>
+            <option value="graph">Graph</option>
           </select>
         </label>
       </footer>

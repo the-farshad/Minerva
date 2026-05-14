@@ -248,6 +248,16 @@ PIPED_API_INSTANCES = (
 )
 
 
+def _yt_dlp_version_safe() -> str:
+    """Best-effort yt-dlp version string for failure-log breadcrumbs.
+    Tolerates a missing __version__ attribute on older builds so the
+    log line never fails on its own."""
+    try:
+        return str(getattr(yt_dlp, "__version__", "unknown"))
+    except Exception:
+        return "unknown"
+
+
 def _yt_video_id(url: str) -> str | None:
     """Pull the 11-character YouTube video id out of any common URL shape."""
     import re as _re
@@ -347,6 +357,23 @@ def download():
         "quiet": True,
         "no_warnings": True,
         "merge_output_format": "mp4",
+        # Human-pacing knobs. YouTube's anti-bot keys off request
+        # cadence: a fresh signed-in cookies file can still get
+        # bot-walled if the same IP fires four parallel video
+        # fragment streams a second apart. The values below are
+        # conservative enough to mostly slip past, fast enough that
+        # a single video still finishes in a reasonable time.
+        "sleep_interval": 4,
+        "max_sleep_interval": 10,
+        "sleep_interval_requests": 1,
+        "concurrent_fragment_downloads": 1,
+        # Persistent download archive: yt-dlp records every
+        # successful video id here and short-circuits on subsequent
+        # requests for the same id. The app already short-circuits
+        # at the offline: marker layer, but archive helps when the
+        # same row triggers save-offline twice (e.g. a transient
+        # network glitch in the retry path).
+        "download_archive": "/srv/yt-dlp-archive.txt",
         # YouTube serves an n-parameter JS challenge yt-dlp must
         # execute to get usable stream URLs. Without the EJS solver
         # script published on GitHub, the response is stripped to
@@ -500,7 +527,14 @@ def download():
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             label = client or "default"
-            print(f"[yt-dlp] {label} failed: {exc}", flush=True)
+            # Verbose-on-failure: log the full traceback alongside
+            # the friendly one-liner so a "best available downloaded
+            # the worst one" or "bot wall" complaint is reproducible
+            # straight from container logs without re-running with
+            # `-v` against the offending URL.
+            import traceback
+            tb = traceback.format_exc().rstrip()
+            print(f"[yt-dlp] {label} failed: {exc}\n[yt-dlp]   yt-dlp-version=" + _yt_dlp_version_safe() + "\n[yt-dlp]   url=" + url + "\n" + tb, flush=True)
             continue
     if info is None:
         # Last-chance fallback for YouTube: ask a public Piped /
