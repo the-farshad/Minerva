@@ -120,6 +120,13 @@ export function LitExplorer() {
 
   const [tab, setTab] = useState<Tab>('overview');
   const [relatedView, setRelatedView] = useState<RelatedView>('list');
+  // List filters / sort — apply across all three connected-graph
+  // legs (refs / cites / related). Reset on every new seed search
+  // via the `setX('')` block in `resolveAndSetSeed` below.
+  const [yearFrom, setYearFrom] = useState<string>('');
+  const [yearTo, setYearTo] = useState<string>('');
+  const [oaOnly, setOaOnly] = useState<boolean>(false);
+  const [sortBy, setSortBy] = useState<'relevance' | 'cites-desc' | 'year-desc' | 'year-asc'>('relevance');
   // Connected-graph fetches, cached per `${ref}:${kind}` key so
   // tab-flipping doesn't refetch.
   const [edgeCache, setEdgeCache] = useState<Record<string, Paper[]>>({});
@@ -137,6 +144,9 @@ export function LitExplorer() {
     setPaper(null);
     setEdgeCache({});
     setTab('overview');
+    // Reset list filters whenever the seed changes — a year range
+    // useful for paper A is almost never the same as for paper B.
+    setYearFrom(''); setYearTo(''); setOaOnly(false); setSortBy('relevance');
     try {
       const r = await fetch('/api/import/lookup', {
         method: 'POST',
@@ -210,6 +220,35 @@ export function LitExplorer() {
     { id: 'related',  label: 'Related', Icon: GitBranch },
   ]), []);
 
+  // Filter + sort the active list. Source order is "relevance" —
+  // SS / OA return papers in the order their similarity ranker
+  // chose, which is meaningful on its own, so it's the default
+  // sort and a no-op when selected.
+  const filteredEdges = useMemo<Paper[] | null>(() => {
+    if (!edgePapers) return edgePapers;
+    const yFrom = Number(yearFrom) || 0;
+    const yTo = Number(yearTo) || 9999;
+    const out = edgePapers.filter((p) => {
+      const y = typeof p.year === 'number' ? p.year : Number(p.year) || 0;
+      if (y && (y < yFrom || y > yTo)) return false;
+      if (yearFrom && !y) return false;
+      if (yearTo && !y) return false;
+      if (oaOnly && !(p.openAccessPdf?.url || p.pdf)) return false;
+      return true;
+    });
+    if (sortBy === 'cites-desc') {
+      out.sort((a, b) => (b.citationCount ?? -1) - (a.citationCount ?? -1));
+    } else if (sortBy === 'year-desc' || sortBy === 'year-asc') {
+      const dir = sortBy === 'year-asc' ? 1 : -1;
+      out.sort((a, b) => {
+        const ya = typeof a.year === 'number' ? a.year : Number(a.year) || 0;
+        const yb = typeof b.year === 'number' ? b.year : Number(b.year) || 0;
+        return dir * (ya - yb);
+      });
+    }
+    return out;
+  }, [edgePapers, yearFrom, yearTo, oaOnly, sortBy]);
+
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
       <header className="mb-6">
@@ -273,30 +312,74 @@ export function LitExplorer() {
 
           {tab !== 'overview' && (
             <div>
-              {tab === 'related' && edgePapers && edgePapers.length > 0 && (
-                <div className="mb-3 inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
-                  <button
-                    type="button"
-                    onClick={() => setRelatedView('list')}
-                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] transition ${
-                      relatedView === 'list'
-                        ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
-                        : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
-                    }`}
+              {edgePapers && edgePapers.length > 0 && (
+                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+                  <span className="text-zinc-400">
+                    {filteredEdges?.length ?? 0}
+                    {filteredEdges && edgePapers && filteredEdges.length !== edgePapers.length
+                      ? ` of ${edgePapers.length}`
+                      : ''}
+                  </span>
+                  <input
+                    type="number"
+                    value={yearFrom}
+                    onChange={(e) => setYearFrom(e.target.value)}
+                    placeholder="from"
+                    className="w-16 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
+                  />
+                  <span className="text-zinc-400">–</span>
+                  <input
+                    type="number"
+                    value={yearTo}
+                    onChange={(e) => setYearTo(e.target.value)}
+                    placeholder="to"
+                    className="w-16 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
+                  />
+                  <label className="inline-flex items-center gap-1 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={oaOnly}
+                      onChange={(e) => setOaOnly(e.target.checked)}
+                      className="accent-zinc-900 dark:accent-zinc-200"
+                    />
+                    Open access
+                  </label>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                    className="rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none dark:border-zinc-700"
                   >
-                    <List className="h-3 w-3" /> List
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRelatedView('graph')}
-                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] transition ${
-                      relatedView === 'graph'
-                        ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
-                        : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
-                    }`}
-                  >
-                    <Network className="h-3 w-3" /> Graph
-                  </button>
+                    <option value="relevance">Relevance</option>
+                    <option value="cites-desc">Most cited</option>
+                    <option value="year-desc">Newest</option>
+                    <option value="year-asc">Oldest</option>
+                  </select>
+                  {tab === 'related' && (
+                    <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                      <button
+                        type="button"
+                        onClick={() => setRelatedView('list')}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+                          relatedView === 'list'
+                            ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                            : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                        }`}
+                      >
+                        <List className="h-3 w-3" /> List
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRelatedView('graph')}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+                          relatedView === 'graph'
+                            ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                            : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                        }`}
+                      >
+                        <Network className="h-3 w-3" /> Graph
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {edgeLoading && (
@@ -314,14 +397,14 @@ export function LitExplorer() {
                   No results for this leg.
                 </p>
               )}
-              {!edgeLoading && edgePapers && edgePapers.length > 0 && tab === 'related' && relatedView === 'graph' && (
+              {!edgeLoading && filteredEdges && filteredEdges.length > 0 && tab === 'related' && relatedView === 'graph' && (
                 <RelatedGraph
                   seedTitle={paper.title || ''}
                   seedYear={paper.year ? String(paper.year) : ''}
                   seedAuthors={authorsStr(paper)}
                   // Coerce our looser Paper.authors (string | array)
                   // into the array-only shape RelatedGraph expects.
-                  papers={edgePapers.map((p) => ({
+                  papers={filteredEdges.map((p) => ({
                     ...p,
                     authors: Array.isArray(p.authors)
                       ? p.authors
@@ -335,9 +418,9 @@ export function LitExplorer() {
                   onAdd={async () => false}
                 />
               )}
-              {!edgeLoading && edgePapers && edgePapers.length > 0 && !(tab === 'related' && relatedView === 'graph') && (
+              {!edgeLoading && filteredEdges && filteredEdges.length > 0 && !(tab === 'related' && relatedView === 'graph') && (
                 <ul className="space-y-2">
-                  {edgePapers.map((p, idx) => (
+                  {filteredEdges.map((p, idx) => (
                     <PaperRow
                       key={`${idx}-${p.paperId ?? p.title}`}
                       paper={p}
@@ -345,6 +428,11 @@ export function LitExplorer() {
                     />
                   ))}
                 </ul>
+              )}
+              {!edgeLoading && edgePapers && edgePapers.length > 0 && filteredEdges && filteredEdges.length === 0 && (
+                <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
+                  {edgePapers.length} loaded, none match the current filters.
+                </p>
               )}
             </div>
           )}
