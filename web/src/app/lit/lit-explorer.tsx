@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch } from 'lucide-react';
+import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network } from 'lucide-react';
+import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 
 type Paper = {
   kind?: string;
@@ -54,6 +55,7 @@ function refOf(p: Paper): string | null {
 }
 
 type Tab = 'overview' | 'refs' | 'cites' | 'related';
+type RelatedView = 'list' | 'graph';
 
 export function LitExplorer() {
   const [query, setQuery] = useState('');
@@ -62,6 +64,7 @@ export function LitExplorer() {
   const [err, setErr] = useState<string>('');
 
   const [tab, setTab] = useState<Tab>('overview');
+  const [relatedView, setRelatedView] = useState<RelatedView>('list');
   // Connected-graph fetches, cached per `${ref}:${kind}` key so
   // tab-flipping doesn't refetch.
   const [edgeCache, setEdgeCache] = useState<Record<string, Paper[]>>({});
@@ -137,11 +140,8 @@ export function LitExplorer() {
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
-      <header className="mb-8 border-b border-zinc-200 pb-6 dark:border-zinc-800">
+      <header className="mb-6">
         <h1 className="text-3xl font-semibold tracking-tight">Literature</h1>
-        <p className="mt-2 text-sm text-zinc-500">
-          Look up any paper by DOI, arXiv id, URL, or title. Free, stateless &mdash; nothing saved.
-        </p>
       </header>
 
       <form onSubmit={onSubmit} className="mb-6">
@@ -201,6 +201,32 @@ export function LitExplorer() {
 
           {tab !== 'overview' && (
             <div>
+              {tab === 'related' && edgePapers && edgePapers.length > 0 && (
+                <div className="mb-3 inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                  <button
+                    type="button"
+                    onClick={() => setRelatedView('list')}
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] transition ${
+                      relatedView === 'list'
+                        ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                        : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                    }`}
+                  >
+                    <List className="h-3 w-3" /> List
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRelatedView('graph')}
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] transition ${
+                      relatedView === 'graph'
+                        ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                        : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                    }`}
+                  >
+                    <Network className="h-3 w-3" /> Graph
+                  </button>
+                </div>
+              )}
               {edgeLoading && (
                 <div className="flex items-center gap-2 rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -216,7 +242,28 @@ export function LitExplorer() {
                   No results for this leg.
                 </p>
               )}
-              {!edgeLoading && edgePapers && edgePapers.length > 0 && (
+              {!edgeLoading && edgePapers && edgePapers.length > 0 && tab === 'related' && relatedView === 'graph' && (
+                <RelatedGraph
+                  seedTitle={paper.title || ''}
+                  seedYear={paper.year ? String(paper.year) : ''}
+                  seedAuthors={authorsStr(paper)}
+                  // Coerce our looser Paper.authors (string | array)
+                  // into the array-only shape RelatedGraph expects.
+                  papers={edgePapers.map((p) => ({
+                    ...p,
+                    authors: Array.isArray(p.authors)
+                      ? p.authors
+                      : (typeof p.authors === 'string' && p.authors
+                          ? p.authors.split(/,\s*/).map((n) => ({ name: n }))
+                          : []),
+                    year: typeof p.year === 'number' ? p.year : (p.year ? Number(p.year) || undefined : undefined),
+                  }))}
+                  added={new Set()}
+                  adding={new Set()}
+                  onAdd={async () => false}
+                />
+              )}
+              {!edgeLoading && edgePapers && edgePapers.length > 0 && !(tab === 'related' && relatedView === 'graph') && (
                 <ul className="space-y-2">
                   {edgePapers.map((p, idx) => <PaperRow key={`${idx}-${p.paperId ?? p.title}`} paper={p} />)}
                 </ul>
@@ -224,17 +271,6 @@ export function LitExplorer() {
             </div>
           )}
         </>
-      )}
-
-      {!paper && !err && !loading && (
-        <div className="rounded-md border border-dashed border-zinc-200 p-6 text-sm text-zinc-500 dark:border-zinc-800">
-          <p className="font-medium text-zinc-700 dark:text-zinc-300">What this is</p>
-          <p className="mt-2">
-            A literature explorer. Paste any paper reference above and it&rsquo;ll be resolved across
-            arXiv, CrossRef, Europe PMC, and most publisher pages. Then browse its references, the
-            papers that cite it, and similar work &mdash; no sign-in needed.
-          </p>
-        </div>
       )}
 
       <footer className="mt-12 text-center text-xs text-zinc-400">
