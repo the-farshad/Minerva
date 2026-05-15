@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Paperclip, Pencil, Download, FilePlus, Printer } from 'lucide-react';
+import { Paperclip, Pencil, Download, FilePlus } from 'lucide-react';
 import { renderMarkdown } from '@/lib/markdown';
 import { appPrompt } from './prompt';
 import { notify } from '@/lib/notify';
@@ -368,20 +368,13 @@ export function NotesPane({
             type="button"
             onClick={() => {
               if (!value.trim()) {
-                toast.info('Nothing to download — write something first.');
+                toast.info('Nothing to export — write something first.');
                 return;
               }
-              // Download as the *right kind of file* for the note type.
-              // For sketches, `value` is a data:image/png URL — saving it
-              // as .md produced an unreadable text file (the user's
-              // "exports as md" complaint when expecting PDF/PNG).
+              // Sketch note: `value` is a data:image PNG — embed it
+              // in a single-page PDF sized to the image. Dynamic
+              // jsPDF import keeps the common path's bundle small.
               if (effType === 'sketch') {
-                // For a sketch note, the Download button produces
-                // a PDF (the user's expectation — "export as PDF").
-                // Loads the PNG data-URL, measures it, and embeds it
-                // into a single-page PDF sized to the image. Dynamic
-                // import of jsPDF keeps notes-pane's bundle small
-                // for the common (md/text) path.
                 void (async () => {
                   const m = value.match(/^data:image\/[a-z]+;base64,(.*)$/i);
                   if (!m) {
@@ -412,39 +405,20 @@ export function NotesPane({
                 })();
                 return;
               }
-              const blob = new Blob([value], { type: 'text/markdown;charset=utf-8' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `notes-${rowId.slice(0, 8)}.md`;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              setTimeout(() => URL.revokeObjectURL(url), 1000);
-            }}
-            title={effType === 'sketch' ? 'Download this sketch as a PDF' : 'Download these notes as a Markdown file'}
-            className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (!value.trim()) {
-                toast.info('Nothing to print — write something first.');
-                return;
-              }
-              // Open a clean popup window with the rendered markdown
-              // and trigger window.print. The user picks "Save as PDF"
-              // in the browser's print dialog — works on iOS, Mac,
-              // Windows, Linux without any JS dep.
-              const html = renderMarkdown(value);
-              const popup = window.open('', '_blank', 'width=840,height=900');
-              if (!popup) {
-                toast.error('Pop-up blocked — allow pop-ups for Minerva to print notes.');
-                return;
-              }
-              popup.document.write(`<!doctype html>
+              // Markdown note → PDF. Render the markdown into a clean
+              // popup and hand it to the browser's print dialog,
+              // where "Save as PDF" is the default target on every
+              // platform (iOS share sheet included) — no JS dep,
+              // works everywhere. This used to be a separate, hard-
+              // to-find Printer icon; it's the Export button now.
+              if (effType === 'md') {
+                const html = renderMarkdown(value);
+                const popup = window.open('', '_blank', 'width=840,height=900');
+                if (!popup) {
+                  toast.error('Pop-up blocked — allow pop-ups for Minerva to export a PDF.');
+                  return;
+                }
+                popup.document.write(`<!doctype html>
 <html><head>
 <meta charset="utf-8" />
 <title>Note · ${rowId.slice(0, 8)}</title>
@@ -459,18 +433,34 @@ export function NotesPane({
   a { color: #1d4ed8; }
   hr { border: 0; border-top: 1px solid #e4e4e7; margin: 2rem 0; }
   table { border-collapse: collapse; width: 100%; }
-  th, td { border: 1px solid #e4e4e7; padding: .35rem .6rem; text-align: left; }
   @media print { body { margin: 1rem; } }
 </style>
 </head><body>${html}</body></html>`);
-              popup.document.close();
-              popup.focus();
-              setTimeout(() => popup.print(), 300);
+                popup.document.close();
+                popup.focus();
+                setTimeout(() => popup.print(), 300);
+                return;
+              }
+              // Plain-text note → download the raw text file.
+              const blob = new Blob([value], { type: 'text/plain;charset=utf-8' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `notes-${rowId.slice(0, 8)}.txt`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
             }}
-            title="Open the rendered notes in a printable view — pick 'Save as PDF' in the print dialog"
+            title={
+              effType === 'text'
+                ? 'Download this note as a text file'
+                : 'Export this note as a PDF'
+            }
             className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
-            <Printer className="h-3.5 w-3.5" />
+            <Download className="h-3.5 w-3.5" />
+            <span className="text-[10px]">{effType === 'text' ? 'TXT' : 'PDF'}</span>
           </button>
           {onTypeChange && (
             /* Note content type — Text or Markdown. "Sketch" is no
