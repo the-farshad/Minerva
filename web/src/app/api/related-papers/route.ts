@@ -26,9 +26,13 @@ import { getCached, setCached } from '@/lib/related-papers/cache';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
+  // Public — same rationale as /api/papers/refs and /api/import/lookup.
+  // Upstream data (OpenAlex / Semantic Scholar) is freely available,
+  // the route is just a normalising proxy. Auth, when present, only
+  // switches in the user's preferred provider; anonymous callers
+  // get OpenAlex (no key needed, polite-pool friendly).
   const session = await auth();
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const userId = (session.user as { id: string }).id;
+  const userId = session?.user ? (session.user as { id: string }).id : '';
 
   const ref = parseRef(req.nextUrl.searchParams.get('ref'));
   const title = req.nextUrl.searchParams.get('title');
@@ -46,7 +50,9 @@ export async function GET(req: NextRequest) {
   // need their own design pass.
   const limit = Math.min(100, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 30));
 
-  const provider = (await getServerPref<string>(userId, 'related_papers_provider')) || 'openalex';
+  const provider = userId
+    ? ((await getServerPref<string>(userId, 'related_papers_provider')) || 'openalex')
+    : 'openalex';
 
   /** Cache key: provider + the most stable identifier we have.
    *  Falls back to title if no ref was supplied — title queries are
@@ -76,7 +82,7 @@ export async function GET(req: NextRequest) {
       // returns nothing, and label the response so the UI can
       // tell them what happened.
       if (ss.ok && ss.papers.length === 0) {
-        const oa = await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
+        const oa = await fetchRelatedFromOpenAlex({ ref, title, limit, email: session?.user?.email ?? undefined });
         if (oa.ok) {
           // Cache the OpenAlex fallback under the OpenAlex key so a
           // later openalex-provider query picks it up. Not cached
@@ -110,7 +116,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const oa = await fetchRelatedFromOpenAlex({ ref, title, limit, email: session.user.email ?? undefined });
+    const oa = await fetchRelatedFromOpenAlex({ ref, title, limit, email: session?.user?.email ?? undefined });
     if (oa.ok) {
       setCached(cacheKey, oa);
       return NextResponse.json({

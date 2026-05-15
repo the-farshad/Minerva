@@ -24,13 +24,21 @@ import { fetchPaperEdgesFromOpenCitations } from '@/lib/related-papers/opencitat
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const userId = (session.user as { id: string }).id;
-
   const rowId = req.nextUrl.searchParams.get('rowId');
+  // Auth is required only for the rowId path (it reads a user-
+  // scoped row from the DB). The ref-only path is fully public —
+  // SS / OC citation data is freely available from upstream, and
+  // lit.thefarshad.com's stateless explorer needs it without
+  // signing the visitor in.
+  let userId = '';
+  if (rowId) {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    userId = (session.user as { id: string }).id;
+  }
+
   const refParam = req.nextUrl.searchParams.get('ref');
   const direction =
     req.nextUrl.searchParams.get('direction') === 'citations' ? 'citations' : 'references';
