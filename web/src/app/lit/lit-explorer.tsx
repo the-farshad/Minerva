@@ -657,21 +657,30 @@ export function LitExplorer() {
         </div>
       )}
 
-      {!paper && candidates && candidates.length > 0 && (
-        <div>
-          <p className="mb-2 text-xs text-zinc-500">
-            {candidatesLabel || `${candidates.length} result${candidates.length === 1 ? '' : 's'}`}
-            <span className="ml-1 text-zinc-400">— click a title to explore.</span>
-          </p>
-          {renderToolbar(filteredCandidates, candidates, 'search', false)}
-          {renderResultBody(filteredCandidates, false, null)}
-          {filteredCandidates && filteredCandidates.length === 0 && (
-            <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
-              {candidates.length} loaded, none match the current filters.
+      {!paper && candidates && candidates.length > 0 && (() => {
+        // Synthesize a seed node from the search label so the Graph
+        // view has something to radiate around. The label is whatever
+        // the candidates pane is already showing (e.g. "Papers by
+        // Yann LeCun") or a fall-back built from the raw query.
+        const synthSeed: Paper = {
+          title: candidatesLabel || `Search: ${query}`,
+        };
+        return (
+          <div>
+            <p className="mb-2 text-xs text-zinc-500">
+              {candidatesLabel || `${candidates.length} result${candidates.length === 1 ? '' : 's'}`}
+              <span className="ml-1 text-zinc-400">— click a title to explore.</span>
             </p>
-          )}
-        </div>
-      )}
+            {renderToolbar(filteredCandidates, candidates, 'search', true)}
+            {renderResultBody(filteredCandidates, true, synthSeed)}
+            {filteredCandidates && filteredCandidates.length === 0 && (
+              <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
+                {candidates.length} loaded, none match the current filters.
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       {paper && (
         <>
