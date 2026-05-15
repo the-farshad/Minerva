@@ -65,7 +65,10 @@ export function SectionView({
     | 'title-asc' | 'title-desc'
     | 'edited-desc' | 'edited-asc'
     | 'created-desc' | 'created-asc'
-    | 'opened-desc';
+    | 'opened-desc'
+    // Papers only — citation count from Semantic Scholar (set on
+    // import and on Refresh). Rows without a count sort last.
+    | 'cites-desc' | 'cites-asc';
   const SORT_PREF_KEY = `section.sort.${section.slug}`;
   const [sortKey, setSortKey] = useState<SortKey>(
     () => readPref<SortKey>(SORT_PREF_KEY, 'title-asc'),
@@ -290,6 +293,20 @@ export function SectionView({
       // Rows never opened (no _accessedAt) sort last.
       const acc = (r: Row) => (typeof r.data._accessedAt === 'string' ? r.data._accessedAt : '');
       out.sort((a, b) => acc(b).localeCompare(acc(a)));
+    } else if (sortKey === 'cites-desc' || sortKey === 'cites-asc') {
+      // Rows without a citation count sort last regardless of
+      // direction — "no data" is its own bucket, not "zero cites".
+      const dir = sortKey === 'cites-asc' ? 1 : -1;
+      const cc = (r: Row) =>
+        typeof r.data.citationCount === 'number' ? (r.data.citationCount as number) : null;
+      out.sort((a, b) => {
+        const ca = cc(a);
+        const cb = cc(b);
+        if (ca === null && cb === null) return 0;
+        if (ca === null) return 1;
+        if (cb === null) return -1;
+        return dir * (ca - cb);
+      });
     } else if (titleField) {
       const dir = sortKey === 'title-desc' ? -1 : 1;
       out.sort((a, b) => dir * naturalCompare(
@@ -554,6 +571,8 @@ export function SectionView({
               <option value="created-desc">Newest first</option>
               <option value="created-asc">Oldest first</option>
               <option value="opened-desc">Recently opened</option>
+              {section.preset === 'papers' && <option value="cites-desc">Most cited</option>}
+              {section.preset === 'papers' && <option value="cites-asc">Least cited</option>}
             </select>
           </label>
           {section.preset === 'notes' ? (
