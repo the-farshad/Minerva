@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 import { TimelineChart } from './timeline-chart';
-import { applyTheme } from '@/components/theme-card';
+import { applyTheme, applyFont } from '@/components/theme-card';
 import { readPref, writePref } from '@/lib/prefs';
 
 type Paper = {
@@ -424,8 +424,9 @@ export function LitExplorer() {
 
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
-      <header className="mb-6">
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-3xl font-semibold tracking-tight">Literature</h1>
+        <ThemePicker />
       </header>
 
       <form onSubmit={onSubmit} className="mb-6">
@@ -738,17 +739,17 @@ export function LitExplorer() {
       )}
 
       <footer className="mt-12 flex flex-col items-center gap-3 text-xs text-zinc-400">
-        <ThemePicker />
+        <FontPicker />
         <p className="text-center">
           Sources:{' '}
           <span className="text-zinc-500 dark:text-zinc-400">
             arXiv · CrossRef · Europe PMC · OpenAlex · Semantic Scholar · OpenCitations
           </span>
         </p>
-        <p className="text-center">
-          <a href="https://thefarshad.com" className="hover:underline">thefarshad.com</a>
-        </p>
       </footer>
+      <p className="mt-10 text-center text-[10px] text-zinc-400/70">
+        <a href="https://thefarshad.com" className="hover:underline">thefarshad.com</a>
+      </p>
     </main>
   );
 }
@@ -962,6 +963,52 @@ const THEME_OPTIONS: { value: LitTheme; label: string; Icon: typeof Sun }[] = [
   { value: 'dark',   label: 'Dark',          Icon: Moon     },
   { value: 'sepia',  label: 'Sepia',         Icon: BookOpen },
 ];
+
+type LitFont = 'system' | 'ubuntu' | 'roboto';
+
+const FONT_OPTIONS: { value: LitFont; label: string; family: string }[] = [
+  { value: 'system', label: 'System', family: 'system-ui, sans-serif' },
+  { value: 'ubuntu', label: 'Ubuntu', family: 'var(--font-ubuntu), Ubuntu, system-ui, sans-serif' },
+  { value: 'roboto', label: 'Roboto', family: 'var(--font-roboto), Roboto, system-ui, sans-serif' },
+];
+
+function FontPicker() {
+  // Mirrors ThemePicker. The font CSS variables (--font-ubuntu,
+  // --font-roboto) are injected by next/font/google in app/layout
+  // and applied through the data-font attribute on <html>; the
+  // inline boot script already restores the saved choice pre-paint.
+  const [font, setFont] = useState<LitFont>('system');
+  useEffect(() => {
+    setFont(readPref<LitFont>('font', 'system'));
+  }, []);
+  function pick(f: LitFont) {
+    setFont(f);
+    writePref('font', f === 'system' ? '' : f);
+    applyFont(f);
+  }
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+      {FONT_OPTIONS.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => pick(o.value)}
+          aria-label={`${o.label} font`}
+          title={`${o.label} font`}
+          aria-pressed={font === o.value}
+          style={{ fontFamily: o.family }}
+          className={`rounded-full px-2.5 py-1 text-[11px] transition ${
+            font === o.value
+              ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function ThemePicker() {
   // Initial state is 'system'; the real value is read from
