@@ -1,14 +1,13 @@
-# Minerva — full-stack image. Bakes the static SPA + minerva-services
-# (yt-dlp downloader, CORS proxy, Postgres mirror endpoints, opendataloader-pdf
-# extractor) into one container. Open http://localhost:8765/ to use the app
-# without GitHub Pages or a separate static host.
+# Minerva — minerva-services helper image. Bundles the Python helper
+# (yt-dlp downloader, CORS proxy, Postgres mirror endpoints,
+# opendataloader-pdf extractor) the Next.js app talks to over
+# HELPER_BASE_URL. Not a public-facing surface on its own.
 #
 # Build (from the repo root):
 #     docker build -t minerva-services -f docs/Dockerfile .
 #
 # Run:
 #     docker run --rm -p 8765:8765 minerva-services
-#     # → http://localhost:8765
 #
 # Or with docker-compose:
 #     cd docs && docker compose up
@@ -55,16 +54,15 @@ RUN pip install --no-cache-dir flask yt-dlp requests "psycopg[binary]" opendatal
 
 WORKDIR /srv
 
-# Application code + static frontend. The build context for this
-# Dockerfile is the repo root (see docker-compose.yml: context: ..),
-# so we can pull both the helper script and the SPA assets in one go.
+# Application code. The build context for this Dockerfile is the
+# repo root (see docker-compose.yml: context: ..). Only the Python
+# helper is needed in the image; the helper's optional static-SPA
+# serving (gated on MINERVA_STATIC_DIR/index.html) is dormant here
+# because the Next.js container serves the front-end now.
 COPY docs/minerva-services.py /srv/minerva-services.py
-COPY index.html manifest.webmanifest opensearch.xml privacy.html terms.html rss.html sw.js /srv/static/
-COPY assets /srv/static/assets
 
 ENV MINERVA_HOST=0.0.0.0 \
     MINERVA_PORT=8765 \
-    MINERVA_STATIC_DIR=/srv/static \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8765
