@@ -20,6 +20,7 @@ import { getServerPref } from '@/lib/server-prefs';
 import { fetchDriveFileBytes } from '@/lib/drive';
 import { extractPdfMeta } from '@/lib/pdf-meta';
 import { bus } from '@/lib/event-bus';
+import { fetchPaperStatsFromSS } from '@/lib/related-papers/semanticscholar';
 
 // Scope to actual YouTube hostnames — the previous bare `v=...{11}`
 // pattern matched ANY URL with a `v=` query param (e.g. a publisher
@@ -115,6 +116,11 @@ async function fetchArxiv(arxivId: string): Promise<RowData> {
   if (authors.length) out.authors = authors.join(', ');
   const published = /<published>([^<]+)<\/published>/.exec(xml);
   if (published) out.year = published[1].slice(0, 4);
+  // Best-effort Semantic Scholar enrich — adds citation /
+  // reference / influential-citation counts to existing rows on
+  // Refresh. Silent on failure (the rest of the refresh stands).
+  const stats = await fetchPaperStatsFromSS({ kind: 'ARXIV', id: arxivId });
+  if (stats) Object.assign(out, stats);
   return out;
 }
 
@@ -193,6 +199,10 @@ async function fetchCrossref(doi: string): Promise<RowData> {
   if (m.DOI) out.doi = m.DOI;
   const year = m.issued?.['date-parts']?.[0]?.[0];
   if (year) out.year = String(year);
+  // Same SS enrich for DOI rows — citation / reference /
+  // influential-citation counts on Refresh. Silent on failure.
+  const stats = await fetchPaperStatsFromSS({ kind: 'DOI', id: doi });
+  if (stats) Object.assign(out, stats);
   return out;
 }
 
