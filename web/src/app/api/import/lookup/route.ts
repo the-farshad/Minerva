@@ -9,6 +9,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
+import { fetchPaperStatsFromSS } from '@/lib/related-papers/semanticscholar';
 
 const ARXIV_RE = /(?:arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(?:v\d+)?/i;
 const DOI_RE = /(?:doi\.org\/|^)(10\.\d{4,9}\/\S+)/i;
@@ -131,6 +132,7 @@ async function arxivLookup(id: string) {
   let am: RegExpExecArray | null;
   while ((am = aRe.exec(entry[1])) !== null) authors.push(am[1].trim());
   const published = get('published');
+  const stats = await fetchPaperStatsFromSS({ kind: 'ARXIV', id });
   return {
     kind: 'paper',
     title: get('title'),
@@ -140,6 +142,7 @@ async function arxivLookup(id: string) {
     url: `https://arxiv.org/abs/${id}`,
     pdf: `https://arxiv.org/pdf/${id}.pdf`,
     venue: 'arXiv',
+    ...(stats || {}),
   };
 }
 
@@ -155,6 +158,7 @@ async function crossrefLookup(doi: string) {
     (a) => [a.given, a.family].filter(Boolean).join(' '),
   ).join(', ');
   const issued = ((m.issued as { 'date-parts'?: number[][] }) || {})['date-parts']?.[0];
+  const stats = await fetchPaperStatsFromSS({ kind: 'DOI', id: doi });
   return {
     kind: 'paper',
     title: (m.title as string[])?.[0] || '',
@@ -163,6 +167,7 @@ async function crossrefLookup(doi: string) {
     venue: (m['container-title'] as string[])?.[0] || '',
     doi: m.DOI as string,
     url: (m.URL as string) || `https://doi.org/${doi}`,
+    ...(stats || {}),
   };
 }
 

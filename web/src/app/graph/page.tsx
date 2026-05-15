@@ -32,7 +32,13 @@ export default async function GraphPage() {
     if (typeof data.url === 'string' && data.url) urlIndex[data.url] = r.id;
   }
 
-  type Node = { id: string; title: string; sectionId: string; sectionSlug: string };
+  type Node = {
+    id: string; title: string; sectionId: string; sectionSlug: string;
+    /** Citations-of, when known (paper rows enriched from Semantic
+     *  Scholar at import). Drives the bubble radius — undefined
+     *  renders at the baseline (we don't know, not zero). */
+    citationCount?: number;
+  };
   type Edge = { from: string; to: string; via: string };
 
   const nodes: Node[] = [];
@@ -43,11 +49,13 @@ export default async function GraphPage() {
     const s = sectionById.get(r.sectionId);
     if (!s) continue;
     const data = r.data as Record<string, unknown>;
+    const cc = typeof data.citationCount === 'number' ? data.citationCount : undefined;
     nodes.push({
       id: r.id,
       title: String(data.title || data.name || '(untitled)'),
       sectionId: r.sectionId,
       sectionSlug: s.slug,
+      ...(cc !== undefined ? { citationCount: cc } : {}),
     });
     for (const [k, v] of Object.entries(data)) {
       if (typeof v !== 'string' || !v) continue;

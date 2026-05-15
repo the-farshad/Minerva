@@ -95,3 +95,48 @@ export async function fetchRelatedFromSemanticScholar(opts: {
   }
   return { ok: false, status: 404, error: 'Unable to resolve a paper reference.' };
 }
+
+/**
+ * Best-effort fetch of bibliometric stats for one paper — citation
+ * count, reference count, influential-citation count — keyed by
+ * arXiv id or DOI. Returns `null` on miss / rate-limit / network
+ * failure, so callers can degrade gracefully (the row just lands
+ * without the stats, the import flow doesn't fail because SS is
+ * having a moment).
+ */
+export async function fetchPaperStatsFromSS(ref: {
+  kind: 'ARXIV' | 'DOI';
+  id: string;
+}): Promise<{
+  citationCount?: number;
+  referenceCount?: number;
+  influentialCitationCount?: number;
+} | null> {
+  try {
+    const ssId = `${ref.kind}:${ref.id}`;
+    const url = `https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(
+      ssId,
+    )}?fields=citationCount,referenceCount,influentialCitationCount`;
+    const ac = new AbortController();
+    const timeout = setTimeout(() => ac.abort(), 6_000);
+    const r = await fetch(url, {
+      headers: ssHeaders(),
+      signal: ac.signal,
+      next: { revalidate: 3600 },
+    }).finally(() => clearTimeout(timeout));
+    if (!r.ok) return null;
+    const j = (await r.json()) as {
+      citationCount?: number;
+      referenceCount?: number;
+      influentialCitationCount?: number;
+    };
+    return {
+      citationCount: typeof j.citationCount === 'number' ? j.citationCount : undefined,
+      referenceCount: typeof j.referenceCount === 'number' ? j.referenceCount : undefined,
+      influentialCitationCount:
+        typeof j.influentialCitationCount === 'number' ? j.influentialCitationCount : undefined,
+    };
+  } catch {
+    return null;
+  }
+}

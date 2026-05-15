@@ -3,12 +3,27 @@
 import { useMemo } from 'react';
 import Link from 'next/link';
 
-type Node = { id: string; title: string; sectionId: string; sectionSlug: string };
+type Node = {
+  id: string; title: string; sectionId: string; sectionSlug: string;
+  /** Citations-of (when known). Drives the bubble radius — papers
+   *  with no citation data render at the baseline so a missing
+   *  fetch doesn't look like a zero-cited paper. */
+  citationCount?: number;
+};
 type Edge = { from: string; to: string; via: string };
 type Section = { id: string; title: string; slug: string };
 
 const LANE_HEIGHT = 100;
-const NODE_R = 6;
+const NODE_R_BASE = 6;
+const NODE_R_MAX = 22;
+// Bubble radius is base + log10(citations + 1) * step, so 0 → 6,
+// 10 → ~10, 100 → ~14, 1000 → ~18, ≥10k → capped at 22. The log
+// scale is necessary — citation counts span 0 to >10k and a
+// linear scale would dwarf everything next to a single megapaper.
+function radiusFor(citationCount: number | undefined): number {
+  if (typeof citationCount !== 'number' || citationCount <= 0) return NODE_R_BASE;
+  return Math.min(NODE_R_MAX, NODE_R_BASE + Math.log10(citationCount + 1) * 4);
+}
 
 export function GraphView({
   nodes, edges, sections,
@@ -95,16 +110,18 @@ export function GraphView({
             {nodes.map((n) => {
               const p = layout.positions[n.id];
               if (!p) return null;
+              const r = radiusFor(n.citationCount);
+              const cc = n.citationCount;
               return (
                 <g key={n.id}>
                   <Link href={`/s/${encodeURIComponent(n.sectionSlug)}`}>
                     <circle
                       cx={p.x}
                       cy={p.y}
-                      r={NODE_R}
+                      r={r}
                       className="fill-zinc-700 hover:fill-zinc-900 dark:fill-zinc-300 dark:hover:fill-white"
                     >
-                      <title>{n.title}</title>
+                      <title>{cc !== undefined ? `${n.title} — ${cc.toLocaleString()} citations` : n.title}</title>
                     </circle>
                   </Link>
                 </g>
@@ -115,6 +132,7 @@ export function GraphView({
       )}
       <p className="mt-3 text-xs text-zinc-500">
         Edges are drawn whenever one row&rsquo;s field value matches another row&rsquo;s URL.
+        Bubble size scales (log) with citation count for paper rows that carry one.
         Click a node to jump to its section.
       </p>
     </main>
