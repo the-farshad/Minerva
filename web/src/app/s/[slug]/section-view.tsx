@@ -916,8 +916,22 @@ function _LegacyGrid({
             <div className="text-sm font-medium">
               {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
             </div>
-            <div className="mt-2 text-xs text-zinc-500" title={`Last edited ${formatDateTime(r.updatedAt)}`}>
-              edited {relativeTime(r.updatedAt)}
+            <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
+              <span title={`Last edited ${formatDateTime(r.updatedAt)}`}>
+                edited {relativeTime(r.updatedAt)}
+              </span>
+              {section.preset === 'papers' && typeof (r.data as Record<string, unknown>).citationCount === 'number' && (() => {
+                const cc = (r.data as Record<string, number>).citationCount;
+                if (cc <= 0) return null;
+                return (
+                  <span
+                    title={`Cited ${cc.toLocaleString()} times (Semantic Scholar)`}
+                    className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                  >
+                    {cc >= 1000 ? `${(cc / 1000).toFixed(cc >= 10000 ? 0 : 1)}k` : cc} cites
+                  </span>
+                );
+              })()}
             </div>
           </button>
           <button
