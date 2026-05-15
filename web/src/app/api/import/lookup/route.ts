@@ -8,7 +8,6 @@
  * Returns a flat object the caller can spread onto a new row's data.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/auth';
 import { fetchPaperStatsFromSS } from '@/lib/related-papers/semanticscholar';
 
 const ARXIV_RE = /(?:arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(?:v\d+)?/i;
@@ -16,12 +15,17 @@ const DOI_RE = /(?:doi\.org\/|^)(10\.\d{4,9}\/\S+)/i;
 const YT_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&?#]+)/;
 const YT_LIST_RE = /[?&]list=([\w-]+)/;
 
+/**
+ * Public — no auth gate. The data this route returns (arXiv /
+ * CrossRef / YouTube / Europe PMC metadata, generic citation_*
+ * scrape) is freely available from the upstream sources. Keeping
+ * the route public lets lit.thefarshad.com's stateless explorer
+ * use it without signing the visitor in.
+ */
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const body = (await req.json().catch(() => ({}))) as { url?: string };
-  const raw = String(body.url || '').trim();
-  if (!raw) return NextResponse.json({ error: 'Missing url' }, { status: 400 });
+  const body = (await req.json().catch(() => ({}))) as { url?: string; q?: string };
+  const raw = String(body.url || body.q || '').trim();
+  if (!raw) return NextResponse.json({ error: 'Missing url or q' }, { status: 400 });
 
   // arXiv
   const ax = raw.match(ARXIV_RE);
@@ -51,14 +55,22 @@ export async function POST(req: NextRequest) {
   const scraped = await genericArticleLookup(raw);
   if (scraped) return NextResponse.json(scraped);
 
-  // Europe PMC as a final fallback — works when the URL embeds a
-  // DOI or PMID but the publisher page can't be scraped (paywall,
-  // bot wall) and CrossRef has nothing. Biomedical coverage is
-  // notably stronger than CrossRef.
+  // Europe PMC for a DOI / PMID / PMCID embedded anywhere in the
+  // input, even when the publisher page can't be scraped (paywall,
+  // bot wall) and CrossRef has nothing.
   const ident = raw.match(/(10\.\d{4,9}\/[^\s?#]+|PMC\d{4,8}|\bPMID:?\s*(\d{6,9}))/i)?.[0];
   if (ident) {
     const pmc = await europePmcLookup(ident);
     if (pmc) return NextResponse.json(pmc);
+  }
+
+  // Free-text fallback: if the input doesn't look like a URL, try
+  // Europe PMC's search-by-title — covers visitors who paste a
+  // paper title into lit.thefarshad.com's search box. The PMC
+  // search endpoint accepts an arbitrary query string.
+  if (!/^https?:\/\//i.test(raw)) {
+    const byTitle = await europePmcLookup(raw);
+    if (byTitle) return NextResponse.json(byTitle);
   }
 
   // Last-resort fallback: bare URL.
