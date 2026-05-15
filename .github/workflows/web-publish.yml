@@ -2,6 +2,7 @@
 # under thefarshad/minerva-web; the droplet's compose pulls this
 # image at deploy time, so the 1 GB box never has to run npm + next
 # build itself (last attempt OOM-killed every container on it).
+# (no-op edit — retrigger publish after a transient Buildx failure)
 #
 # Triggered by: any push to main that touches web/, or manually
 # via the Actions tab.
