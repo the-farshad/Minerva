@@ -830,7 +830,13 @@ export function SketchModal({
     window.addEventListener('resize', sync);
 
     let blobUrl: string | null = null;
-    if (seed) {
+    // Load the PNG `seed` as page 0's background ONLY when there is
+    // no vector `seedDoc`. With a seedDoc the strokes are hydrated
+    // as real editable vectors; also painting the PNG snapshot
+    // underneath them drew every stroke twice (a faint doubled
+    // ghost) and is pure legacy back-compat for pre-vector saves.
+    const hasVectorDoc = !!(seedDoc && seedDoc.pages && seedDoc.pages.length > 0);
+    if (seed && !hasVectorDoc) {
       const useBlobLoad = seed.startsWith('/');
       (async () => {
         try {
@@ -2879,9 +2885,11 @@ export function SketchModal({
       <footer className="relative z-[70] flex min-h-[3.25rem] flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
         {/* Tool selector. Primary tools stay visible; the eight
           * shape tools tuck behind one "Shapes" sub-nav button. The
-          * two eraser modes (pixel + whole-object) share one
-          * "Eraser" button — obj-eraser is filtered out and its
-          * mode is the inline switch below. */}
+          * "Eraser" button maps to obj-eraser — the eraser now
+          * always removes whole strokes on contact (true deletion).
+          * The old pixel eraser painted the paper colour over ink,
+          * which left visible scars on patterned / non-white
+          * surfaces and read as "the eraser is drawing". */}
         <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
           {TOOLS.filter((t) => t.id !== 'obj-eraser' && !isShapeTool(t.id)).map((t) => {
             const active = t.id === 'eraser'
@@ -2893,7 +2901,10 @@ export function SketchModal({
                 label={t.label}
                 icon={<t.Icon className="h-4 w-4" />}
                 active={active}
-                onActivate={() => { setTool(t.id); setWidthOverride(null); }}
+                onActivate={() => {
+                  setTool(t.id === 'eraser' ? 'obj-eraser' : t.id);
+                  setWidthOverride(null);
+                }}
               />
             );
           })}
@@ -2927,33 +2938,10 @@ export function SketchModal({
           </div>
         )}
 
-        {/* Eraser options — one tool, two modes. Pick pixel vs
-          * whole-object erasing, and (pixel mode) the size. */}
-        {(tool === 'eraser' || tool === 'obj-eraser') && (
-          <div className="inline-flex flex-wrap items-center gap-2">
-            <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
-              <SketchOptionPill label="Pixel" active={tool === 'eraser'} onActivate={() => setTool('eraser')} />
-              <SketchOptionPill label="Object" active={tool === 'obj-eraser'} onActivate={() => setTool('obj-eraser')} />
-            </div>
-            {tool === 'eraser' && (() => {
-              const min = activeSpec.minWidth;
-              const max = activeSpec.maxWidth;
-              const TIERS = [min, min + (max - min) * 0.25, (min + max) / 2, min + (max - min) * 0.75, max];
-              return (
-                <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
-                  {TIERS.map((w, i) => (
-                    <SketchWidthButton
-                      key={i}
-                      width={w}
-                      active={Math.abs(effectiveWidth - w) < 0.5}
-                      onActivate={() => setWidthOverride(w)}
-                    />
-                  ))}
-                </div>
-              );
-            })()}
-          </div>
-        )}
+        {/* Eraser has no options — tap or drag over a stroke and
+          * it is removed. (Previously this row held a pixel/object
+          * mode switch + size tiers for the now-removed pixel
+          * eraser.) */}
 
         {/* Colour — current swatch + up to 3 recents inline; the
           * Palette button (or tapping the current swatch) opens the

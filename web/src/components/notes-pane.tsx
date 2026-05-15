@@ -371,38 +371,16 @@ export function NotesPane({
                 toast.info('Nothing to export — write something first.');
                 return;
               }
-              // Sketch note: `value` is a data:image PNG — embed it
-              // in a single-page PDF sized to the image. Dynamic
-              // jsPDF import keeps the common path's bundle small.
+              // Sketch note: the *vector* PDF/SVG export lives in
+              // the sketch editor itself (it renders strokes as
+              // real PDF line paths). Exporting the row's `value`
+              // here would only ever produce a raster PDF — the PNG
+              // thumbnail embedded as an image — so route the user
+              // into the editor instead of duplicating a worse
+              // export path.
               if (effType === 'sketch') {
-                void (async () => {
-                  const m = value.match(/^data:image\/[a-z]+;base64,(.*)$/i);
-                  if (!m) {
-                    toast.error('Sketch isn\'t a recognizable image — try re-saving from the sketch editor.');
-                    return;
-                  }
-                  try {
-                    const img = new Image();
-                    img.src = value;
-                    await new Promise<void>((res, rej) => {
-                      img.onload = () => res();
-                      img.onerror = () => rej(new Error('image load failed'));
-                    });
-                    const w = img.naturalWidth || 800;
-                    const h = img.naturalHeight || 600;
-                    const { jsPDF } = await import('jspdf');
-                    const pdf = new jsPDF({
-                      orientation: w >= h ? 'l' : 'p',
-                      unit: 'px',
-                      format: [w, h],
-                      hotfixes: ['px_scaling'],
-                    });
-                    pdf.addImage(value, 'PNG', 0, 0, w, h);
-                    pdf.save(`sketch-${rowId.slice(0, 8)}.pdf`);
-                  } catch (e) {
-                    toast.error(`PDF export failed: ${(e as Error).message}`);
-                  }
-                })();
+                setSketchOpen(true);
+                toast.info('Use the PDF / SVG buttons in the sketch editor — those export true vector.');
                 return;
               }
               // Markdown note → PDF. Render the markdown into a clean
@@ -455,19 +433,20 @@ export function NotesPane({
             title={
               effType === 'text'
                 ? 'Download this note as a text file'
-                : 'Export this note as a PDF'
+                : effType === 'sketch'
+                  ? 'Open the sketch editor — vector PDF / SVG export is in there'
+                  : 'Export this note as a PDF'
             }
             className="inline-flex items-center gap-1 rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
             <Download className="h-3.5 w-3.5" />
             <span className="text-[10px]">{effType === 'text' ? 'TXT' : 'PDF'}</span>
           </button>
-          {onTypeChange && (
-            /* Note content type — Text or Markdown. "Sketch" is no
-             * longer a standalone note type (sketches live inline
-             * inside markdown notes); existing sketch-typed rows
-             * still render via the effType === 'sketch' branch
-             * below, they just can't be newly created here. */
+          {onTypeChange && effType !== 'sketch' && (
+            /* Note content type — Text or Markdown. Hidden for an
+             * existing sketch note: showing a text/md toggle on a
+             * sketch was a footgun — tapping either converted the
+             * note away from sketch and stranded the drawing. */
             <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800" title="Note content type">
               {(['text', 'md'] as const).map((tp) => (
                 <button
