@@ -1,9 +1,8 @@
 /**
- * Tiny client-side preferences store. Mirrors v1's localStorage
- * pattern but namespaces every key under `minerva.v2.<scope>.<id>`
- * so v1 and v2 can coexist in the same browser without trampling
- * each other. PG-backed sync across devices is a TODO; this is
- * sufficient for per-device knobs in the meantime.
+ * Tiny client-side preferences store. Namespaces every key under
+ * `minerva.v2.<scope>.<id>` to keep the localStorage surface tidy.
+ * PG-backed sync across devices is a TODO; this is sufficient for
+ * per-device knobs in the meantime.
  */
 
 const NS = 'minerva.v2.';

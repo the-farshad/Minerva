@@ -2,13 +2,9 @@
 
 A schema-driven personal **and research** planner — goals, tasks, projects, notes, habits, a paper library, a YouTube tracker, and a vector sketch editor, all over sections you define yourself.
 
-**Live:** <https://minerva.thefarshad.com> — running **Minerva v2**.
+**Live:** <https://minerva.thefarshad.com>
 
-> **This repo holds two codebases.**
-> - **`web/` — Minerva v2.** The multi-user Next.js application that powers the hosted instance. This is where active development happens.
-> - **Repo root (`index.html`, `assets/`, `sw.js`, …) — Minerva v1.** The original zero-backend static SPA: a single-page app backed entirely by a Google Sheet you own, no server, no database. It still works and is still self-hostable on any static host, but v2 is what's deployed and maintained. v1 is kept for reference and for anyone who wants the pure no-backend version.
->
-> The rest of this README describes **v2** (what's live). For v1, see the git history of this file or the `assets/` directory.
+The codebase lives in [`web/`](web/) — a multi-user Next.js application that powers the hosted instance.
 
 ---
 
@@ -16,11 +12,11 @@ A schema-driven personal **and research** planner — goals, tasks, projects, no
 
 Minerva is a planner whose structure you control. Every "section" (Tasks, Notes, a paper library, a reading list, anything) is defined by a schema — a set of typed columns — so adding a new kind of thing to track is a configuration change, not a code change. The same engine renders a to-do list, a habit heatmap, a Kanban board, a citation graph, and a multi-page sketch, because they're all just sections with different schemas and views.
 
-v2 is **multi-user**: you sign in with Google, your data lives in a per-user partition of the app's database, and files you create (sketches, uploaded papers, exported PDFs) go to *your* Google Drive under the minimal `drive.file` scope.
+Minerva is **multi-user**: you sign in with Google, your data lives in a per-user partition of the app's database, and files you create (sketches, uploaded papers, exported PDFs) go to *your* Google Drive under the minimal `drive.file` scope.
 
 ---
 
-## v2 — what's live
+## What's live
 
 ### Stack
 
@@ -81,7 +77,7 @@ A companion **`minerva-services`** container (Python) handles the things Node sh
 
 **Hosted:** just visit <https://minerva.thefarshad.com> and sign in with Google.
 
-**Self-host v2:** the full setup — environment variables, the Google OAuth client, the Drizzle schema push, and the Docker Compose stack — is documented in [`web/README.md`](web/README.md) and [`docs/`](docs/). In short, it's a `docker compose up` of `docs/docker-compose.yml` (web + Postgres + helper) plus your own OAuth credentials.
+**Self-host:** the full setup — environment variables, the Google OAuth client, the Drizzle schema push, and the Docker Compose stack — is documented in [`web/README.md`](web/README.md) and [`docs/`](docs/). In short, it's a `docker compose up` of `docs/docker-compose.yml` (web + Postgres + helper) plus your own OAuth credentials.
 
 **Develop:**
 
@@ -94,20 +90,12 @@ npm run dev                  # http://localhost:3000
 
 ---
 
-## Legacy: Minerva v1 (static SPA)
-
-The repo root still contains the original Minerva — a single static page (`index.html` + `assets/*.js`) with **no backend at all**: it reads and writes a Google Sheet you own, keeps a local IndexedDB mirror, and runs on plain GitHub Pages. It has its own feature set (public sharing, iCal, a Telegram bridge, a touch sketch editor) and remains fully usable. If you want the zero-infrastructure version — fork the repo, enable Pages, bring your own Google OAuth client — v1 is still there. v2 supersedes it for the hosted instance; a `web/src/app/api/migrate/v1` route exists to import a v1 user's Sheets data into v2.
-
----
-
 ## Privacy
 
 - **Minimal OAuth scope** — `drive.file` (only files this app created) + `userinfo.email` + `openid`. All non-sensitive.
 - **No third-party telemetry** — no analytics or error reporters.
-- **v2 has a backend** — unlike v1, v2 stores your rows in the app's own Postgres database (per-user partitioned). File artefacts still live in *your* Google Drive.
+- **Row data in Postgres, files in your Drive** — rows live in the app's own Postgres database (per-user partitioned); file artefacts (sketches, uploaded papers, exported PDFs, iCal/RSS feeds) live in *your* Google Drive.
 - **Public sharing is opt-in** — share links and the iCal/RSS feeds are only reachable if you hand out their URLs.
-
-Full policy: [`privacy.html`](privacy.html).
 
 ---
 

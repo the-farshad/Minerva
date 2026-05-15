@@ -1,9 +1,7 @@
 /**
  * Meeting-poll primitives shared between the composer page, the
- * public participant view, and the API. The legacy SPA used these
- * same shapes (compact JSON encoded into a URL token); the v2 build
- * stores the same objects in PG so URLs stay short and responses
- * can't race each other.
+ * public participant view, and the API. Stored as JSONB in Postgres
+ * so URLs stay short and responses can't race each other.
  */
 
 export type PollSlots = {

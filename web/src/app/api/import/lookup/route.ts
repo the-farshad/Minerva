@@ -1,7 +1,7 @@
 /**
- * Bibliographic / video URL → row metadata lookup. Same gateway as
- * v1's import.js but server-side and authenticated. Supports arXiv,
- * DOI (CrossRef), and YouTube (single video).
+ * Bibliographic / video URL → row metadata lookup. Server-side and
+ * authenticated. Supports arXiv, DOI (CrossRef), and YouTube (single
+ * video).
  *
  *   POST /api/import/lookup  { url }
  *

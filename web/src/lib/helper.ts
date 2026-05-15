@@ -1,8 +1,9 @@
 /**
- * Thin client for the v1 Python helper. Server-side only — never
- * import this into a 'use client' file. The HELPER_BASE_URL env var
- * points at a reachable helper instance (the droplet's helper at
- * 127.0.0.1:8765 in production, or your laptop's helper in dev).
+ * Thin client for the `minerva-services` Python helper. Server-side
+ * only — never import this into a 'use client' file. The
+ * HELPER_BASE_URL env var points at a reachable helper instance
+ * (the droplet's helper at 127.0.0.1:8765 in production, or your
+ * laptop's helper in dev).
  *
  * The helper does not require auth itself — request authorization is
  * enforced by the Next.js route handler that calls it (which checks

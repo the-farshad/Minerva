@@ -1,7 +1,8 @@
 /**
- * Authenticated proxy to the v1 Python helper. Anything under
- * /api/helper/* is forwarded after a Next.js session check, so the
- * helper itself can keep being a localhost-only service.
+ * Authenticated proxy to the `minerva-services` Python helper.
+ * Anything under /api/helper/* is forwarded after a Next.js session
+ * check, so the helper itself can keep being a localhost-only
+ * service.
  *
  * Examples:
  *   POST /api/helper/download            → POST <helper>/download

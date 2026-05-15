@@ -1,7 +1,7 @@
 /**
  * Quick-share payload codec. Travels in the URL fragment so the
  * server never sees it — anyone with the link sees the same card
- * the author saw. base64url over UTF-8 JSON, same shape as v1.
+ * the author saw. base64url over UTF-8 JSON.
  *
  * Soft limit: ~2 KB; browsers tolerate longer URLs but link shorteners
  * and chat clients often truncate them.

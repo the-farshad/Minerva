@@ -1,10 +1,7 @@
-# Minerva v2 (Next.js + TypeScript + React)
+# Minerva (Next.js + TypeScript + React)
 
-A multi-user rewrite of Minerva on the Next.js App Router with Drizzle
-ORM + Postgres, Auth.js (Google OAuth), and Tailwind CSS.
-
-The legacy SPA at the repo root keeps shipping while this lives
-side-by-side. Once v2 hits parity, we cut over.
+A multi-user Minerva on the Next.js App Router with Drizzle ORM +
+Postgres, Auth.js (Google OAuth), and Tailwind CSS.
 
 ## Quick start
 
@@ -91,19 +88,7 @@ src/
   a vector `SketchDoc` (JSON in `row.data._sketchDoc`) and exports
   to PDF / SVG.
 
-## What's still TODO before sunsetting v1
+## Helper service
 
-- Full feature parity with v1 (preview modal, drag-drop, group sort,
-  group notes, paper Drive mirror, YouTube downloads, FS Access
-  local-disk mirror, …).
-- Sheets ↔ DB sync — currently DB is the only backend.
-- Helper proxy routes so the Python service still handles yt-dlp /
-  PDF extract.
-- Migration tool that walks an existing v1 user's Sheets data into
-  the new DB.
-
-## Running against the v1 helper
-
-`HELPER_BASE_URL` lets the new app forward yt-dlp / pdf-extract
-requests to the existing Python helper. No need to rewrite those —
-the helper stays as a worker microservice.
+`HELPER_BASE_URL` points at the `minerva-services` (Python) container,
+which handles yt-dlp / pdf-extract on behalf of the web app.

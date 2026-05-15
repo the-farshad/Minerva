@@ -58,8 +58,7 @@ export const verificationTokens = pgTable('verificationTokens', {
 // --- Minerva data model ------------------------------------------
 
 /**
- * One row per user-defined section. Mirrors the v1 _config tab
- * conceptually but stored as proper rows. Slug is unique per user.
+ * One row per user-defined section. Slug is unique per user.
  */
 export const sections = pgTable('sections', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -144,10 +143,9 @@ export const bookmarks = pgTable('bookmarks', {
 
 /** Meeting-poll definitions — organizer creates a poll with a list
  * of days and time slots; the public token (`/meet/<token>`) lets
- * participants submit availability without an account. The legacy
- * SPA encoded the whole poll into a URL token; this server-backed
- * version stores it properly so URLs stay short, responses don't
- * race, and the organizer can revoke or extend a poll later. */
+ * participants submit availability without an account. Stored
+ * server-side so URLs stay short, responses don't race, and the
+ * organizer can revoke or extend a poll later. */
 /** Poll modes:
  *   'group' — multiple participants, each marks availability across
  *             the grid; organizer reads the consensus heat-map and

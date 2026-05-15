@@ -1,10 +1,10 @@
 /**
- * Section presets — same shape as v1's `_config` rows but expressed
- * as plain TS so they survive a fresh DB and any future migration.
+ * Section presets — plain TS so they survive a fresh DB and any
+ * future migration.
  *
  * Each preset describes the section's slug, title, icon, and the
- * column schema (header names + their type hints — used only by
- * the SPA for rendering / validation).
+ * column schema (header names + their type hints — used by the
+ * client for rendering / validation).
  */
 export type SectionPreset = {
   slug: string;

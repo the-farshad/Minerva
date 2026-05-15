@@ -15,6 +15,9 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Stale Next traces if anything ever runs Next from repo root
+.next/
+
 # Secrets — Minerva intentionally keeps no secrets in the repo,
 # but ignore these defensively in case anything is ever pasted locally.
 .env
