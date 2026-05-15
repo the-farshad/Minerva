@@ -1436,7 +1436,23 @@ export function SketchModal({
     // --- Touch Events fallback (iOS Safari < 13, and the cases
     // where pointer events mysteriously don't fire for the first
     // tap on a fresh canvas)
+    // Apple Pencil on iPad dispatches BOTH pointer events and
+    // touch events for the same tap (`touchType === 'stylus'`).
+    // The pointer path is the authoritative one for pen input —
+    // it carries pressure, tilt, and the tool-specific routing —
+    // so the touch path must skip stylus touches or we double-
+    // fire every gesture. The text tool was the loudest symptom:
+    // pointer-up opens the textarea + focuses it, then touch-end
+    // runs `flushSync` again and the second commit steals the
+    // gesture context iOS needs to raise the keyboard.
+    const isStylusTouch = (e: TouchEvent): boolean => {
+      const t = (e.changedTouches[0] ?? e.touches[0]) as
+        | (Touch & { touchType?: string })
+        | undefined;
+      return t?.touchType === 'stylus';
+    };
     const onTouchStart = (e: TouchEvent) => {
+      if (isStylusTouch(e)) return;
       // Pencil-only mode: finger touches do nothing — no drawing,
       // and no two-finger pinch-zoom. Toolbar +/- still zooms.
       if (penOnlyRef.current) return;
@@ -1466,6 +1482,7 @@ export function SketchModal({
       beginStroke(t.clientX, t.clientY, pressure, 'touch');
     };
     const onTouchMove = (e: TouchEvent) => {
+      if (isStylusTouch(e)) return;
       if (penOnlyRef.current) return;
       e.preventDefault();
       // Two-finger pinch+pan path. Mid-point pin: the model point
@@ -1515,6 +1532,7 @@ export function SketchModal({
       continueStroke(t.clientX, t.clientY, pressure, 'touch');
     };
     const onTouchEnd = (e: TouchEvent) => {
+      if (isStylusTouch(e)) return;
       if (penOnlyRef.current) return;
       e.preventDefault();
       if (pinch) {
