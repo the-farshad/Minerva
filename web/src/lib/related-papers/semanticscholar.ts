@@ -97,6 +97,49 @@ export async function fetchRelatedFromSemanticScholar(opts: {
 }
 
 /**
+ * Fetch the list of papers a given paper cites (its references)
+ * from Semantic Scholar. Returns `RelatedPaper` shapes so the
+ * frontend reuses the existing card rendering. Capped at the SS
+ * default 100 per call; the few papers with >100 references can
+ * paginate later, but every single-paper bibliometric tool out
+ * there starts at 100 too.
+ */
+export async function fetchReferencesFromSS(
+  ref: { kind: 'ARXIV' | 'DOI'; id: string },
+  limit: number = 100,
+): Promise<
+  | { ok: true; papers: RelatedPaper[] }
+  | { ok: false; status: number; error: string; rateLimited?: boolean }
+> {
+  try {
+    const ssId = `${ref.kind}:${ref.id}`;
+    const url =
+      `https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(ssId)}/references` +
+      `?fields=${encodeURIComponent(FIELDS)}&limit=${Math.min(1000, Math.max(1, limit))}`;
+    const r = await fetch(url, { headers: ssHeaders(), next: { revalidate: 3600 } });
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      return {
+        ok: false,
+        status: r.status,
+        error:
+          r.status === 429
+            ? 'Semantic Scholar is rate-limiting this IP. Set SEMANTIC_SCHOLAR_API_KEY on the droplet.'
+            : `Semantic Scholar returned ${r.status}${text ? `: ${text.slice(0, 200)}` : ''}`,
+        rateLimited: r.status === 429,
+      };
+    }
+    const j = (await r.json()) as { data?: { citedPaper?: RelatedPaper | null }[] };
+    const papers = (j.data ?? [])
+      .map((d) => d.citedPaper)
+      .filter((p): p is RelatedPaper => !!p && (!!p.title || !!p.externalIds));
+    return { ok: true, papers };
+  } catch (e) {
+    return { ok: false, status: 502, error: (e as Error).message };
+  }
+}
+
+/**
  * Best-effort fetch of bibliometric stats for one paper — citation
  * count, reference count, influential-citation count — keyed by
  * arXiv id or DOI. Returns `null` on miss / rate-limit / network

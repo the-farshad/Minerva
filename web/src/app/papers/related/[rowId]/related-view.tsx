@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download, Calendar as CalIcon, FileText, BookOpen, ChevronDown, X, List, GitBranch, Workflow } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, Plus, Check, ExternalLink, Network, Download, Calendar as CalIcon, FileText, BookOpen, ChevronDown, X, List, GitBranch, Workflow, Quote } from 'lucide-react';
 import { RelatedGraph } from './related-graph';
 import { RelatedSankey } from './related-sankey';
 import { toast } from 'sonner';
@@ -59,7 +59,15 @@ export function RelatedView({
   const [mirrored, setMirrored] = useState<Set<string>>(new Set());
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [view, setView] = useState<'list' | 'graph' | 'sankey'>('list');
+  const [view, setView] = useState<'list' | 'graph' | 'sankey' | 'refs'>('list');
+  /** Papers that the seed paper *cites* (its bibliography), fetched
+   *  lazily on first switch to the References view via the new
+   *  /api/papers/refs endpoint. `null` = not loaded yet, `[]` = a
+   *  successful fetch that returned nothing (rare — papers usually
+   *  cite at least a few things), array = the references list. */
+  const [refs, setRefs] = useState<Paper[] | null>(null);
+  const [refsLoading, setRefsLoading] = useState(false);
+  const [refsError, setRefsError] = useState<string | null>(null);
   /** Incremental list reveal. The server returns up to 80 related
    *  papers; rendering them all at once is a wall. Show 30
    *  initially, "Load more" reveals another 30. Reset to 30 when
@@ -222,6 +230,30 @@ export function RelatedView({
   function clearFilters() {
     setYearFrom(''); setYearTo(''); setPdfOnly(false); setVenueFilter(''); setSortBy('relevance');
   }
+
+  // Lazy-fetch the references list the first time the References
+  // view is opened. Cached at the route layer (Next revalidate +
+  // SS itself), so a tab-flip doesn't re-hit the network.
+  useEffect(() => {
+    if (view !== 'refs' || refs !== null || refsLoading) return;
+    setRefsLoading(true);
+    setRefsError(null);
+    void fetch(`/api/papers/refs?rowId=${encodeURIComponent(rowId)}&limit=200`)
+      .then(async (r) => {
+        const j = (await r.json().catch(() => ({}))) as { papers?: Paper[]; error?: string };
+        if (!r.ok) {
+          setRefsError(j.error || `refs: ${r.status}`);
+          setRefs([]);
+        } else {
+          setRefs(j.papers || []);
+        }
+      })
+      .catch((e) => {
+        setRefsError((e as Error).message);
+        setRefs([]);
+      })
+      .finally(() => setRefsLoading(false));
+  }, [view, refs, refsLoading, rowId]);
 
   // Reset the incremental reveal whenever the filtered set changes
   // — a freshly-narrowed list should start at the top, not deep in
@@ -454,10 +486,22 @@ export function RelatedView({
             className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
               view === 'sankey'
                 ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
-                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-900 dark:hover:text-zinc-100'
             }`}
           >
             <Workflow className="h-3.5 w-3.5" /> Citations
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('refs')}
+            title="Bibliography — the papers this paper cites"
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+              view === 'refs'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            <Quote className="h-3.5 w-3.5" /> References
           </button>
         </div>
       </div>
@@ -721,6 +765,84 @@ export function RelatedView({
           papers={filtered}
           added={added}
         />
+      )}
+
+      {view === 'refs' && (
+        <div className="mt-2">
+          {refsLoading && (
+            <div className="flex items-center gap-2 rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading references…
+            </div>
+          )}
+          {!refsLoading && refsError && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+              {refsError}
+            </div>
+          )}
+          {!refsLoading && !refsError && refs && refs.length === 0 && (
+            <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
+              No references returned — either the paper genuinely cites nothing indexed, or Semantic Scholar doesn&rsquo;t have its bibliography.
+            </p>
+          )}
+          {!refsLoading && refs && refs.length > 0 && (
+            <ul className="space-y-2">
+              {refs.map((p, idx) => {
+                const key = paperKey(p);
+                const url = paperUrl(p);
+                const isAdded = added.has(key);
+                const isBusy = adding.has(key);
+                const authors = (p.authors || []).map((a) => a.name || '').filter(Boolean).join(', ');
+                return (
+                  <li
+                    key={key || p.paperId || `ref-${idx}`}
+                    className="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                          {p.title || '(untitled)'}
+                        </div>
+                        {(authors || p.year || p.venue) && (
+                          <div className="mt-0.5 truncate text-xs text-zinc-500">
+                            {authors}
+                            {p.year ? ` · ${p.year}` : ''}
+                            {p.venue ? ` · ${p.venue}` : ''}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {url && (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener"
+                            title="Open"
+                            className="inline-flex items-center gap-1 rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void addOne(p)}
+                          disabled={!url || isAdded || isBusy}
+                          title={!url ? 'No fetchable URL on this reference' : isAdded ? 'Already added' : 'Add to library'}
+                          className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2.5 py-1 text-xs text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+                        >
+                          {isBusy
+                            ? <><Loader2 className="h-3 w-3 animate-spin" /></>
+                            : isAdded
+                              ? <><Check className="h-3 w-3" /></>
+                              : <><Plus className="h-3 w-3" /> Add</>}
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       )}
 
       <ul className={`mt-2 space-y-2 ${view !== 'list' ? 'hidden' : ''}`}>
