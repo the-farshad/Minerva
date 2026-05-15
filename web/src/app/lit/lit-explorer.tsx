@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network } from 'lucide-react';
+import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 
 type Paper = {
@@ -54,6 +54,61 @@ function refOf(p: Paper): string | null {
   return null;
 }
 
+/** Best identifier we can use as a lookup query for this paper —
+ *  DOI > arXiv > title. Returned as the same string the lookup
+ *  route accepts. Used by the click-to-explore handler. */
+function lookupQueryOf(p: Paper): string {
+  const doi = p.doi || p.externalIds?.DOI;
+  if (doi) return doi;
+  const arxiv = p.arxiv || p.externalIds?.ArXiv;
+  if (arxiv) return arxiv;
+  return p.title || '';
+}
+
+function bibtexOf(p: Paper): string {
+  const doi = p.doi || p.externalIds?.DOI || '';
+  const arxiv = p.arxiv || p.externalIds?.ArXiv || '';
+  const key = (doi || arxiv || (p.title || 'paper').slice(0, 20))
+    .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '') || 'paper';
+  const authors = authorsStr(p).split(/,\s*/).filter(Boolean).join(' and ');
+  const lines: string[] = [`@article{${key}`];
+  if (p.title) lines.push(`  title = {${p.title}}`);
+  if (authors) lines.push(`  author = {${authors}}`);
+  if (p.year) lines.push(`  year = {${p.year}}`);
+  if (p.venue) lines.push(`  journal = {${p.venue}}`);
+  if (doi) lines.push(`  doi = {${doi}}`);
+  const url = publicUrl(p);
+  if (url) lines.push(`  url = {${url}}`);
+  return lines.join(',\n') + '\n}\n';
+}
+
+function risOf(p: Paper): string {
+  const lines = ['TY  - JOUR'];
+  if (p.title) lines.push(`TI  - ${p.title}`);
+  for (const a of authorsStr(p).split(/,\s*/).filter(Boolean)) lines.push(`AU  - ${a}`);
+  if (p.year) lines.push(`PY  - ${p.year}`);
+  if (p.venue) lines.push(`JO  - ${p.venue}`);
+  const doi = p.doi || p.externalIds?.DOI;
+  if (doi) lines.push(`DO  - ${doi}`);
+  const url = publicUrl(p);
+  if (url) lines.push(`UR  - ${url}`);
+  if (p.abstract) lines.push(`AB  - ${p.abstract}`);
+  lines.push('ER  - ');
+  return lines.join('\n') + '\n';
+}
+
+function downloadText(content: string, filename: string, mime = 'text/plain;charset=utf-8') {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 type Tab = 'overview' | 'refs' | 'cites' | 'related';
 type RelatedView = 'list' | 'graph';
 
@@ -75,10 +130,8 @@ export function LitExplorer() {
   const cacheKey = ref && tab !== 'overview' ? `${ref}:${tab}` : '';
   const edgePapers = cacheKey ? edgeCache[cacheKey] : null;
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q) return;
+  async function resolveAndSetSeed(q: string) {
+    if (!q.trim()) return;
     setLoading(true);
     setErr('');
     setPaper(null);
@@ -88,7 +141,7 @@ export function LitExplorer() {
       const r = await fetch('/api/import/lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q }),
+        body: JSON.stringify({ q: q.trim() }),
       });
       const j = (await r.json().catch(() => ({}))) as Paper & { error?: string };
       if (!r.ok) {
@@ -97,12 +150,31 @@ export function LitExplorer() {
         setErr('No paper match. Try a DOI (10.x/y), arXiv id (2401.12345), a paper URL, or a more specific title.');
       } else {
         setPaper(j);
+        // Keep the query bar in sync with the active seed so the
+        // user can see what's being explored and edit / re-search.
+        setQuery(q.trim());
+        if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     } catch (e) {
       setErr((e as Error).message);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await resolveAndSetSeed(query);
+  }
+
+  /** Click-to-explore: take a paper from the refs / cited / related
+   *  list and re-resolve it as the new seed. The list cards pass
+   *  through whichever identifier they have (DOI > arXiv > title)
+   *  and the lookup chain handles all three. */
+  function exploreFromPaper(p: Paper) {
+    const q = lookupQueryOf(p);
+    if (!q) return;
+    void resolveAndSetSeed(q);
   }
 
   // Lazy-fetch whichever connected-graph leg is active, cached
@@ -265,7 +337,13 @@ export function LitExplorer() {
               )}
               {!edgeLoading && edgePapers && edgePapers.length > 0 && !(tab === 'related' && relatedView === 'graph') && (
                 <ul className="space-y-2">
-                  {edgePapers.map((p, idx) => <PaperRow key={`${idx}-${p.paperId ?? p.title}`} paper={p} />)}
+                  {edgePapers.map((p, idx) => (
+                    <PaperRow
+                      key={`${idx}-${p.paperId ?? p.title}`}
+                      paper={p}
+                      onExplore={() => exploreFromPaper(p)}
+                    />
+                  ))}
                 </ul>
               )}
             </div>
@@ -332,39 +410,102 @@ function PaperOverview({ paper }: { paper: Paper }) {
         )}
         {paper.pmid && <span className="rounded-full bg-zinc-100 px-2.5 py-1 dark:bg-zinc-800">PMID {paper.pmid}</span>}
         {paper.pmcid && <span className="rounded-full bg-zinc-100 px-2.5 py-1 dark:bg-zinc-800">{paper.pmcid}</span>}
+        <span className="mx-1 text-zinc-300 dark:text-zinc-700">|</span>
+        <button
+          type="button"
+          onClick={() => {
+            const base = ((paper.doi || paper.arxiv || paper.externalIds?.DOI || paper.externalIds?.ArXiv || paper.title || 'paper')
+              .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60));
+            downloadText(bibtexOf(paper), `${base}.bib`);
+          }}
+          title="Download BibTeX"
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+        >
+          <Download className="h-3 w-3" /> BibTeX
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const base = ((paper.doi || paper.arxiv || paper.externalIds?.DOI || paper.externalIds?.ArXiv || paper.title || 'paper')
+              .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60));
+            downloadText(risOf(paper), `${base}.ris`);
+          }}
+          title="Download RIS"
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+        >
+          <Download className="h-3 w-3" /> RIS
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const base = ((paper.doi || paper.arxiv || paper.externalIds?.DOI || paper.externalIds?.ArXiv || paper.title || 'paper')
+              .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60));
+            downloadText(JSON.stringify(paper, null, 2), `${base}.json`, 'application/json;charset=utf-8');
+          }}
+          title="Download JSON"
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+        >
+          <Download className="h-3 w-3" /> JSON
+        </button>
       </div>
     </article>
   );
 }
 
-function PaperRow({ paper }: { paper: Paper }) {
+function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }) {
   const link = publicUrl(paper);
   const authors = authorsStr(paper);
   const cc = typeof paper.citationCount === 'number' ? paper.citationCount : null;
+  const explorable = onExplore && (paper.doi || paper.externalIds?.DOI || paper.arxiv || paper.externalIds?.ArXiv || paper.title);
   return (
-    <li className="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        {link ? (
-          <a href={link} target="_blank" rel="noopener" className="text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100">
-            {paper.title || '(untitled)'}
+    <li className="group rounded-md border border-zinc-200 bg-white p-3 transition hover:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-600">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            {explorable ? (
+              <button
+                type="button"
+                onClick={onExplore}
+                title="Explore this paper — make it the new seed"
+                className="text-left text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100"
+              >
+                {paper.title || '(untitled)'}
+              </button>
+            ) : link ? (
+              <a href={link} target="_blank" rel="noopener" className="text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100">
+                {paper.title || '(untitled)'}
+              </a>
+            ) : (
+              <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{paper.title || '(untitled)'}</span>
+            )}
+            {paper.year && <span className="text-xs text-zinc-500">{String(paper.year)}</span>}
+            {cc !== null && cc > 0 && (
+              <span title={`${cc.toLocaleString()} citations`} className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                {cc >= 1000 ? `${(cc / 1000).toFixed(cc >= 10_000 ? 0 : 1)}k` : cc}
+              </span>
+            )}
+          </div>
+          {(authors || paper.venue) && (
+            <div className="mt-0.5 truncate text-xs text-zinc-500">
+              {authors}
+              {authors && paper.venue ? ' · ' : ''}
+              {paper.venue}
+            </div>
+          )}
+        </div>
+        {link && (
+          <a
+            href={link}
+            target="_blank"
+            rel="noopener"
+            title="Open original"
+            className="shrink-0 rounded-full p-1.5 text-zinc-400 opacity-0 transition hover:bg-zinc-100 hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
           </a>
-        ) : (
-          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{paper.title || '(untitled)'}</span>
-        )}
-        {paper.year && <span className="text-xs text-zinc-500">{String(paper.year)}</span>}
-        {cc !== null && cc > 0 && (
-          <span title={`${cc.toLocaleString()} citations`} className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-            {cc >= 1000 ? `${(cc / 1000).toFixed(cc >= 10_000 ? 0 : 1)}k` : cc}
-          </span>
         )}
       </div>
-      {(authors || paper.venue) && (
-        <div className="mt-0.5 truncate text-xs text-zinc-500">
-          {authors}
-          {authors && paper.venue ? ' · ' : ''}
-          {paper.venue}
-        </div>
-      )}
     </li>
   );
 }
