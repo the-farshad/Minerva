@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download } from 'lucide-react';
+import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
+import { TimelineChart } from './timeline-chart';
 
 type Paper = {
   kind?: string;
@@ -153,7 +154,7 @@ function downloadText(content: string, filename: string, mime = 'text/plain;char
 }
 
 type Tab = 'overview' | 'refs' | 'cites' | 'related';
-type RelatedView = 'list' | 'graph';
+type ListView = 'list' | 'graph' | 'timeline';
 type SearchMode = 'id' | 'keyword';
 
 export function LitExplorer() {
@@ -164,9 +165,10 @@ export function LitExplorer() {
   const [err, setErr] = useState<string>('');
   const [candidates, setCandidates] = useState<Paper[] | null>(null);
   const [candidatesLabel, setCandidatesLabel] = useState<string>('');
+  const [concepts, setConcepts] = useState<{ id: string; name: string; level: number }[]>([]);
 
   const [tab, setTab] = useState<Tab>('overview');
-  const [relatedView, setRelatedView] = useState<RelatedView>('list');
+  const [listView, setListView] = useState<ListView>('list');
   // List filters / sort — apply across all three connected-graph
   // legs (refs / cites / related). Reset on every new seed search
   // via the `setX('')` block in `resolveAndSetSeed` below.
@@ -193,6 +195,7 @@ export function LitExplorer() {
     setPaper(null);
     setCandidates(null);
     setCandidatesLabel('');
+    setConcepts([]);
     setEdgeCache({});
     setTab('overview');
     // Reset list filters whenever the seed changes — a year range
@@ -231,6 +234,7 @@ export function LitExplorer() {
     setPaper(null);
     setCandidates(null);
     setCandidatesLabel('');
+    setConcepts([]);
     setEdgeCache({});
     setTab('overview');
     try {
@@ -265,6 +269,7 @@ export function LitExplorer() {
     setPaper(null);
     setCandidates(null);
     setCandidatesLabel('');
+    setConcepts([]);
     setEdgeCache({});
     setTab('overview');
     try {
@@ -315,6 +320,35 @@ export function LitExplorer() {
     if (!q) return;
     setMode('id');
     void resolveAndSetSeed(q);
+  }
+
+  // Concept enrichment: once a seed resolves with a usable ref,
+  // ask OpenAlex what topics it belongs to. Best-effort — failure
+  // silently leaves the chips empty.
+  useEffect(() => {
+    if (!ref) return;
+    let cancelled = false;
+    const url = `/api/papers/concepts?ref=${encodeURIComponent(ref)}&top=5`;
+    void fetch(url)
+      .then(async (r) => {
+        if (!r.ok) return;
+        const j = (await r.json().catch(() => ({}))) as {
+          concepts?: { id: string; name: string; level: number }[];
+        };
+        if (!cancelled) setConcepts(j.concepts || []);
+      })
+      .catch(() => { /* tolerate */ });
+    return () => { cancelled = true; };
+  }, [ref]);
+
+  /** Topic-chip click: switch into keyword mode and run a paper
+   *  search on the concept's display name. The result list lands in
+   *  the candidates pane, same as the keyword input and the author
+   *  click. */
+  function exploreFromConcept(name: string) {
+    setMode('keyword');
+    setQuery(name);
+    void runKeywordSearch(name);
   }
 
   // Lazy-fetch whichever connected-graph leg is active, cached
@@ -483,7 +517,14 @@ export function LitExplorer() {
             })}
           </div>
 
-          {tab === 'overview' && <PaperOverview paper={paper} onAuthorClick={runAuthorSearch} />}
+          {tab === 'overview' && (
+            <PaperOverview
+              paper={paper}
+              concepts={concepts}
+              onAuthorClick={runAuthorSearch}
+              onConceptClick={exploreFromConcept}
+            />
+          )}
 
           {tab !== 'overview' && (
             <div>
@@ -585,32 +626,43 @@ export function LitExplorer() {
                   >
                     <Download className="h-3 w-3" /> CSV
                   </button>
-                  {tab === 'related' && (
-                    <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                    <button
+                      type="button"
+                      onClick={() => setListView('list')}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+                        listView === 'list'
+                          ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                          : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                      }`}
+                    >
+                      <List className="h-3 w-3" /> List
+                    </button>
+                    {tab === 'related' && (
                       <button
                         type="button"
-                        onClick={() => setRelatedView('list')}
+                        onClick={() => setListView('graph')}
                         className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
-                          relatedView === 'list'
-                            ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
-                            : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
-                        }`}
-                      >
-                        <List className="h-3 w-3" /> List
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRelatedView('graph')}
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
-                          relatedView === 'graph'
+                          listView === 'graph'
                             ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
                             : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
                         }`}
                       >
                         <Network className="h-3 w-3" /> Graph
                       </button>
-                    </div>
-                  )}
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setListView('timeline')}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+                        listView === 'timeline'
+                          ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                          : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                      }`}
+                    >
+                      <LineChart className="h-3 w-3" /> Timeline
+                    </button>
+                  </div>
                 </div>
               )}
               {edgeLoading && (
@@ -628,38 +680,51 @@ export function LitExplorer() {
                   No results for this leg.
                 </p>
               )}
-              {!edgeLoading && filteredEdges && filteredEdges.length > 0 && tab === 'related' && relatedView === 'graph' && (
-                <RelatedGraph
-                  seedTitle={paper.title || ''}
-                  seedYear={paper.year ? String(paper.year) : ''}
-                  seedAuthors={authorsStr(paper)}
-                  // Coerce our looser Paper.authors (string | array)
-                  // into the array-only shape RelatedGraph expects.
-                  papers={filteredEdges.map((p) => ({
-                    ...p,
-                    authors: Array.isArray(p.authors)
-                      ? p.authors
-                      : (typeof p.authors === 'string' && p.authors
-                          ? p.authors.split(/,\s*/).map((n) => ({ name: n }))
-                          : []),
-                    year: typeof p.year === 'number' ? p.year : (p.year ? Number(p.year) || undefined : undefined),
-                  }))}
-                  added={new Set()}
-                  adding={new Set()}
-                  onAdd={async () => false}
-                />
-              )}
-              {!edgeLoading && filteredEdges && filteredEdges.length > 0 && !(tab === 'related' && relatedView === 'graph') && (
-                <ul className="space-y-2">
-                  {filteredEdges.map((p, idx) => (
-                    <PaperRow
-                      key={`${idx}-${p.paperId ?? p.title}`}
-                      paper={p}
-                      onExplore={() => exploreFromPaper(p)}
+              {!edgeLoading && filteredEdges && filteredEdges.length > 0 && (() => {
+                if (listView === 'timeline') {
+                  return (
+                    <TimelineChart
+                      seed={paper}
+                      papers={filteredEdges}
+                      onSelect={exploreFromPaper}
                     />
-                  ))}
-                </ul>
-              )}
+                  );
+                }
+                if (tab === 'related' && listView === 'graph') {
+                  return (
+                    <RelatedGraph
+                      seedTitle={paper.title || ''}
+                      seedYear={paper.year ? String(paper.year) : ''}
+                      seedAuthors={authorsStr(paper)}
+                      // Coerce our looser Paper.authors (string | array)
+                      // into the array-only shape RelatedGraph expects.
+                      papers={filteredEdges.map((p) => ({
+                        ...p,
+                        authors: Array.isArray(p.authors)
+                          ? p.authors
+                          : (typeof p.authors === 'string' && p.authors
+                              ? p.authors.split(/,\s*/).map((n) => ({ name: n }))
+                              : []),
+                        year: typeof p.year === 'number' ? p.year : (p.year ? Number(p.year) || undefined : undefined),
+                      }))}
+                      added={new Set()}
+                      adding={new Set()}
+                      onAdd={async () => false}
+                    />
+                  );
+                }
+                return (
+                  <ul className="space-y-2">
+                    {filteredEdges.map((p, idx) => (
+                      <PaperRow
+                        key={`${idx}-${p.paperId ?? p.title}`}
+                        paper={p}
+                        onExplore={() => exploreFromPaper(p)}
+                      />
+                    ))}
+                  </ul>
+                );
+              })()}
               {!edgeLoading && edgePapers && edgePapers.length > 0 && filteredEdges && filteredEdges.length === 0 && (
                 <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
                   {edgePapers.length} loaded, none match the current filters.
@@ -670,8 +735,16 @@ export function LitExplorer() {
         </>
       )}
 
-      <footer className="mt-12 text-center text-xs text-zinc-400">
-        <a href="https://thefarshad.com" className="hover:underline">thefarshad.com</a>
+      <footer className="mt-12 space-y-1 text-center text-xs text-zinc-400">
+        <p>
+          Sources:{' '}
+          <span className="text-zinc-500 dark:text-zinc-400">
+            arXiv · CrossRef · Europe PMC · OpenAlex · Semantic Scholar · OpenCitations
+          </span>
+        </p>
+        <p>
+          <a href="https://thefarshad.com" className="hover:underline">thefarshad.com</a>
+        </p>
       </footer>
     </main>
   );
@@ -679,10 +752,14 @@ export function LitExplorer() {
 
 function PaperOverview({
   paper,
+  concepts,
   onAuthorClick,
+  onConceptClick,
 }: {
   paper: Paper;
+  concepts?: { id: string; name: string; level: number }[];
   onAuthorClick?: (name: string) => void;
+  onConceptClick?: (name: string) => void;
 }) {
   const link = publicUrl(paper);
   const authorList = authorsStr(paper).split(/,\s*/).map((s) => s.trim()).filter(Boolean);
@@ -737,6 +814,21 @@ function PaperOverview({
           ))}
           {authorList.length > 0 && paper.venue ? ' · ' : ''}
           {paper.venue}
+        </div>
+      )}
+      {concepts && concepts.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {concepts.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onConceptClick?.(c.name)}
+              title={`Find papers about ${c.name}`}
+              className="rounded-full border border-zinc-200 px-2 py-0.5 text-[11px] text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-500 dark:hover:text-zinc-100"
+            >
+              {c.name}
+            </button>
+          ))}
         </div>
       )}
       {paper.abstract && (
