@@ -179,6 +179,7 @@ export function LitExplorer() {
   const [minCites, setMinCites] = useState<string>('');
   const [textFilter, setTextFilter] = useState<string>('');
   const [oaOnly, setOaOnly] = useState<boolean>(false);
+  const [influentialOnly, setInfluentialOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<'relevance' | 'cites-desc' | 'year-desc' | 'year-asc'>('relevance');
   // Connected-graph fetches, cached per `${ref}:${kind}` key so
   // tab-flipping doesn't refetch.
@@ -203,7 +204,7 @@ export function LitExplorer() {
     // Reset list filters whenever the seed changes — a year range
     // useful for paper A is almost never the same as for paper B.
     setYearFrom(''); setYearTo(''); setMinCites(''); setTextFilter('');
-    setOaOnly(false); setSortBy('relevance');
+    setOaOnly(false); setInfluentialOnly(false); setSortBy('relevance');
     try {
       const r = await fetch('/api/import/lookup', {
         method: 'POST',
@@ -402,6 +403,7 @@ export function LitExplorer() {
       if (yearFrom && !y) return false;
       if (yearTo && !y) return false;
       if (oaOnly && !(p.openAccessPdf?.url || p.pdf)) return false;
+      if (influentialOnly && !(p.influentialCitationCount && p.influentialCitationCount > 0)) return false;
       if (minC > 0 && (p.citationCount ?? -1) < minC) return false;
       if (needle) {
         const hay = `${authorsStr(p)} ${p.venue ?? ''} ${p.title ?? ''}`.toLowerCase();
@@ -420,10 +422,10 @@ export function LitExplorer() {
       });
     }
     return out;
-  }, [edgePapers, yearFrom, yearTo, oaOnly, sortBy]);
+  }, [edgePapers, yearFrom, yearTo, minCites, textFilter, oaOnly, influentialOnly, sortBy]);
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
+    <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col px-4 py-10 sm:px-6">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-3xl font-semibold tracking-tight">Literature</h1>
         <ThemePicker />
@@ -470,6 +472,14 @@ export function LitExplorer() {
               : 'Search'}
           </button>
         </label>
+        {mode === 'keyword' && (
+          <p className="mt-1.5 px-2 text-[11px] text-zinc-500">
+            Combine terms with <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">AND</code>,{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">OR</code>,{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">NOT</code>, or wrap a phrase in{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">&quot;quotes&quot;</code>.
+          </p>
+        )}
       </form>
 
       {err && (
@@ -585,6 +595,18 @@ export function LitExplorer() {
                       className="accent-zinc-900 dark:accent-zinc-200"
                     />
                     Open access
+                  </label>
+                  <label
+                    className="inline-flex items-center gap-1 text-xs"
+                    title="Only show papers Semantic Scholar flags as influentially cited"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={influentialOnly}
+                      onChange={(e) => setInfluentialOnly(e.target.checked)}
+                      className="accent-zinc-900 dark:accent-zinc-200"
+                    />
+                    Influential
                   </label>
                   <select
                     value={sortBy}
@@ -743,7 +765,7 @@ export function LitExplorer() {
         </>
       )}
 
-      <footer className="mt-12 flex flex-col items-center gap-3 text-xs text-zinc-400">
+      <footer className="mt-auto flex flex-col items-center gap-3 pt-12 text-xs text-zinc-400">
         <FontPicker />
         <p className="text-center">
           Sources:{' '}
@@ -751,10 +773,10 @@ export function LitExplorer() {
             arXiv · CrossRef · Europe PMC · OpenAlex · Semantic Scholar · OpenCitations
           </span>
         </p>
+        <p className="text-center text-[10px] text-zinc-400/70">
+          <a href="https://thefarshad.com" className="hover:underline">thefarshad.com</a>
+        </p>
       </footer>
-      <p className="mt-10 text-center text-[10px] text-zinc-400/70">
-        <a href="https://thefarshad.com" className="hover:underline">thefarshad.com</a>
-      </p>
     </main>
   );
 }

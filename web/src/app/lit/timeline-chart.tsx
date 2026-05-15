@@ -85,7 +85,30 @@ export function TimelineChart({
     return PAD.t + innerH - (Math.log10(Math.max(0, c) + 1) / logMax) * innerH;
   }
   function rFor(c: number): number {
-    return Math.max(3, Math.min(22, Math.sqrt(Math.max(0, c)) * 0.45));
+    return Math.max(2.5, Math.min(28, Math.sqrt(Math.max(0, c)) * 0.7));
+  }
+  // Fill opacity scales with log(cites): 0-cite papers render as
+  // pale dots, the top-cited paper fills almost solid. The visual
+  // size already encodes cites; opacity is the second channel so a
+  // dense cluster of low-cite papers doesn't drown out a 10 000-cite
+  // landmark sitting at the same year.
+  function opacityFor(c: number): number {
+    if (logMax <= 0) return 0.65;
+    return 0.25 + 0.7 * (Math.log10(Math.max(0, c) + 1) / logMax);
+  }
+  // Annotate the three highest-cited papers inline so the visual
+  // story ("this paper is the most-cited one in this cohort")
+  // doesn't depend on hovering.
+  const labelTop = new Set(
+    [...datable]
+      .filter((d) => d.c > 0)
+      .sort((a, b) => b.c - a.c)
+      .slice(0, 3)
+      .map((d) => d.i),
+  );
+  function citesLabel(c: number): string {
+    if (c >= 1000) return `${(c / 1000).toFixed(c >= 10_000 ? 0 : 1)}k`;
+    return String(c);
   }
 
   // X ticks: pick a step that gives ~4–8 labels.
@@ -141,18 +164,34 @@ export function TimelineChart({
         </text>
 
         {/* bubbles */}
-        {datable.map(({ p, i, y, c }) => (
-          <circle
-            key={`pt-${i}-${p.paperId ?? p.title}`}
-            cx={xScale(y)} cy={yScale(c)} r={rFor(c)}
-            className="cursor-pointer fill-zinc-500/60 transition hover:fill-zinc-900 dark:fill-zinc-400/60 dark:hover:fill-zinc-100"
-            onMouseEnter={() => setHover({ x: xScale(y), y: yScale(c), p })}
-            onMouseLeave={() => setHover(null)}
-            onClick={() => onSelect(p)}
-          >
-            <title>{`${p.title ?? ''} (${y}) · ${c} cites`}</title>
-          </circle>
-        ))}
+        {datable.map(({ p, i, y, c }) => {
+          const r = rFor(c);
+          const cx = xScale(y);
+          const cy = yScale(c);
+          return (
+            <g key={`pt-${i}-${p.paperId ?? p.title}`}>
+              <circle
+                cx={cx} cy={cy} r={r}
+                fillOpacity={opacityFor(c)}
+                className="cursor-pointer fill-zinc-700 transition hover:fill-zinc-900 dark:fill-zinc-300 dark:hover:fill-zinc-100"
+                onMouseEnter={() => setHover({ x: cx, y: cy, p })}
+                onMouseLeave={() => setHover(null)}
+                onClick={() => onSelect(p)}
+              >
+                <title>{`${p.title ?? ''} (${y}) · ${c} cites`}</title>
+              </circle>
+              {labelTop.has(i) && (
+                <text
+                  x={cx} y={cy - r - 4}
+                  textAnchor="middle"
+                  className="pointer-events-none fill-zinc-600 text-[9px] dark:fill-zinc-300"
+                >
+                  {citesLabel(c)}
+                </text>
+              )}
+            </g>
+          );
+        })}
 
         {/* seed ring on top */}
         {seedYear !== null && seed && (

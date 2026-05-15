@@ -7,6 +7,12 @@
  * OpenAlex /works?search on SS failure (including rate-limit) so the
  * endpoint stays usable on shared IPs.
  *
+ * Boolean queries — those containing AND / OR / NOT, parens, or
+ * "quoted phrases" — are routed straight to OpenAlex, which is the
+ * only backend in the chain with documented boolean-operator
+ * support. SS's paper/search is best-match free-text and silently
+ * ignores boolean tokens.
+ *
  * Response shape mirrors /api/papers/refs and /api/related-papers
  * (`{ papers: RelatedPaper[] }`) so the client reuses the same row
  * renderer for results.
@@ -66,6 +72,9 @@ async function searchOpenAlex(query: string, limit: number): Promise<RelatedPape
   return (j.results || []).map(workToPaper).filter((p) => p.title);
 }
 
+// AND / OR / NOT as whole words, parens, or quoted phrases.
+const BOOLEAN_RE = /\b(AND|OR|NOT)\b|[()]|"[^"]+"/;
+
 export async function GET(req: NextRequest) {
   const q = (req.nextUrl.searchParams.get('q') || '').trim();
   if (!q) return NextResponse.json({ papers: [] });
@@ -73,6 +82,14 @@ export async function GET(req: NextRequest) {
     MAX_LIMIT,
     Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || DEFAULT_LIMIT),
   );
+
+  // Boolean queries skip SS (no operator support) and go straight
+  // to OpenAlex. Plain-text queries take the SS-first path.
+  const isBoolean = BOOLEAN_RE.test(q);
+  if (isBoolean) {
+    const oa = await searchOpenAlex(q, limit);
+    return NextResponse.json({ papers: oa, provider: 'openalex', boolean: true });
+  }
 
   const ss = await searchPapers(q, limit);
   if (ss.ok && ss.papers.length > 0) {
