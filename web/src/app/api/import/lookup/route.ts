@@ -41,8 +41,76 @@ export async function POST(req: NextRequest) {
   const ym = raw.match(YT_RE);
   if (ym) return NextResponse.json(await youtubeLookup(ym[1], raw));
 
-  // Fallback: bare URL.
+  // Generic publisher fallback: nearly every journal site (MDPI,
+  // Nature, Springer, IEEE, ACM, Wiley, Elsevier, ACS, …) exposes
+  // `<meta name="citation_*">` tags meant exactly for this. If we
+  // find a citation_doi, defer to CrossRef for the canonical
+  // record; otherwise scrape title / authors / year / pdf
+  // straight off the page so the row at least lands populated.
+  const scraped = await genericArticleLookup(raw);
+  if (scraped) return NextResponse.json(scraped);
+
+  // Last-resort fallback: bare URL.
   return NextResponse.json({ kind: 'article', url: raw });
+}
+
+async function genericArticleLookup(url: string) {
+  try {
+    const ac = new AbortController();
+    const timeout = setTimeout(() => ac.abort(), 10_000);
+    const r = await fetch(url, {
+      cache: 'no-store',
+      redirect: 'follow',
+      signal: ac.signal,
+      // A real-browser UA — several publishers (MDPI included)
+      // serve a 403 / different page to default fetch UAs.
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Minerva/2.0; +https://minerva.thefarshad.com)' },
+    }).finally(() => clearTimeout(timeout));
+    if (!r.ok) return null;
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('html')) return null;
+    const html = await r.text();
+    const meta = (name: string): string => {
+      const re = new RegExp(
+        `<meta\\s+[^>]*?(?:name|property)=["']${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}["'][^>]*?content=["']([^"']+)["']`,
+        'i',
+      );
+      const m = html.match(re);
+      if (m) return m[1].trim();
+      const reAlt = new RegExp(
+        `<meta\\s+[^>]*?content=["']([^"']+)["'][^>]*?(?:name|property)=["']${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}["']`,
+        'i',
+      );
+      const ma = html.match(reAlt);
+      return ma ? ma[1].trim() : '';
+    };
+    const doi = meta('citation_doi') || meta('dc.identifier');
+    if (doi && /^10\.\d{4,9}\//.test(doi)) {
+      try { return await crossrefLookup(doi); } catch { /* fall through */ }
+    }
+    const title = meta('citation_title') || meta('dc.title') || meta('og:title');
+    if (!title) return null;
+    const authorMatches = html.matchAll(
+      /<meta\s+[^>]*?(?:name|property)=["'](?:citation_author|dc\.creator)["'][^>]*?content=["']([^"']+)["']/gi,
+    );
+    const authors = Array.from(authorMatches, (m) => m[1].trim()).filter(Boolean).join(', ');
+    const dateRaw = meta('citation_date') || meta('citation_publication_date') || meta('dc.date') || '';
+    const year = dateRaw.match(/\d{4}/)?.[0] || '';
+    const venue = meta('citation_journal_title') || meta('citation_conference_title') || meta('dc.source') || '';
+    const pdf = meta('citation_pdf_url') || '';
+    return {
+      kind: 'paper',
+      title,
+      authors,
+      year,
+      venue,
+      ...(doi ? { doi } : {}),
+      ...(pdf ? { pdf } : {}),
+      url,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function arxivLookup(id: string) {

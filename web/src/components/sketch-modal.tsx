@@ -302,6 +302,14 @@ export function SketchModal({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // Offscreen canvas for the strokes layer — eraser strokes punch
+  // holes through it with `destination-out`, then it's composited
+  // onto the main canvas which already has paper + pattern painted.
+  // Doing it on a separate layer means erasing rubs out *ink only*;
+  // the paper colour and lined / grid pattern below stay intact.
+  // Lazily created on the first redraw and resized to match the
+  // main canvas's pixel dimensions.
+  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   /** Source of truth for the document. Each page owns its own stroke
    *  history; `strokesRef` and `bgImageRef` below are kept as aliases
    *  into the current page so the rest of the file (which already
@@ -1710,8 +1718,39 @@ export function SketchModal({
       const h = ih * r;
       ctx.drawImage(bgImageRef.current, (cw - w) / 2, (ch - h) / 2, w, h);
     }
-    for (const s of strokesRef.current) drawStroke(ctx, s);
-    if (drawingRef.current) drawStroke(ctx, drawingRef.current);
+    // Strokes layer — rendered onto an offscreen canvas so the
+    // pixel eraser's `destination-out` punches holes through ink
+    // only. The paper / pattern / bg image painted above on the
+    // main canvas stay intact and show through the erased pixels.
+    {
+      if (!offscreenCanvasRef.current) {
+        offscreenCanvasRef.current = document.createElement('canvas');
+      }
+      const off = offscreenCanvasRef.current;
+      if (off.width !== c.width || off.height !== c.height) {
+        off.width = c.width;
+        off.height = c.height;
+      }
+      const octx = off.getContext('2d');
+      if (octx) {
+        octx.setTransform(1, 0, 0, 1, 0, 0);
+        octx.clearRect(0, 0, off.width, off.height);
+        octx.scale(dpr, dpr);
+        octx.translate(tx, ty);
+        octx.scale(scale, scale);
+        for (const s of strokesRef.current) drawStroke(octx, s);
+        if (drawingRef.current) drawStroke(octx, drawingRef.current);
+        // Composite the strokes layer onto the main canvas. Reset
+        // the main ctx transform to draw the offscreen at raw
+        // pixel (0,0); restoring afterwards puts the view
+        // transform back so later text / selection / lasso draw
+        // in model space as before.
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(off, 0, 0);
+        ctx.restore();
+      }
+    }
     // Typed-text objects render above strokes, in model space (the
     // ctx is already pan/zoom-transformed). The one being live-
     // edited is skipped — the <textarea> overlay is showing it
@@ -1829,18 +1868,16 @@ export function SketchModal({
     if (s.points.length === 0) return;
     ctx.save();
     if (s.tool === 'eraser') {
-      // Erase by painting back to the current paper colour, NOT by
-      // `destination-out`. destination-out punches a transparent
-      // hole that reveals the canvas backdrop — on any non-white
-      // surface, or in dark mode, that backdrop differs from the
-      // paper, so the "erased" path showed up as a wrong-coloured
-      // streak: the eraser looked like it was drawing a line.
-      const effSurface = pageOverrideRef.current?.surface ?? paperColorRef.current;
-      const paperFill = (PAPER_COLORS.find((p) => p.id === effSurface) ?? PAPER_COLORS[0]).fill;
-      ctx.globalCompositeOperation = 'source-over';
+      // True pixel erase: punch transparent holes through the
+      // strokes layer with `destination-out`. The caller (redraw)
+      // routes eraser strokes onto the offscreen strokes canvas,
+      // so this never touches paper / pattern / bg image — those
+      // live on the main canvas underneath the composited layer
+      // and remain visible through the punched-out pixels.
+      ctx.globalCompositeOperation = 'destination-out';
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = paperFill;
-      ctx.fillStyle = paperFill;
+      ctx.strokeStyle = '#000';
+      ctx.fillStyle = '#000';
     } else {
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = s.alpha;
@@ -2885,11 +2922,10 @@ export function SketchModal({
       <footer className="relative z-[70] flex min-h-[3.25rem] flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
         {/* Tool selector. Primary tools stay visible; the eight
           * shape tools tuck behind one "Shapes" sub-nav button. The
-          * "Eraser" button maps to obj-eraser — the eraser now
-          * always removes whole strokes on contact (true deletion).
-          * The old pixel eraser painted the paper colour over ink,
-          * which left visible scars on patterned / non-white
-          * surfaces and read as "the eraser is drawing". */}
+          * Eraser has two modes — Pixel (rubs out ink under the
+          * stroke, paper + lines remain) and Object (removes the
+          * whole stroke). Both modes share the one toolbar slot;
+          * the inline switch below picks which is active. */}
         <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
           {TOOLS.filter((t) => t.id !== 'obj-eraser' && !isShapeTool(t.id)).map((t) => {
             const active = t.id === 'eraser'
@@ -2901,10 +2937,7 @@ export function SketchModal({
                 label={t.label}
                 icon={<t.Icon className="h-4 w-4" />}
                 active={active}
-                onActivate={() => {
-                  setTool(t.id === 'eraser' ? 'obj-eraser' : t.id);
-                  setWidthOverride(null);
-                }}
+                onActivate={() => { setTool(t.id); setWidthOverride(null); }}
               />
             );
           })}
@@ -2938,10 +2971,35 @@ export function SketchModal({
           </div>
         )}
 
-        {/* Eraser has no options — tap or drag over a stroke and
-          * it is removed. (Previously this row held a pixel/object
-          * mode switch + size tiers for the now-removed pixel
-          * eraser.) */}
+        {/* Eraser options — Pixel rubs out ink under the eraser
+          * (paper / lined background stay intact, true pixel
+          * erasing on the strokes layer), Object removes the whole
+          * stroke on contact. The size tiers apply to Pixel mode. */}
+        {(tool === 'eraser' || tool === 'obj-eraser') && (
+          <div className="inline-flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
+              <SketchOptionPill label="Pixel" active={tool === 'eraser'} onActivate={() => setTool('eraser')} />
+              <SketchOptionPill label="Object" active={tool === 'obj-eraser'} onActivate={() => setTool('obj-eraser')} />
+            </div>
+            {tool === 'eraser' && (() => {
+              const min = activeSpec.minWidth;
+              const max = activeSpec.maxWidth;
+              const TIERS = [min, min + (max - min) * 0.25, (min + max) / 2, min + (max - min) * 0.75, max];
+              return (
+                <div className="inline-flex items-center gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800">
+                  {TIERS.map((w, i) => (
+                    <SketchWidthButton
+                      key={i}
+                      width={w}
+                      active={Math.abs(effectiveWidth - w) < 0.5}
+                      onActivate={() => setWidthOverride(w)}
+                    />
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* Colour — current swatch + up to 3 recents inline; the
           * Palette button (or tapping the current swatch) opens the
