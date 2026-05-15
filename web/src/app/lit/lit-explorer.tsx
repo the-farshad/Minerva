@@ -82,6 +82,39 @@ function bibtexOf(p: Paper): string {
   return lines.join(',\n') + '\n}\n';
 }
 
+function bibtexBulk(papers: Paper[]): string {
+  return papers.map(bibtexOf).join('\n');
+}
+
+function risBulk(papers: Paper[]): string {
+  return papers.map(risOf).join('\n');
+}
+
+function csvEscape(v: string): string {
+  if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+  return v;
+}
+
+function csvOf(papers: Paper[]): string {
+  const cols = ['title', 'authors', 'year', 'venue', 'doi', 'arxiv', 'citationCount', 'url'];
+  const head = cols.join(',');
+  const rows = papers.map((p) => {
+    const doi = p.doi || p.externalIds?.DOI || '';
+    const arxiv = p.arxiv || p.externalIds?.ArXiv || '';
+    return [
+      p.title ?? '',
+      authorsStr(p),
+      p.year != null ? String(p.year) : '',
+      p.venue ?? '',
+      doi,
+      arxiv,
+      typeof p.citationCount === 'number' ? String(p.citationCount) : '',
+      publicUrl(p),
+    ].map(csvEscape).join(',');
+  });
+  return [head, ...rows].join('\n') + '\n';
+}
+
 function risOf(p: Paper): string {
   const lines = ['TY  - JOUR'];
   if (p.title) lines.push(`TI  - ${p.title}`);
@@ -111,12 +144,15 @@ function downloadText(content: string, filename: string, mime = 'text/plain;char
 
 type Tab = 'overview' | 'refs' | 'cites' | 'related';
 type RelatedView = 'list' | 'graph';
+type SearchMode = 'id' | 'keyword';
 
 export function LitExplorer() {
   const [query, setQuery] = useState('');
+  const [mode, setMode] = useState<SearchMode>('id');
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<Paper | null>(null);
   const [err, setErr] = useState<string>('');
+  const [candidates, setCandidates] = useState<Paper[] | null>(null);
 
   const [tab, setTab] = useState<Tab>('overview');
   const [relatedView, setRelatedView] = useState<RelatedView>('list');
@@ -125,6 +161,8 @@ export function LitExplorer() {
   // via the `setX('')` block in `resolveAndSetSeed` below.
   const [yearFrom, setYearFrom] = useState<string>('');
   const [yearTo, setYearTo] = useState<string>('');
+  const [minCites, setMinCites] = useState<string>('');
+  const [textFilter, setTextFilter] = useState<string>('');
   const [oaOnly, setOaOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<'relevance' | 'cites-desc' | 'year-desc' | 'year-asc'>('relevance');
   // Connected-graph fetches, cached per `${ref}:${kind}` key so
@@ -142,11 +180,13 @@ export function LitExplorer() {
     setLoading(true);
     setErr('');
     setPaper(null);
+    setCandidates(null);
     setEdgeCache({});
     setTab('overview');
     // Reset list filters whenever the seed changes — a year range
     // useful for paper A is almost never the same as for paper B.
-    setYearFrom(''); setYearTo(''); setOaOnly(false); setSortBy('relevance');
+    setYearFrom(''); setYearTo(''); setMinCites(''); setTextFilter('');
+    setOaOnly(false); setSortBy('relevance');
     try {
       const r = await fetch('/api/import/lookup', {
         method: 'POST',
@@ -157,7 +197,7 @@ export function LitExplorer() {
       if (!r.ok) {
         setErr(j.error || `lookup: ${r.status}`);
       } else if (!j.title && j.kind !== 'paper') {
-        setErr('No paper match. Try a DOI (10.x/y), arXiv id (2401.12345), a paper URL, or a more specific title.');
+        setErr('No paper match. Try a DOI, arXiv ID, paper URL, or a more specific title.');
       } else {
         setPaper(j);
         // Keep the query bar in sync with the active seed so the
@@ -172,18 +212,53 @@ export function LitExplorer() {
     }
   }
 
+  async function runKeywordSearch(q: string) {
+    if (!q.trim()) return;
+    setLoading(true);
+    setErr('');
+    setPaper(null);
+    setCandidates(null);
+    setEdgeCache({});
+    setTab('overview');
+    try {
+      const r = await fetch(`/api/papers/search?q=${encodeURIComponent(q.trim())}&limit=25`);
+      const j = (await r.json().catch(() => ({}))) as { papers?: Paper[]; error?: string };
+      if (!r.ok) {
+        setErr(j.error || `search: ${r.status}`);
+        setCandidates([]);
+      } else {
+        setCandidates(j.papers || []);
+        if ((j.papers || []).length === 0) {
+          setErr('No matches. Try different wording or a more specific phrase.');
+        }
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+      setCandidates([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await resolveAndSetSeed(query);
+    if (mode === 'keyword') {
+      await runKeywordSearch(query);
+    } else {
+      await resolveAndSetSeed(query);
+    }
   }
 
   /** Click-to-explore: take a paper from the refs / cited / related
-   *  list and re-resolve it as the new seed. The list cards pass
-   *  through whichever identifier they have (DOI > arXiv > title)
-   *  and the lookup chain handles all three. */
+   *  list (or the keyword-search candidates) and re-resolve it as
+   *  the new seed. The list cards pass through whichever identifier
+   *  they have (DOI > arXiv > title) and the lookup chain handles
+   *  all three. Flips back to id-mode so the input reflects the
+   *  resolved seed. */
   function exploreFromPaper(p: Paper) {
     const q = lookupQueryOf(p);
     if (!q) return;
+    setMode('id');
     void resolveAndSetSeed(q);
   }
 
@@ -228,12 +303,19 @@ export function LitExplorer() {
     if (!edgePapers) return edgePapers;
     const yFrom = Number(yearFrom) || 0;
     const yTo = Number(yearTo) || 9999;
+    const minC = Number(minCites) || 0;
+    const needle = textFilter.trim().toLowerCase();
     const out = edgePapers.filter((p) => {
       const y = typeof p.year === 'number' ? p.year : Number(p.year) || 0;
       if (y && (y < yFrom || y > yTo)) return false;
       if (yearFrom && !y) return false;
       if (yearTo && !y) return false;
       if (oaOnly && !(p.openAccessPdf?.url || p.pdf)) return false;
+      if (minC > 0 && (p.citationCount ?? -1) < minC) return false;
+      if (needle) {
+        const hay = `${authorsStr(p)} ${p.venue ?? ''} ${p.title ?? ''}`.toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
       return true;
     });
     if (sortBy === 'cites-desc') {
@@ -256,6 +338,22 @@ export function LitExplorer() {
       </header>
 
       <form onSubmit={onSubmit} className="mb-6">
+        <div className="mb-2 inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          {(['id', 'keyword'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`rounded-full px-2.5 py-1 text-xs transition ${
+                mode === m
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+              }`}
+            >
+              {m === 'id' ? 'Identifier' : 'Keyword'}
+            </button>
+          ))}
+        </div>
         <label className="flex items-stretch rounded-full border border-zinc-300 bg-white shadow-sm focus-within:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
           <span className="flex shrink-0 items-center pl-4 text-zinc-400">
             <Search className="h-4 w-4" />
@@ -264,7 +362,9 @@ export function LitExplorer() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="10.3390/healthcare12111109 · 2401.12345 · https://arxiv.org/abs/… · Attention Is All You Need"
+            placeholder={mode === 'id'
+              ? 'Search by DOI, arXiv ID, URL, or title'
+              : 'Search by keyword, phrase, or topic'}
             className="flex-1 bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-zinc-400"
             autoFocus
           />
@@ -273,7 +373,9 @@ export function LitExplorer() {
             disabled={loading || !query.trim()}
             className="m-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-1.5 text-xs font-medium text-white transition disabled:opacity-40 dark:bg-white dark:text-zinc-900"
           >
-            {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Looking up</> : 'Search'}
+            {loading
+              ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {mode === 'id' ? 'Looking up' : 'Searching'}</>
+              : 'Search'}
           </button>
         </label>
       </form>
@@ -281,6 +383,23 @@ export function LitExplorer() {
       {err && (
         <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
           {err}
+        </div>
+      )}
+
+      {!paper && candidates && candidates.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs text-zinc-500">
+            {candidates.length} result{candidates.length === 1 ? '' : 's'} — click a title to explore.
+          </p>
+          <ul className="space-y-2">
+            {candidates.map((p, idx) => (
+              <PaperRow
+                key={`cand-${idx}-${p.paperId ?? p.title}`}
+                paper={p}
+                onExplore={() => exploreFromPaper(p)}
+              />
+            ))}
+          </ul>
         </div>
       )}
 
@@ -325,6 +444,7 @@ export function LitExplorer() {
                     value={yearFrom}
                     onChange={(e) => setYearFrom(e.target.value)}
                     placeholder="from"
+                    aria-label="Year from"
                     className="w-16 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
                   />
                   <span className="text-zinc-400">–</span>
@@ -333,7 +453,24 @@ export function LitExplorer() {
                     value={yearTo}
                     onChange={(e) => setYearTo(e.target.value)}
                     placeholder="to"
+                    aria-label="Year to"
                     className="w-16 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
+                  />
+                  <input
+                    type="number"
+                    value={minCites}
+                    onChange={(e) => setMinCites(e.target.value)}
+                    placeholder="min cites"
+                    aria-label="Minimum citations"
+                    className="w-20 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
+                  />
+                  <input
+                    type="text"
+                    value={textFilter}
+                    onChange={(e) => setTextFilter(e.target.value)}
+                    placeholder="author or venue"
+                    aria-label="Filter by author or venue"
+                    className="w-36 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
                   />
                   <label className="inline-flex items-center gap-1 text-xs">
                     <input
@@ -347,6 +484,7 @@ export function LitExplorer() {
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                    aria-label="Sort order"
                     className="rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none dark:border-zinc-700"
                   >
                     <option value="relevance">Relevance</option>
@@ -354,6 +492,43 @@ export function LitExplorer() {
                     <option value="year-desc">Newest</option>
                     <option value="year-asc">Oldest</option>
                   </select>
+                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">|</span>
+                  <button
+                    type="button"
+                    title="Download current list as BibTeX"
+                    onClick={() => {
+                      if (!filteredEdges?.length) return;
+                      downloadText(bibtexBulk(filteredEdges), `lit-${tab}.bib`);
+                    }}
+                    disabled={!filteredEdges?.length}
+                    className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                  >
+                    <Download className="h-3 w-3" /> BibTeX
+                  </button>
+                  <button
+                    type="button"
+                    title="Download current list as RIS"
+                    onClick={() => {
+                      if (!filteredEdges?.length) return;
+                      downloadText(risBulk(filteredEdges), `lit-${tab}.ris`);
+                    }}
+                    disabled={!filteredEdges?.length}
+                    className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                  >
+                    <Download className="h-3 w-3" /> RIS
+                  </button>
+                  <button
+                    type="button"
+                    title="Download current list as CSV"
+                    onClick={() => {
+                      if (!filteredEdges?.length) return;
+                      downloadText(csvOf(filteredEdges), `lit-${tab}.csv`, 'text/csv;charset=utf-8');
+                    }}
+                    disabled={!filteredEdges?.length}
+                    className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                  >
+                    <Download className="h-3 w-3" /> CSV
+                  </button>
                   {tab === 'related' && (
                     <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
                       <button
