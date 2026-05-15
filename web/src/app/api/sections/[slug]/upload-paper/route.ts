@@ -18,6 +18,7 @@ import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { uploadToMinervaDrive, paperFolderSegments, syncPaperShortcuts } from '@/lib/drive';
 import { extractPdfMeta } from '@/lib/pdf-meta';
+import { grobidExtractHeader } from '@/lib/grobid';
 import { bus } from '@/lib/event-bus';
 
 // extractPdfMeta lives in src/lib/pdf-meta.ts so the
@@ -50,7 +51,14 @@ export async function POST(
     // falls back to flat `papers/`.
     const categoryHint = String(form.get('category') || '').trim();
     const ab = await file.arrayBuffer();
-    const meta = extractPdfMeta(new Uint8Array(ab));
+    const localMeta = extractPdfMeta(new Uint8Array(ab));
+    // GROBID's PDF parser nails title / authors / abstract on
+    // papers where the regex fallback only gets "first big string
+    // on page 1". Hosted GROBID is the default; set GROBID_URL to
+    // a self-hosted instance once load justifies it. Silent on
+    // failure — the local extract still stands.
+    const grobid = await grobidExtractHeader(new Uint8Array(ab));
+    const meta = grobid ? { ...localMeta, ...grobid } : localMeta;
 
     const driveFilename = (meta.title || name).replace(/[^\w.\- ]+/g, '_').slice(0, 100) + '.pdf';
     const up = await uploadToMinervaDrive(

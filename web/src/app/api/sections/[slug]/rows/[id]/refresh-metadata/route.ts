@@ -19,6 +19,7 @@ import { eq, and } from 'drizzle-orm';
 import { getServerPref } from '@/lib/server-prefs';
 import { fetchDriveFileBytes } from '@/lib/drive';
 import { extractPdfMeta } from '@/lib/pdf-meta';
+import { grobidExtractHeader } from '@/lib/grobid';
 import { bus } from '@/lib/event-bus';
 import { fetchPaperStatsFromSS } from '@/lib/related-papers/semanticscholar';
 
@@ -285,9 +286,13 @@ export async function POST(
                 { status: 409 },
               );
             }
-            const meta = extractPdfMeta(new Uint8Array(bytes));
+            const localMeta = extractPdfMeta(new Uint8Array(bytes));
+            // Augment local extract with GROBID's PDF parser when
+            // the hosted service is reachable. Silent fall-back.
+            const grobid = await grobidExtractHeader(new Uint8Array(bytes));
+            const meta = grobid ? { ...localMeta, ...grobid } : localMeta;
             fetched = { ...meta } as RowData;
-            source = 'pdf-scan';
+            source = grobid ? 'pdf-scan+grobid' : 'pdf-scan';
           } catch (e) {
             return NextResponse.json(
               { error: `Couldn't read the cached PDF: ${(e as Error).message}` },
