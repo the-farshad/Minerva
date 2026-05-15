@@ -539,30 +539,35 @@ export function LitExplorer() {
                       ? ` of ${edgePapers.length}`
                       : ''}
                   </span>
+                  <div className="inline-flex items-center rounded-full border border-zinc-200 focus-within:border-zinc-500 dark:border-zinc-700">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={yearFrom}
+                      onChange={(e) => setYearFrom(e.target.value)}
+                      placeholder="from"
+                      aria-label="Year from"
+                      className="no-spin w-14 bg-transparent px-2 py-0.5 text-xs outline-none"
+                    />
+                    <span className="select-none text-zinc-400">–</span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={yearTo}
+                      onChange={(e) => setYearTo(e.target.value)}
+                      placeholder="to"
+                      aria-label="Year to"
+                      className="no-spin w-14 bg-transparent px-2 py-0.5 text-xs outline-none"
+                    />
+                  </div>
                   <input
                     type="number"
-                    value={yearFrom}
-                    onChange={(e) => setYearFrom(e.target.value)}
-                    placeholder="from"
-                    aria-label="Year from"
-                    className="w-16 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
-                  />
-                  <span className="text-zinc-400">–</span>
-                  <input
-                    type="number"
-                    value={yearTo}
-                    onChange={(e) => setYearTo(e.target.value)}
-                    placeholder="to"
-                    aria-label="Year to"
-                    className="w-16 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
-                  />
-                  <input
-                    type="number"
+                    inputMode="numeric"
                     value={minCites}
                     onChange={(e) => setMinCites(e.target.value)}
                     placeholder="min cites"
                     aria-label="Minimum citations"
-                    className="w-20 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
+                    className="no-spin w-20 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
                   />
                   <input
                     type="text"
