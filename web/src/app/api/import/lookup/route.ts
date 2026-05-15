@@ -51,8 +51,64 @@ export async function POST(req: NextRequest) {
   const scraped = await genericArticleLookup(raw);
   if (scraped) return NextResponse.json(scraped);
 
+  // Europe PMC as a final fallback — works when the URL embeds a
+  // DOI or PMID but the publisher page can't be scraped (paywall,
+  // bot wall) and CrossRef has nothing. Biomedical coverage is
+  // notably stronger than CrossRef.
+  const ident = raw.match(/(10\.\d{4,9}\/[^\s?#]+|PMC\d{4,8}|\bPMID:?\s*(\d{6,9}))/i)?.[0];
+  if (ident) {
+    const pmc = await europePmcLookup(ident);
+    if (pmc) return NextResponse.json(pmc);
+  }
+
   // Last-resort fallback: bare URL.
   return NextResponse.json({ kind: 'article', url: raw });
+}
+
+async function europePmcLookup(query: string) {
+  // Europe PMC is the strongest free index for biomedical /
+  // life-sciences papers and reliably has open-access full-text
+  // links where CrossRef has only the DOI. The query string
+  // accepts a DOI, PMID, PMCID, or a free-text title; we wrap it
+  // in EuropePMC's search syntax and take the top hit.
+  try {
+    const ac = new AbortController();
+    const timeout = setTimeout(() => ac.abort(), 8_000);
+    const r = await fetch(
+      `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json&pageSize=1&resultType=core`,
+      { cache: 'no-store', signal: ac.signal },
+    ).finally(() => clearTimeout(timeout));
+    if (!r.ok) return null;
+    const j = (await r.json()) as {
+      resultList?: { result?: Array<{
+        title?: string; authorString?: string; pubYear?: string;
+        journalTitle?: string; doi?: string; pmid?: string; pmcid?: string;
+        abstractText?: string; citedByCount?: number;
+        fullTextUrlList?: { fullTextUrl?: Array<{ url?: string; documentStyle?: string }> };
+      }> };
+    };
+    const item = j.resultList?.result?.[0];
+    if (!item || !item.title) return null;
+    const pdfEntry = item.fullTextUrlList?.fullTextUrl?.find(
+      (u) => u.documentStyle?.toLowerCase() === 'pdf' && u.url,
+    );
+    return {
+      kind: 'paper' as const,
+      title: item.title,
+      authors: item.authorString || '',
+      year: item.pubYear || '',
+      venue: item.journalTitle || '',
+      ...(item.doi ? { doi: item.doi } : {}),
+      ...(item.pmid ? { pmid: item.pmid } : {}),
+      ...(item.pmcid ? { pmcid: item.pmcid } : {}),
+      ...(item.abstractText ? { abstract: item.abstractText } : {}),
+      ...(pdfEntry?.url ? { pdf: pdfEntry.url } : {}),
+      ...(typeof item.citedByCount === 'number' ? { citationCount: item.citedByCount } : {}),
+      url: item.doi ? `https://doi.org/${item.doi}` : (pdfEntry?.url || ''),
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function genericArticleLookup(url: string) {
@@ -67,7 +123,14 @@ async function genericArticleLookup(url: string) {
       // serve a 403 / different page to default fetch UAs.
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Minerva/2.0; +https://minerva.thefarshad.com)' },
     }).finally(() => clearTimeout(timeout));
-    if (!r.ok) return null;
+    if (!r.ok) {
+      // Even when the publisher page can't be fetched (paywall,
+      // bot wall, 403), Europe PMC may still have the record if
+      // the URL exposes a DOI in its path.
+      const doiInUrl = url.match(/(10\.\d{4,9}\/[^\s?#]+)/)?.[1];
+      if (doiInUrl) return await europePmcLookup(doiInUrl);
+      return null;
+    }
     const ct = r.headers.get('content-type') || '';
     if (!ct.includes('html')) return null;
     const html = await r.text();
