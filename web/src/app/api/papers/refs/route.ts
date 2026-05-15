@@ -43,6 +43,7 @@ export async function GET(req: NextRequest) {
   // Row lookup path: resolve the paper ref from the row's `data`
   // (the same resolver the related-papers page uses). Scoped to
   // the signed-in user — no peeking at other users' rows.
+  let rowLookedUp = false;
   if (!ref && rowId) {
     const row = await db.query.rows.findFirst({
       where: and(
@@ -54,6 +55,7 @@ export async function GET(req: NextRequest) {
     if (!row) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
+    rowLookedUp = true;
     const data = row.data as Record<string, unknown>;
     const seedRefStr = resolvePaperRef(data);
     ref = parseRef(seedRefStr);
@@ -61,7 +63,11 @@ export async function GET(req: NextRequest) {
 
   if (!ref) {
     return NextResponse.json(
-      { error: 'Pass `rowId` of a paper row, or `ref=ARXIV:<id>` / `ref=DOI:<id>`.' },
+      {
+        error: rowLookedUp
+          ? 'This paper row has no arXiv id or DOI — add one in the Info pane and click Refresh, then try again.'
+          : 'Pass `rowId` of a paper row, or `ref=ARXIV:<id>` / `ref=DOI:<id>`.',
+      },
       { status: 400 },
     );
   }

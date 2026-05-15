@@ -17,6 +17,8 @@ interface Paper {
   abstract?: string;
   openAccessPdf?: { url?: string };
   venue?: string;
+  citationCount?: number;
+  influentialCitationCount?: number;
 }
 
 /** Pick the best external URL for a paper — prefer the openAccess
@@ -500,8 +502,13 @@ export function RelatedView({
           <button
             type="button"
             onClick={() => setView('refs')}
-            title="The paper's citation graph — papers it cites, and papers that cite it"
-            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+            disabled={!seedRef}
+            title={
+              seedRef
+                ? "The paper's citation graph — papers it cites, and papers that cite it"
+                : 'This row has no arXiv id or DOI — add one in the Info pane and click Refresh to look up its citation graph.'
+            }
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${
               view === 'refs'
                 ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
@@ -838,11 +845,14 @@ export function RelatedView({
                         <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                           {p.title || '(untitled)'}
                         </div>
-                        {(authors || p.year || p.venue) && (
+                        {(authors || p.year || p.venue || typeof p.citationCount === 'number') && (
                           <div className="mt-0.5 truncate text-xs text-zinc-500">
                             {authors}
                             {p.year ? ` · ${p.year}` : ''}
                             {p.venue ? ` · ${p.venue}` : ''}
+                            {typeof p.citationCount === 'number' && p.citationCount > 0
+                              ? ` · ${p.citationCount.toLocaleString()} citations`
+                              : ''}
                           </div>
                         )}
                       </div>

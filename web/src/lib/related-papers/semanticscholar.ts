@@ -19,6 +19,10 @@ const FIELDS = [
   'abstract',
   'openAccessPdf',
   'venue',
+  // Bibliometric signal in the list — lets the user spot heavily-
+  // cited refs / citing papers at a glance without per-row clicks.
+  'citationCount',
+  'influentialCitationCount',
 ].join(',');
 
 function ssHeaders(): HeadersInit {

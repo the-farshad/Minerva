@@ -18,6 +18,13 @@ export type RelatedPaper = {
   abstract?: string;
   openAccessPdf?: { url?: string };
   venue?: string;
+  /** Citations-of, when the backend supplied it. Shown next to
+   *  year / venue on list cards so the user can spot heavy hitters
+   *  at a glance. */
+  citationCount?: number;
+  /** Influential citations (SS's term — citations that meaningfully
+   *  build on this work rather than merely reference it). */
+  influentialCitationCount?: number;
   /** Bare OpenAlex Work IDs this paper cites (e.g. ["W123", …]).
    *  Used to compute bibliographic-coupling edges between
    *  papers in the graph view. OpenAlex provides this for free;
