@@ -57,24 +57,39 @@ src/
 - Home page that lists the user's installed sections.
 - Settings page with the section-preset gallery (Tasks, Projects,
   Notes, Habits, YouTube, Papers).
-- Per-section list + grid view with natural-numeric sort and
-  add/edit/delete row through the API.
+- Per-section list + grid view with add/edit/delete row through the
+  API, and a persisted-per-section sort: title A–Z/Z–A, recently /
+  oldest edited, newest / oldest (created), recently opened.
+- Row timestamps surfaced everywhere: cards show "edited N ago",
+  the info pane shows Created / Edited / Opened. "Opened" is set by
+  a `/touch` endpoint when a row's preview opens — debounced, and
+  deliberately does not bump `updatedAt`.
 - Auth-gated API routes for sections + rows (every query scoped to
   the signed-in user).
 - Token refresh helper that keeps the user's Google access token
   fresh from the stored refresh_token.
+- YouTube playlist import preserves playlist order — each video
+  carries its `_playlistPos` and the grouped grid sorts within a
+  group by it, stable across re-imports.
+- Quick-share (`/share` → `/p`) with an optional **access code**:
+  with a code set, the payload is AES-GCM encrypted under a
+  PBKDF2-derived key, so the link is unreadable without it — the
+  code never leaves the browser and the server still sees nothing.
 - Vector sketch editor (`components/sketch-modal.tsx`): multi-page
-  canvas with pen / pencil / marker / highlighter / line / shapes /
-  arrow / object-eraser / lasso, pan + pinch-zoom, paper sizes &
-  backgrounds and a light/dark drawing surface (all grouped under a
-  "Paper" popover), width / opacity / handwriting-smoothing under a
-  "Pen" popover, a **Pencil-only** toggle (ignores finger/touch for
-  drawing and pinch-zoom so a resting palm can't draw), and an
-  **iPad text tool** — its editing overlay is a real `<textarea>`,
-  so Apple Pencil Scribble converts handwriting to text on-device
-  (the only way to reach Apple's handwriting model from Safari).
-  Persists as a vector `SketchDoc` (JSON in `row.data._sketchDoc`)
-  and exports to PDF / SVG.
+  canvas with pen / pencil / marker / highlighter / line / shape
+  tools (rect / ellipse / arrow / triangle / diamond / star /
+  hexagon, behind a "Shapes" sub-nav) / object-eraser / lasso, pan
+  + pinch-zoom, paper sizes & backgrounds and a light/dark drawing
+  surface — with per-page paper overrides (the Paper popover's
+  "Apply to: All pages / This page" toggle). Width / opacity /
+  handwriting-smoothing live under a "Pen" popover, there's a
+  **Pencil-only** toggle (ignores finger/touch for drawing and
+  pinch-zoom so a resting palm can't draw), and an **iPad text
+  tool** — its editing overlay is a real `<textarea>`, so Apple
+  Pencil Scribble converts handwriting to text on-device (the only
+  way to reach Apple's handwriting model from Safari). Persists as
+  a vector `SketchDoc` (JSON in `row.data._sketchDoc`) and exports
+  to PDF / SVG.
 
 ## What's still TODO before sunsetting v1
 
