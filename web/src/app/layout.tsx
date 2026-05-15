@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import { Inter, Ubuntu, Roboto, Vazirmatn } from 'next/font/google';
 import './globals.css';
+// KaTeX stylesheet — required for rendered math (renderMarkdown
+// emits KaTeX HTML which is unstyled without this).
+import 'katex/dist/katex.min.css';
 import { Providers } from './providers';
 
 const inter   = Inter({   variable: '--font-inter',   subsets: ['latin'] });
