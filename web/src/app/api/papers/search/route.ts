@@ -21,8 +21,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { searchPapers } from '@/lib/related-papers/semanticscholar';
 import type { RelatedPaper } from '@/lib/related-papers/types';
 
-const MAX_LIMIT = 50;
-const DEFAULT_LIMIT = 25;
+const MAX_LIMIT = 100;
+const DEFAULT_LIMIT = 50;
 
 export const dynamic = 'force-dynamic';
 
@@ -59,11 +59,16 @@ function workToPaper(w: OAWork): RelatedPaper {
   };
 }
 
-async function searchOpenAlex(query: string, limit: number): Promise<RelatedPaper[]> {
-  const perPage = Math.min(50, Math.max(1, limit));
+async function searchOpenAlex(query: string, limit: number, offset: number): Promise<RelatedPaper[]> {
+  const perPage = Math.min(100, Math.max(1, limit));
+  // OpenAlex pages are 1-indexed; translate offset by dividing into
+  // whole-page chunks. Callers asking for `offset` non-multiple of
+  // `limit` will lose the in-page tail, but the /lit UI always
+  // requests in `limit`-sized strides so this is fine.
+  const page = Math.max(1, Math.floor(offset / perPage) + 1);
   const url =
     `https://api.openalex.org/works?search=${encodeURIComponent(query)}` +
-    `&per_page=${perPage}` +
+    `&per_page=${perPage}&page=${page}` +
     `&select=id,doi,title,authorships,publication_year,open_access,primary_location,cited_by_count` +
     `&mailto=${encodeURIComponent('minerva@thefarshad.com')}`;
   const r = await fetch(url, { headers: { Accept: 'application/json' }, next: { revalidate: 300 } });
@@ -82,23 +87,37 @@ export async function GET(req: NextRequest) {
     MAX_LIMIT,
     Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || DEFAULT_LIMIT),
   );
+  const offset = Math.max(0, Number(req.nextUrl.searchParams.get('offset')) || 0);
 
   // Boolean queries skip SS (no operator support) and go straight
   // to OpenAlex. Plain-text queries take the SS-first path.
   const isBoolean = BOOLEAN_RE.test(q);
   if (isBoolean) {
-    const oa = await searchOpenAlex(q, limit);
-    return NextResponse.json({ papers: oa, provider: 'openalex', boolean: true });
+    const oa = await searchOpenAlex(q, limit, offset);
+    return NextResponse.json({
+      papers: oa,
+      provider: 'openalex',
+      boolean: true,
+      hasMore: oa.length === limit,
+    });
   }
 
-  const ss = await searchPapers(q, limit);
+  const ss = await searchPapers(q, limit, offset);
   if (ss.ok && ss.papers.length > 0) {
-    return NextResponse.json({ papers: ss.papers, provider: 'semanticscholar' });
+    return NextResponse.json({
+      papers: ss.papers,
+      provider: 'semanticscholar',
+      hasMore: ss.papers.length === limit,
+    });
   }
 
-  const oa = await searchOpenAlex(q, limit);
+  const oa = await searchOpenAlex(q, limit, offset);
   if (oa.length > 0) {
-    return NextResponse.json({ papers: oa, provider: 'openalex' });
+    return NextResponse.json({
+      papers: oa,
+      provider: 'openalex',
+      hasMore: oa.length === limit,
+    });
   }
 
   if (!ss.ok) {
@@ -107,5 +126,5 @@ export async function GET(req: NextRequest) {
       { status: ss.status },
     );
   }
-  return NextResponse.json({ papers: [], provider: 'semanticscholar' });
+  return NextResponse.json({ papers: [], provider: 'semanticscholar', hasMore: false });
 }

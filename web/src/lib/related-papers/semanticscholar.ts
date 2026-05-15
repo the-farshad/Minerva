@@ -59,17 +59,22 @@ async function searchByTitle(title: string): Promise<string | null> {
 /**
  * Free-text paper search — returns a ranked candidate list, not a
  * resolved single seed. Used by the public keyword-search mode on
- * /lit. Capped at 100 (SS's per-call max).
+ * /lit. Capped at 100 (SS's per-call max). Offset enables the
+ * Load-more pagination in the explorer; SS accepts `offset` 0-indexed.
  */
 export async function searchPapers(
   query: string,
   limit: number,
+  offset: number = 0,
 ): Promise<
   | { ok: true; papers: RelatedPaper[] }
   | { ok: false; status: number; error: string; rateLimited?: boolean }
 > {
   const lim = Math.min(100, Math.max(1, limit));
-  const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${lim}&fields=${encodeURIComponent(FIELDS)}`;
+  const off = Math.max(0, offset);
+  const url =
+    `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}` +
+    `&limit=${lim}&offset=${off}&fields=${encodeURIComponent(FIELDS)}`;
   try {
     const r = await fetch(url, { headers: ssHeaders(), next: { revalidate: 300 } });
     if (!r.ok) {

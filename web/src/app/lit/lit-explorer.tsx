@@ -209,6 +209,13 @@ export function LitExplorer() {
   const [err, setErr] = useState<string>('');
   const [candidates, setCandidates] = useState<Paper[] | null>(null);
   const [candidatesLabel, setCandidatesLabel] = useState<string>('');
+  // Pagination cursor for the Load-more button. `kind` tells the
+  // loader which API to call again; `q` is the resolved query string
+  // sent the first time around.
+  const [candidatesKind, setCandidatesKind] = useState<'keyword' | 'author' | null>(null);
+  const [candidatesQuery, setCandidatesQuery] = useState<string>('');
+  const [candidatesHasMore, setCandidatesHasMore] = useState<boolean>(false);
+  const [candidatesLoadingMore, setCandidatesLoadingMore] = useState<boolean>(false);
   const [concepts, setConcepts] = useState<{ id: string; name: string; level: number }[]>([]);
 
   const [tab, setTab] = useState<Tab>('overview');
@@ -240,6 +247,9 @@ export function LitExplorer() {
     setPaper(null);
     setCandidates(null);
     setCandidatesLabel('');
+    setCandidatesKind(null);
+    setCandidatesQuery('');
+    setCandidatesHasMore(false);
     setConcepts([]);
     setEdgeCache({});
     setTab('overview');
@@ -279,19 +289,24 @@ export function LitExplorer() {
     setPaper(null);
     setCandidates(null);
     setCandidatesLabel('');
+    setCandidatesKind('keyword');
+    setCandidatesQuery(q.trim());
+    setCandidatesHasMore(false);
     setConcepts([]);
     setEdgeCache({});
     setTab('overview');
     try {
-      const r = await fetch(`/api/papers/search?q=${encodeURIComponent(q.trim())}&limit=25`);
-      const j = (await r.json().catch(() => ({}))) as { papers?: Paper[]; error?: string };
+      const r = await fetch(`/api/papers/search?q=${encodeURIComponent(q.trim())}&limit=${PAGE_SIZE}&offset=0`);
+      const j = (await r.json().catch(() => ({}))) as { papers?: Paper[]; error?: string; hasMore?: boolean };
       if (!r.ok) {
         setErr(j.error || `search: ${r.status}`);
         setCandidates([]);
       } else {
-        setCandidates(j.papers || []);
-        setCandidatesLabel(`${(j.papers || []).length} result${(j.papers || []).length === 1 ? '' : 's'} for "${q.trim()}"`);
-        if ((j.papers || []).length === 0) {
+        const got = j.papers || [];
+        setCandidates(got);
+        setCandidatesHasMore(!!j.hasMore);
+        setCandidatesLabel(`${got.length} result${got.length === 1 ? '' : 's'} for "${q.trim()}"`);
+        if (got.length === 0) {
           setErr('No matches. Try different wording or a more specific phrase.');
         }
       }
@@ -314,26 +329,30 @@ export function LitExplorer() {
     setPaper(null);
     setCandidates(null);
     setCandidatesLabel('');
+    setCandidatesKind('author');
+    setCandidatesQuery(name.trim());
+    setCandidatesHasMore(false);
     setConcepts([]);
     setEdgeCache({});
     setTab('overview');
     try {
-      const r = await fetch(`/api/authors/papers?q=${encodeURIComponent(name.trim())}&limit=25`);
+      const r = await fetch(`/api/authors/papers?q=${encodeURIComponent(name.trim())}&limit=${PAGE_SIZE}&offset=0`);
       const j = (await r.json().catch(() => ({}))) as {
         papers?: Paper[];
         error?: string;
         author?: { id?: string; name?: string };
+        hasMore?: boolean;
       };
       if (!r.ok) {
         setErr(j.error || `author: ${r.status}`);
         setCandidates([]);
       } else {
-        setCandidates(j.papers || []);
+        const got = j.papers || [];
+        setCandidates(got);
+        setCandidatesHasMore(!!j.hasMore);
         const resolved = j.author?.name || name.trim();
         setCandidatesLabel(
-          (j.papers || []).length > 0
-            ? `Papers by ${resolved}`
-            : `No papers found for ${resolved}`,
+          got.length > 0 ? `Papers by ${resolved}` : `No papers found for ${resolved}`,
         );
         if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
       }
@@ -342,6 +361,28 @@ export function LitExplorer() {
       setCandidates([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** Fetch the next page from whichever search backend produced the
+   *  current candidates list and append the new papers. Stops
+   *  showing the Load-more button the first time the backend
+   *  returns fewer records than PAGE_SIZE. */
+  async function loadMoreCandidates() {
+    if (!candidates || !candidatesKind || !candidatesQuery || candidatesLoadingMore) return;
+    setCandidatesLoadingMore(true);
+    const offset = candidates.length;
+    const base = candidatesKind === 'author' ? '/api/authors/papers' : '/api/papers/search';
+    try {
+      const r = await fetch(`${base}?q=${encodeURIComponent(candidatesQuery)}&limit=${PAGE_SIZE}&offset=${offset}`);
+      const j = (await r.json().catch(() => ({}))) as { papers?: Paper[]; hasMore?: boolean };
+      if (r.ok) {
+        const next = j.papers || [];
+        setCandidates((prev) => [...(prev || []), ...next]);
+        setCandidatesHasMore(!!j.hasMore && next.length > 0);
+      }
+    } finally {
+      setCandidatesLoadingMore(false);
     }
   }
 
@@ -678,6 +719,20 @@ export function LitExplorer() {
                 {candidates.length} loaded, none match the current filters.
               </p>
             )}
+            {candidatesHasMore && listView !== 'graph' && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={loadMoreCandidates}
+                  disabled={candidatesLoadingMore}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-4 py-1.5 text-xs text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+                >
+                  {candidatesLoadingMore
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</>
+                    : <>Load {PAGE_SIZE} more</>}
+                </button>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -957,6 +1012,10 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
     </li>
   );
 }
+
+/** How many papers per Load-more page. Matches the API DEFAULT_LIMIT
+ *  so the first request and every subsequent page are the same size. */
+const PAGE_SIZE = 50;
 
 type LitTheme = 'system' | 'light' | 'dark' | 'sepia';
 

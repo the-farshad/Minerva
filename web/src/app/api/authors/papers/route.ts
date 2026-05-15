@@ -13,8 +13,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RelatedPaper } from '@/lib/related-papers/types';
 
-const MAX_LIMIT = 50;
-const DEFAULT_LIMIT = 25;
+const MAX_LIMIT = 100;
+const DEFAULT_LIMIT = 50;
 
 export const dynamic = 'force-dynamic';
 
@@ -48,22 +48,24 @@ async function ssResolveAuthor(name: string): Promise<SSAuthor | null> {
   return j.data?.[0] ?? null;
 }
 
-async function ssAuthorPapers(authorId: string, limit: number): Promise<RelatedPaper[] | null> {
+async function ssAuthorPapers(authorId: string, limit: number, offset: number): Promise<RelatedPaper[] | null> {
   // SS's /author/papers endpoint has no `sort` parameter, so pull a
   // wider window than the caller asked for, then sort by citation
-  // count client-side. 200 is a reasonable upper bound — it covers
-  // most authors without making the response heavy.
-  const fetchLimit = Math.min(200, Math.max(limit, 100));
+  // count client-side and slice the requested page out of it. SS
+  // accepts `offset`; we forward it but ALSO pull `limit + offset`
+  // worth of records so the client-side sort window covers every
+  // paper that could land in the page after sorting.
+  const fetchLimit = Math.min(500, Math.max(limit + offset, 100));
   const url =
     `https://api.semanticscholar.org/graph/v1/author/${encodeURIComponent(authorId)}/papers` +
-    `?fields=${encodeURIComponent(SS_FIELDS)}&limit=${fetchLimit}`;
+    `?fields=${encodeURIComponent(SS_FIELDS)}&limit=${fetchLimit}&offset=0`;
   const r = await fetch(url, { headers: ssHeaders(), next: { revalidate: 1800 } });
   if (!r.ok) return null;
   const j = (await r.json()) as { data?: RelatedPaper[] };
   const papers = (j.data ?? [])
     .filter((p) => p.title)
     .sort((a, b) => (b.citationCount ?? -1) - (a.citationCount ?? -1))
-    .slice(0, limit);
+    .slice(offset, offset + limit);
   return papers;
 }
 
@@ -110,11 +112,12 @@ async function oaResolveAuthor(name: string): Promise<{ id: string; name: string
   return { id, name: hit.display_name || name };
 }
 
-async function oaAuthorPapers(authorId: string, limit: number): Promise<RelatedPaper[]> {
-  const perPage = Math.min(50, Math.max(1, limit));
+async function oaAuthorPapers(authorId: string, limit: number, offset: number): Promise<RelatedPaper[]> {
+  const perPage = Math.min(100, Math.max(1, limit));
+  const page = Math.max(1, Math.floor(offset / perPage) + 1);
   const url =
     `https://api.openalex.org/works?filter=author.id:${encodeURIComponent(authorId)}` +
-    `&sort=cited_by_count:desc&per_page=${perPage}` +
+    `&sort=cited_by_count:desc&per_page=${perPage}&page=${page}` +
     `&select=id,doi,title,authorships,publication_year,open_access,primary_location,cited_by_count` +
     `&mailto=minerva@thefarshad.com`;
   const r = await fetch(url, { headers: { Accept: 'application/json' }, next: { revalidate: 1800 } });
@@ -130,6 +133,7 @@ export async function GET(req: NextRequest) {
     MAX_LIMIT,
     Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || DEFAULT_LIMIT),
   );
+  const offset = Math.max(0, Number(req.nextUrl.searchParams.get('offset')) || 0);
 
   // OpenAlex preferred: its /works endpoint sorts by cited_by_count
   // directly, so the response is the author's top-cited work without
@@ -137,27 +141,29 @@ export async function GET(req: NextRequest) {
   // authors OpenAlex doesn't disambiguate confidently.
   const oaAuthor = await oaResolveAuthor(q);
   if (oaAuthor) {
-    const papers = await oaAuthorPapers(oaAuthor.id, limit);
+    const papers = await oaAuthorPapers(oaAuthor.id, limit, offset);
     if (papers.length > 0) {
       return NextResponse.json({
         papers,
         provider: 'openalex',
         author: { id: oaAuthor.id, name: oaAuthor.name },
+        hasMore: papers.length === limit,
       });
     }
   }
 
   const ssAuthor = await ssResolveAuthor(q);
   if (ssAuthor?.authorId) {
-    const papers = await ssAuthorPapers(ssAuthor.authorId, limit);
+    const papers = await ssAuthorPapers(ssAuthor.authorId, limit, offset);
     if (papers && papers.length > 0) {
       return NextResponse.json({
         papers,
         provider: 'semanticscholar',
         author: { id: ssAuthor.authorId, name: ssAuthor.name || q },
+        hasMore: papers.length === limit,
       });
     }
   }
 
-  return NextResponse.json({ papers: [], author: { id: '', name: q } });
+  return NextResponse.json({ papers: [], author: { id: '', name: q }, hasMore: false });
 }
