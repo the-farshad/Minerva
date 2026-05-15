@@ -129,6 +129,7 @@ async function europePmcLookup(query: string) {
     );
     return {
       kind: 'paper' as const,
+      provider: 'europepmc',
       title: item.title,
       authors: item.authorString || '',
       year: item.pubYear || '',
@@ -199,6 +200,7 @@ async function genericArticleLookup(url: string) {
     const pdf = meta('citation_pdf_url') || '';
     return {
       kind: 'paper',
+      provider: 'scrape',
       title,
       authors,
       year,
@@ -233,6 +235,7 @@ async function arxivLookup(id: string) {
   const stats = await fetchPaperStatsFromSS({ kind: 'ARXIV', id });
   return {
     kind: 'paper',
+    provider: 'arxiv',
     title: get('title'),
     authors: authors.join(', '),
     year: published.slice(0, 4),
@@ -240,6 +243,7 @@ async function arxivLookup(id: string) {
     url: `https://arxiv.org/abs/${id}`,
     pdf: `https://arxiv.org/pdf/${id}.pdf`,
     venue: 'arXiv',
+    arxiv: id,
     ...(stats || {}),
   };
 }
@@ -259,6 +263,7 @@ async function crossrefLookup(doi: string) {
   const stats = await fetchPaperStatsFromSS({ kind: 'DOI', id: doi });
   return {
     kind: 'paper',
+    provider: 'crossref',
     title: (m.title as string[])?.[0] || '',
     authors,
     year: issued?.[0] ? String(issued[0]) : '',

@@ -23,6 +23,16 @@ type Paper = {
   referenceCount?: number;
   influentialCitationCount?: number;
   openAccessPdf?: { url?: string };
+  provider?: string;
+};
+
+const PROVIDER_LABEL: Record<string, string> = {
+  arxiv: 'arXiv',
+  crossref: 'CrossRef',
+  europepmc: 'Europe PMC',
+  semanticscholar: 'Semantic Scholar',
+  openalex: 'OpenAlex',
+  scrape: 'Web',
 };
 
 function publicUrl(p: Paper): string {
@@ -153,6 +163,7 @@ export function LitExplorer() {
   const [paper, setPaper] = useState<Paper | null>(null);
   const [err, setErr] = useState<string>('');
   const [candidates, setCandidates] = useState<Paper[] | null>(null);
+  const [candidatesLabel, setCandidatesLabel] = useState<string>('');
 
   const [tab, setTab] = useState<Tab>('overview');
   const [relatedView, setRelatedView] = useState<RelatedView>('list');
@@ -181,6 +192,7 @@ export function LitExplorer() {
     setErr('');
     setPaper(null);
     setCandidates(null);
+    setCandidatesLabel('');
     setEdgeCache({});
     setTab('overview');
     // Reset list filters whenever the seed changes — a year range
@@ -218,6 +230,7 @@ export function LitExplorer() {
     setErr('');
     setPaper(null);
     setCandidates(null);
+    setCandidatesLabel('');
     setEdgeCache({});
     setTab('overview');
     try {
@@ -228,9 +241,51 @@ export function LitExplorer() {
         setCandidates([]);
       } else {
         setCandidates(j.papers || []);
+        setCandidatesLabel(`${(j.papers || []).length} result${(j.papers || []).length === 1 ? '' : 's'} for "${q.trim()}"`);
         if ((j.papers || []).length === 0) {
           setErr('No matches. Try different wording or a more specific phrase.');
         }
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+      setCandidates([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /** Resolve a free-text author name to their papers via the public
+   *  /api/authors/papers endpoint. Surfaces the result list in the
+   *  candidates pane — the same pane keyword-search uses — so the
+   *  user can click any paper to seed the explorer with it. */
+  async function runAuthorSearch(name: string) {
+    if (!name.trim()) return;
+    setLoading(true);
+    setErr('');
+    setPaper(null);
+    setCandidates(null);
+    setCandidatesLabel('');
+    setEdgeCache({});
+    setTab('overview');
+    try {
+      const r = await fetch(`/api/authors/papers?q=${encodeURIComponent(name.trim())}&limit=25`);
+      const j = (await r.json().catch(() => ({}))) as {
+        papers?: Paper[];
+        error?: string;
+        author?: { id?: string; name?: string };
+      };
+      if (!r.ok) {
+        setErr(j.error || `author: ${r.status}`);
+        setCandidates([]);
+      } else {
+        setCandidates(j.papers || []);
+        const resolved = j.author?.name || name.trim();
+        setCandidatesLabel(
+          (j.papers || []).length > 0
+            ? `Papers by ${resolved}`
+            : `No papers found for ${resolved}`,
+        );
+        if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     } catch (e) {
       setErr((e as Error).message);
@@ -389,7 +444,8 @@ export function LitExplorer() {
       {!paper && candidates && candidates.length > 0 && (
         <div>
           <p className="mb-2 text-xs text-zinc-500">
-            {candidates.length} result{candidates.length === 1 ? '' : 's'} — click a title to explore.
+            {candidatesLabel || `${candidates.length} result${candidates.length === 1 ? '' : 's'}`}
+            <span className="ml-1 text-zinc-400">— click a title to explore.</span>
           </p>
           <ul className="space-y-2">
             {candidates.map((p, idx) => (
@@ -427,7 +483,7 @@ export function LitExplorer() {
             })}
           </div>
 
-          {tab === 'overview' && <PaperOverview paper={paper} />}
+          {tab === 'overview' && <PaperOverview paper={paper} onAuthorClick={runAuthorSearch} />}
 
           {tab !== 'overview' && (
             <div>
@@ -621,9 +677,15 @@ export function LitExplorer() {
   );
 }
 
-function PaperOverview({ paper }: { paper: Paper }) {
+function PaperOverview({
+  paper,
+  onAuthorClick,
+}: {
+  paper: Paper;
+  onAuthorClick?: (name: string) => void;
+}) {
   const link = publicUrl(paper);
-  const authors = authorsStr(paper);
+  const authorList = authorsStr(paper).split(/,\s*/).map((s) => s.trim()).filter(Boolean);
   return (
     <article className="rounded-md border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -645,11 +707,35 @@ function PaperOverview({ paper }: { paper: Paper }) {
               : paper.citationCount} cites
           </span>
         )}
+        {paper.provider && PROVIDER_LABEL[paper.provider] && (
+          <span
+            title={`Metadata source: ${PROVIDER_LABEL[paper.provider]}`}
+            className="rounded-full border border-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+          >
+            via {PROVIDER_LABEL[paper.provider]}
+          </span>
+        )}
       </div>
-      {(authors || paper.venue) && (
+      {(authorList.length > 0 || paper.venue) && (
         <div className="mt-1 text-sm text-zinc-500">
-          {authors}
-          {authors && paper.venue ? ' · ' : ''}
+          {authorList.map((name, i) => (
+            <span key={`${name}-${i}`}>
+              {onAuthorClick ? (
+                <button
+                  type="button"
+                  onClick={() => onAuthorClick(name)}
+                  title={`See more papers by ${name}`}
+                  className="hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
+                >
+                  {name}
+                </button>
+              ) : (
+                <span>{name}</span>
+              )}
+              {i < authorList.length - 1 ? ', ' : ''}
+            </span>
+          ))}
+          {authorList.length > 0 && paper.venue ? ' · ' : ''}
           {paper.venue}
         </div>
       )}
