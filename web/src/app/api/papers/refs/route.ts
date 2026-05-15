@@ -20,6 +20,12 @@ import { resolvePaperRef } from '@/lib/paper-ref';
 import { parseRef } from '@/lib/related-papers/types';
 import { fetchPaperEdgesFromSS } from '@/lib/related-papers/semanticscholar';
 import { fetchPaperEdgesFromOpenCitations } from '@/lib/related-papers/opencitations';
+import { getCachedLookup, setCachedLookup } from '@/lib/paper-cache';
+
+// References / citations drift as upstream re-indexes. A day is a
+// reasonable balance — repeat lookups in the same session hit
+// cache, but a paper added new citations within ~24 h still shows.
+const EDGES_TTL_SEC = 24 * 3600;
 
 export const dynamic = 'force-dynamic';
 
@@ -87,6 +93,19 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Cached responses cover both providers; the key includes
+  // direction + limit so different requests don't share state.
+  const cacheKey = `refs:${ref.kind}:${ref.id}:${direction}:${limit}`;
+  const cached = await getCachedLookup<{ papers: unknown[]; provider: string }>(cacheKey, EDGES_TTL_SEC);
+  if (cached) {
+    return NextResponse.json({
+      ...cached,
+      ref: `${ref.kind}:${ref.id}`,
+      direction,
+      cached: true,
+    });
+  }
+
   const result = await fetchPaperEdgesFromSS(ref, { direction, limit });
 
   // OpenCitations fallback. Two real cases drop here:
@@ -101,11 +120,12 @@ export async function GET(req: NextRequest) {
   if (tryOpenCitations) {
     const oc = await fetchPaperEdgesFromOpenCitations(ref, { direction, limit });
     if (oc.ok && oc.papers.length > 0) {
+      const body = { papers: oc.papers, provider: 'opencitations' };
+      await setCachedLookup(cacheKey, body);
       return NextResponse.json({
-        papers: oc.papers,
+        ...body,
         ref: `${ref.kind}:${ref.id}`,
         direction,
-        provider: 'opencitations',
       });
     }
   }
@@ -116,10 +136,11 @@ export async function GET(req: NextRequest) {
       { status: result.status },
     );
   }
+  const body = { papers: result.papers, provider: 'semanticscholar' };
+  await setCachedLookup(cacheKey, body);
   return NextResponse.json({
-    papers: result.papers,
+    ...body,
     ref: `${ref.kind}:${ref.id}`,
     direction,
-    provider: 'semanticscholar',
   });
 }

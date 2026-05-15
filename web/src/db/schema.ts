@@ -251,3 +251,27 @@ export const events = pgTable('events', {
 }, (t) => ({
   byUser: index('events_user_idx').on(t.userId, t.createdAt),
 }));
+
+// --- public paper-lookup cache -----------------------------------
+//
+// Caches the JSON responses of lit.thefarshad.com's lookup chain
+// (arXiv / CrossRef / Europe PMC / Semantic Scholar refs &
+// citations / OpenAlex related) so repeat queries don't hammer the
+// upstream APIs. Cross-user — the data is upstream-public and
+// identical for every visitor, so there's no userId scoping. TTL
+// is enforced in code by checking `fetchedAt` against a per-source
+// freshness window, which lets the lookup chain pick "stale-is-
+// fine" (metadata) vs "must-be-fresh" (citationCount) per row.
+export const paperLookupCache = pgTable('paperLookupCache', {
+  // Composite key — `${source}:${kind}:${id}[:opts]`, e.g.
+  //   lookup:DOI:10.x/y
+  //   refs:DOI:10.x/y:references
+  //   related:openalex:ARXIV:2401.12345:50
+  // The source prefix keeps namespaces separate so a stats hit
+  // doesn't collide with a refs hit on the same paper id.
+  key: text('key').primaryKey(),
+  data: jsonb('data').notNull(),
+  fetchedAt: timestamp('fetchedAt').defaultNow().notNull(),
+}, (t) => ({
+  byFetchedAt: index('paperLookupCache_fetchedAt_idx').on(t.fetchedAt),
+}));

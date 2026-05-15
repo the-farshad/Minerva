@@ -9,6 +9,11 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchPaperStatsFromSS } from '@/lib/related-papers/semanticscholar';
+import { getCachedLookup, setCachedLookup } from '@/lib/paper-cache';
+
+// Metadata is stable upstream; a week is fine. citationCount
+// shifts but it's recomputed on the SS stats call below anyway.
+const META_TTL_SEC = 7 * 24 * 3600;
 
 const ARXIV_RE = /(?:arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(?:v\d+)?/i;
 const DOI_RE = /(?:doi\.org\/|^)(10\.\d{4,9}\/\S+)/i;
@@ -27,53 +32,71 @@ export async function POST(req: NextRequest) {
   const raw = String(body.url || body.q || '').trim();
   if (!raw) return NextResponse.json({ error: 'Missing url or q' }, { status: 400 });
 
-  // arXiv
+  // DB-backed cache: most lit.thefarshad.com visitors paste the
+  // same handful of high-profile papers. Cache the resolved JSON
+  // for a week keyed on the normalised input so we don't hammer
+  // arXiv / CrossRef / Europe PMC for repeat queries.
+  const cacheKey = `lookup:${raw.toLowerCase()}`;
+  const cached = await getCachedLookup<Record<string, unknown>>(cacheKey, META_TTL_SEC);
+  if (cached) return NextResponse.json({ ...cached, cached: true });
+
+  // Resolve via the chain. Every cacheable shape (paper, video,
+  // playlist) is written to the cache before returning so the next
+  // identical query is instant. The bare-URL stub at the bottom is
+  // deliberately NOT cached — it's a fall-through, not a real hit,
+  // and the next visit might do better if upstream comes back.
   const ax = raw.match(ARXIV_RE);
   if (/arxiv\.org/i.test(raw) || /^\d{4}\.\d{4,5}/.test(raw) || (ax && ax[1])) {
-    if (ax) return NextResponse.json(await arxivLookup(ax[1]));
+    if (ax) {
+      const out = await arxivLookup(ax[1]);
+      await setCachedLookup(cacheKey, out);
+      return NextResponse.json(out);
+    }
   }
-  // DOI
   const dm = raw.match(DOI_RE);
-  if (dm) return NextResponse.json(await crossrefLookup(dm[1]));
-  // YouTube playlist (preferred over single video when both are
-  // present in the URL — `?list=...&v=...`).
+  if (dm) {
+    const out = await crossrefLookup(dm[1]);
+    await setCachedLookup(cacheKey, out);
+    return NextResponse.json(out);
+  }
   const lm = raw.match(YT_LIST_RE);
   if (lm) {
     const { name, items } = await youtubePlaylist(lm[1]);
-    return NextResponse.json({ kind: 'playlist', playlistId: lm[1], playlistName: name, items });
+    const out = { kind: 'playlist', playlistId: lm[1], playlistName: name, items };
+    await setCachedLookup(cacheKey, out);
+    return NextResponse.json(out);
   }
-  // YouTube single video
   const ym = raw.match(YT_RE);
-  if (ym) return NextResponse.json(await youtubeLookup(ym[1], raw));
+  if (ym) {
+    const out = await youtubeLookup(ym[1], raw);
+    await setCachedLookup(cacheKey, out);
+    return NextResponse.json(out);
+  }
 
-  // Generic publisher fallback: nearly every journal site (MDPI,
-  // Nature, Springer, IEEE, ACM, Wiley, Elsevier, ACS, …) exposes
-  // `<meta name="citation_*">` tags meant exactly for this. If we
-  // find a citation_doi, defer to CrossRef for the canonical
-  // record; otherwise scrape title / authors / year / pdf
-  // straight off the page so the row at least lands populated.
   const scraped = await genericArticleLookup(raw);
-  if (scraped) return NextResponse.json(scraped);
+  if (scraped) {
+    await setCachedLookup(cacheKey, scraped);
+    return NextResponse.json(scraped);
+  }
 
-  // Europe PMC for a DOI / PMID / PMCID embedded anywhere in the
-  // input, even when the publisher page can't be scraped (paywall,
-  // bot wall) and CrossRef has nothing.
   const ident = raw.match(/(10\.\d{4,9}\/[^\s?#]+|PMC\d{4,8}|\bPMID:?\s*(\d{6,9}))/i)?.[0];
   if (ident) {
     const pmc = await europePmcLookup(ident);
-    if (pmc) return NextResponse.json(pmc);
+    if (pmc) {
+      await setCachedLookup(cacheKey, pmc);
+      return NextResponse.json(pmc);
+    }
   }
 
-  // Free-text fallback: if the input doesn't look like a URL, try
-  // Europe PMC's search-by-title — covers visitors who paste a
-  // paper title into lit.thefarshad.com's search box. The PMC
-  // search endpoint accepts an arbitrary query string.
   if (!/^https?:\/\//i.test(raw)) {
     const byTitle = await europePmcLookup(raw);
-    if (byTitle) return NextResponse.json(byTitle);
+    if (byTitle) {
+      await setCachedLookup(cacheKey, byTitle);
+      return NextResponse.json(byTitle);
+    }
   }
 
-  // Last-resort fallback: bare URL.
+  // Last-resort fallback: bare URL — NOT cached.
   return NextResponse.json({ kind: 'article', url: raw });
 }
 

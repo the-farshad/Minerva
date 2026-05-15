@@ -71,6 +71,13 @@
       "when": 1778745600000,
       "tag": "0009_download_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778866626768,
+      "tag": "0010_paper_lookup_cache",
+      "breakpoints": true
     }
   ]
 }
