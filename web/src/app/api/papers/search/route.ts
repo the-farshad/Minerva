@@ -80,6 +80,50 @@ async function searchOpenAlex(query: string, limit: number, offset: number): Pro
 // AND / OR / NOT as whole words, parens, or quoted phrases.
 const BOOLEAN_RE = /\b(AND|OR|NOT)\b|[()]|"[^"]+"/;
 
+/** Stable identity for a paper across providers — prefer DOI, then
+ *  arXiv id, then a normalised title. Used to dedupe the merged
+ *  multi-source result set. */
+function dedupKey(p: RelatedPaper): string {
+  const doi = p.externalIds?.DOI?.toLowerCase();
+  if (doi) return `doi:${doi}`;
+  const arxiv = p.externalIds?.ArXiv;
+  if (arxiv) return `arxiv:${arxiv.toLowerCase()}`;
+  const t = (p.title || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  return t ? `t:${t}` : `id:${p.paperId || Math.random().toString(36)}`;
+}
+
+/** Merge two ranked candidate lists. Items appear in the order they
+ *  were first seen; later duplicates contribute any fields the
+ *  earlier copy was missing (so DOI from OA can backfill a SS hit
+ *  that only had arXiv, etc.). */
+function mergeDedup(primary: RelatedPaper[], secondary: RelatedPaper[]): RelatedPaper[] {
+  const seen = new Map<string, RelatedPaper>();
+  const order: string[] = [];
+  for (const p of primary) {
+    const k = dedupKey(p);
+    if (seen.has(k)) continue;
+    seen.set(k, p);
+    order.push(k);
+  }
+  for (const p of secondary) {
+    const k = dedupKey(p);
+    const existing = seen.get(k);
+    if (!existing) {
+      seen.set(k, p);
+      order.push(k);
+      continue;
+    }
+    // Backfill missing fields on the kept record.
+    existing.externalIds = { ...p.externalIds, ...existing.externalIds };
+    if (existing.citationCount == null && p.citationCount != null) existing.citationCount = p.citationCount;
+    if (!existing.openAccessPdf?.url && p.openAccessPdf?.url) existing.openAccessPdf = p.openAccessPdf;
+    if (!existing.abstract && p.abstract) existing.abstract = p.abstract;
+    if (!existing.venue && p.venue) existing.venue = p.venue;
+    if (!existing.year && p.year) existing.year = p.year;
+  }
+  return order.map((k) => seen.get(k)!);
+}
+
 export async function GET(req: NextRequest) {
   const q = (req.nextUrl.searchParams.get('q') || '').trim();
   if (!q) return NextResponse.json({ papers: [] });
@@ -90,7 +134,8 @@ export async function GET(req: NextRequest) {
   const offset = Math.max(0, Number(req.nextUrl.searchParams.get('offset')) || 0);
 
   // Boolean queries skip SS (no operator support) and go straight
-  // to OpenAlex. Plain-text queries take the SS-first path.
+  // to OpenAlex. SS would silently ignore the operators and return
+  // a low-signal best-match list.
   const isBoolean = BOOLEAN_RE.test(q);
   if (isBoolean) {
     const oa = await searchOpenAlex(q, limit, offset);
@@ -102,21 +147,28 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const ss = await searchPapers(q, limit, offset);
-  if (ss.ok && ss.papers.length > 0) {
-    return NextResponse.json({
-      papers: ss.papers,
-      provider: 'semanticscholar',
-      hasMore: ss.papers.length === limit,
-    });
-  }
+  // Plain queries: fire SS + OA in parallel and merge. The dedup
+  // step folds duplicates (same DOI / arXiv id / normalised title)
+  // so the user sees one merged ranked list rather than two
+  // overlapping sets. SS is the primary because its similarity
+  // ranking is better-tuned for free-text paper search; OA fills in
+  // anything SS missed.
+  const [ss, oa] = await Promise.all([
+    searchPapers(q, limit, offset),
+    searchOpenAlex(q, limit, offset),
+  ]);
+  const ssPapers = ss.ok ? ss.papers : [];
+  const merged = mergeDedup(ssPapers, oa).slice(0, limit);
 
-  const oa = await searchOpenAlex(q, limit, offset);
-  if (oa.length > 0) {
+  if (merged.length > 0) {
+    const provider =
+      ssPapers.length > 0 && oa.length > 0 ? 'semanticscholar+openalex'
+      : ssPapers.length > 0 ? 'semanticscholar'
+      : 'openalex';
     return NextResponse.json({
-      papers: oa,
-      provider: 'openalex',
-      hasMore: oa.length === limit,
+      papers: merged,
+      provider,
+      hasMore: ssPapers.length === limit || oa.length === limit,
     });
   }
 
@@ -126,5 +178,5 @@ export async function GET(req: NextRequest) {
       { status: ss.status },
     );
   }
-  return NextResponse.json({ papers: [], provider: 'semanticscholar', hasMore: false });
+  return NextResponse.json({ papers: [], provider: 'semanticscholar+openalex', hasMore: false });
 }

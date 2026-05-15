@@ -28,7 +28,24 @@ type Paper = {
   openAccessPdf?: { url?: string };
   venue?: string;
   referencedWorks?: string[];
+  citationCount?: number;
 };
+
+/** VOSviewer-style qualitative palette for cluster coloring. Top-N
+ *  largest clusters get distinct colors; anything beyond falls back
+ *  to a muted gray so the legend stays legible. */
+const CLUSTER_PALETTE = [
+  '#3b82f6', // blue
+  '#10b981', // emerald
+  '#f59e0b', // amber
+  '#ef4444', // red
+  '#8b5cf6', // violet
+  '#06b6d4', // cyan
+  '#ec4899', // pink
+  '#84cc16', // lime
+];
+const CLUSTER_TAIL_LIGHT = '#d4d4d8'; // zinc-300
+const CLUSTER_TAIL_DARK = '#52525b';  // zinc-600
 
 type GraphNode = {
   id: string;
@@ -260,10 +277,94 @@ export function RelatedGraph({
   };
   const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
 
+  /** Compute paper clusters via label propagation on the
+   *  bibliographic-coupling subgraph. Two papers are in the same
+   *  cluster when they share enough referenced works that the
+   *  algorithm propagates the same label to both. Runs in ~O(n * k)
+   *  for k iterations on the small (~50-paper) sets the explorer
+   *  shows; deterministic for a fixed input ordering. */
+  const clusters = useMemo<Map<string, number>>(() => {
+    const adj = new Map<string, Set<string>>();
+    for (const link of graphData.links) {
+      if (link.weight <= 0) continue; // skip seed-spokes
+      const s = typeof link.source === 'string' ? link.source : (link.source as unknown as GraphNode).id;
+      const t = typeof link.target === 'string' ? link.target : (link.target as unknown as GraphNode).id;
+      if (!adj.has(s)) adj.set(s, new Set());
+      if (!adj.has(t)) adj.set(t, new Set());
+      adj.get(s)!.add(t);
+      adj.get(t)!.add(s);
+    }
+    const label = new Map<string, number>();
+    const ids = [...adj.keys()];
+    ids.forEach((id, idx) => label.set(id, idx));
+    for (let iter = 0; iter < 5; iter++) {
+      let changed = false;
+      for (const nid of ids) {
+        const neighbours = adj.get(nid)!;
+        if (neighbours.size === 0) continue;
+        const counts = new Map<number, number>();
+        for (const nb of neighbours) {
+          const lbl = label.get(nb);
+          if (lbl == null) continue;
+          counts.set(lbl, (counts.get(lbl) ?? 0) + 1);
+        }
+        let bestLbl = label.get(nid)!;
+        let bestCount = -1;
+        for (const [lbl, c] of counts) {
+          if (c > bestCount || (c === bestCount && lbl < bestLbl)) {
+            bestLbl = lbl; bestCount = c;
+          }
+        }
+        if (bestLbl !== label.get(nid)) {
+          label.set(nid, bestLbl);
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+    return label;
+  }, [graphData.links]);
+
+  /** Map cluster ID → display color. The N largest clusters take
+   *  distinct palette colors; everything in the long tail collapses
+   *  to a muted gray so the visual hierarchy stays clean. */
+  const clusterColor = useMemo<Map<number, string>>(() => {
+    const sizes = new Map<number, number>();
+    for (const id of clusters.values()) sizes.set(id, (sizes.get(id) ?? 0) + 1);
+    const sorted = [...sizes.entries()].sort((a, b) => b[1] - a[1]);
+    const out = new Map<number, string>();
+    sorted.forEach(([id, _size], rank) => {
+      out.set(id, rank < CLUSTER_PALETTE.length ? CLUSTER_PALETTE[rank] : (isDark ? CLUSTER_TAIL_DARK : CLUSTER_TAIL_LIGHT));
+    });
+    return out;
+  }, [clusters, isDark]);
+
+  /** Legend rows for the top clusters, in size-descending order.
+   *  Up to CLUSTER_PALETTE.length entries are coloured; everything
+   *  else is collapsed into a single "Other" row. */
+  const clusterLegend = useMemo<{ color: string; count: number; label: string }[]>(() => {
+    const sizes = new Map<number, number>();
+    for (const id of clusters.values()) sizes.set(id, (sizes.get(id) ?? 0) + 1);
+    const sorted = [...sizes.entries()].sort((a, b) => b[1] - a[1]);
+    const top = sorted.slice(0, CLUSTER_PALETTE.length).map(([id, count], i) => ({
+      color: CLUSTER_PALETTE[i],
+      count,
+      label: `Cluster ${i + 1}`,
+    }));
+    const tail = sorted.slice(CLUSTER_PALETTE.length).reduce((sum, [, c]) => sum + c, 0);
+    if (tail > 0) top.push({ color: isDark ? CLUSTER_TAIL_DARK : CLUSTER_TAIL_LIGHT, count: tail, label: 'Other' });
+    return top;
+  }, [clusters, isDark]);
+
   function nodeRadius(n: GraphNode): number {
     if (n.isSeed) return 14;
-    // Bigger node = more references (proxy for paper substance).
-    return 6 + Math.min(8, Math.log2(1 + n.refCount));
+    // VOSviewer-style: scale node size by citation count when
+    // available; fall back to reference count (paper substance
+    // proxy) when not. Log-scaled so a 10 000-cite landmark stays
+    // legible without dwarfing 0-cite preprints.
+    const cites = n.paper?.citationCount;
+    const w = typeof cites === 'number' && cites > 0 ? cites : n.refCount;
+    return 6 + Math.min(10, Math.log2(1 + w));
   }
 
   /** When a node is focused, every other node fades out unless it
@@ -302,11 +403,12 @@ export function RelatedGraph({
     if (dim) ctx.globalAlpha = 0.18;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
+    const clusterFill = clusterColor.get(clusters.get(node.id) ?? -1);
     ctx.fillStyle = node.isSeed
       ? colors.seed
       : isAdded
         ? '#16a34a'
-        : (isDark ? colors.paperFillDark : colors.paperFill);
+        : (clusterFill ?? (isDark ? colors.paperFillDark : colors.paperFill));
     ctx.fill();
     if (isFocused) {
       ctx.strokeStyle = '#3b82f6';
@@ -544,6 +646,21 @@ export function RelatedGraph({
           maxZoom={6}
         />
       </div>
+
+      {/* Cluster legend — only renders when clustering actually
+       *  produced more than one group. Single-cluster graphs (every
+       *  paper bibliographically isolated) look the same as before. */}
+      {clusterLegend.length > 1 && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+          <span className="text-zinc-400">Clusters:</span>
+          {clusterLegend.map((c) => (
+            <span key={c.label} className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: c.color }} />
+              {c.label} <span className="text-zinc-400">({c.count})</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {focused && (
         <aside className="absolute right-3 top-3 w-[22rem] max-w-[calc(100%-1.5rem)] rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
