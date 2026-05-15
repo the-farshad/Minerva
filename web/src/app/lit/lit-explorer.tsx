@@ -143,6 +143,48 @@ function risOf(p: Paper): string {
   return lines.join('\n') + '\n';
 }
 
+type FilterOpts = {
+  yearFrom: string;
+  yearTo: string;
+  minCites: string;
+  textFilter: string;
+  oaOnly: boolean;
+  influentialOnly: boolean;
+  sortBy: 'relevance' | 'cites-desc' | 'year-desc' | 'year-asc';
+};
+
+function applyListFilters(papers: Paper[], opts: FilterOpts): Paper[] {
+  const yFrom = Number(opts.yearFrom) || 0;
+  const yTo = Number(opts.yearTo) || 9999;
+  const minC = Number(opts.minCites) || 0;
+  const needle = opts.textFilter.trim().toLowerCase();
+  const out = papers.filter((p) => {
+    const y = typeof p.year === 'number' ? p.year : Number(p.year) || 0;
+    if (y && (y < yFrom || y > yTo)) return false;
+    if (opts.yearFrom && !y) return false;
+    if (opts.yearTo && !y) return false;
+    if (opts.oaOnly && !(p.openAccessPdf?.url || p.pdf)) return false;
+    if (opts.influentialOnly && !(p.influentialCitationCount && p.influentialCitationCount > 0)) return false;
+    if (minC > 0 && (p.citationCount ?? -1) < minC) return false;
+    if (needle) {
+      const hay = `${authorsStr(p)} ${p.venue ?? ''} ${p.title ?? ''}`.toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
+  if (opts.sortBy === 'cites-desc') {
+    out.sort((a, b) => (b.citationCount ?? -1) - (a.citationCount ?? -1));
+  } else if (opts.sortBy === 'year-desc' || opts.sortBy === 'year-asc') {
+    const dir = opts.sortBy === 'year-asc' ? 1 : -1;
+    out.sort((a, b) => {
+      const ya = typeof a.year === 'number' ? a.year : Number(a.year) || 0;
+      const yb = typeof b.year === 'number' ? b.year : Number(b.year) || 0;
+      return dir * (ya - yb);
+    });
+  }
+  return out;
+}
+
 function downloadText(content: string, filename: string, mime = 'text/plain;charset=utf-8') {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -393,36 +435,163 @@ export function LitExplorer() {
   // sort and a no-op when selected.
   const filteredEdges = useMemo<Paper[] | null>(() => {
     if (!edgePapers) return edgePapers;
-    const yFrom = Number(yearFrom) || 0;
-    const yTo = Number(yearTo) || 9999;
-    const minC = Number(minCites) || 0;
-    const needle = textFilter.trim().toLowerCase();
-    const out = edgePapers.filter((p) => {
-      const y = typeof p.year === 'number' ? p.year : Number(p.year) || 0;
-      if (y && (y < yFrom || y > yTo)) return false;
-      if (yearFrom && !y) return false;
-      if (yearTo && !y) return false;
-      if (oaOnly && !(p.openAccessPdf?.url || p.pdf)) return false;
-      if (influentialOnly && !(p.influentialCitationCount && p.influentialCitationCount > 0)) return false;
-      if (minC > 0 && (p.citationCount ?? -1) < minC) return false;
-      if (needle) {
-        const hay = `${authorsStr(p)} ${p.venue ?? ''} ${p.title ?? ''}`.toLowerCase();
-        if (!hay.includes(needle)) return false;
-      }
-      return true;
-    });
-    if (sortBy === 'cites-desc') {
-      out.sort((a, b) => (b.citationCount ?? -1) - (a.citationCount ?? -1));
-    } else if (sortBy === 'year-desc' || sortBy === 'year-asc') {
-      const dir = sortBy === 'year-asc' ? 1 : -1;
-      out.sort((a, b) => {
-        const ya = typeof a.year === 'number' ? a.year : Number(a.year) || 0;
-        const yb = typeof b.year === 'number' ? b.year : Number(b.year) || 0;
-        return dir * (ya - yb);
-      });
-    }
-    return out;
+    return applyListFilters(edgePapers, { yearFrom, yearTo, minCites, textFilter, oaOnly, influentialOnly, sortBy });
   }, [edgePapers, yearFrom, yearTo, minCites, textFilter, oaOnly, influentialOnly, sortBy]);
+  // The same filter + sort applied to the keyword / author /
+  // concept-search candidates pane, so the toolbar feels identical
+  // whether the user is browsing one of a seed paper's three
+  // connected lists or a fresh search result.
+  const filteredCandidates = useMemo<Paper[] | null>(() => {
+    if (!candidates) return candidates;
+    return applyListFilters(candidates, { yearFrom, yearTo, minCites, textFilter, oaOnly, influentialOnly, sortBy });
+  }, [candidates, yearFrom, yearTo, minCites, textFilter, oaOnly, influentialOnly, sortBy]);
+
+  /** Toolbar: filter inputs + sort + bulk export + view toggle.
+   *  Closes over the relevant state setters so callers only have to
+   *  pass the list-shape data and the small per-context knobs
+   *  (filename prefix, whether the Graph button is meaningful here). */
+  function renderToolbar(filtered: Paper[] | null, raw: Paper[] | null, prefix: string, withGraph: boolean) {
+    if (!raw || raw.length === 0) return null;
+    const downloadable = filtered && filtered.length > 0;
+    return (
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+        <span className="text-zinc-400">
+          {filtered?.length ?? 0}
+          {filtered && raw.length !== filtered.length ? ` of ${raw.length}` : ''}
+        </span>
+        <div className="inline-flex items-center rounded-full border border-zinc-200 focus-within:border-zinc-500 dark:border-zinc-700">
+          <input type="number" inputMode="numeric" value={yearFrom}
+            onChange={(e) => setYearFrom(e.target.value)}
+            placeholder="from" aria-label="Year from"
+            className="no-spin w-14 bg-transparent px-2 py-0.5 text-xs outline-none" />
+          <span className="select-none text-zinc-400">–</span>
+          <input type="number" inputMode="numeric" value={yearTo}
+            onChange={(e) => setYearTo(e.target.value)}
+            placeholder="to" aria-label="Year to"
+            className="no-spin w-14 bg-transparent px-2 py-0.5 text-xs outline-none" />
+        </div>
+        <input type="number" inputMode="numeric" value={minCites}
+          onChange={(e) => setMinCites(e.target.value)}
+          placeholder="min cites" aria-label="Minimum citations"
+          className="no-spin w-20 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700" />
+        <input type="text" value={textFilter}
+          onChange={(e) => setTextFilter(e.target.value)}
+          placeholder="author or venue" aria-label="Filter by author or venue"
+          className="w-36 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700" />
+        <label className="inline-flex items-center gap-1 text-xs">
+          <input type="checkbox" checked={oaOnly}
+            onChange={(e) => setOaOnly(e.target.checked)}
+            className="accent-zinc-900 dark:accent-zinc-200" />
+          Open access
+        </label>
+        <label
+          className="inline-flex items-center gap-1 text-xs"
+          title="Only show papers Semantic Scholar flags as influentially cited"
+        >
+          <input type="checkbox" checked={influentialOnly}
+            onChange={(e) => setInfluentialOnly(e.target.checked)}
+            className="accent-zinc-900 dark:accent-zinc-200" />
+          Influential
+        </label>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          aria-label="Sort order"
+          className="rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none dark:border-zinc-700">
+          <option value="relevance">Relevance</option>
+          <option value="cites-desc">Most cited</option>
+          <option value="year-desc">Newest</option>
+          <option value="year-asc">Oldest</option>
+        </select>
+        <span className="mx-1 text-zinc-300 dark:text-zinc-700">|</span>
+        <button type="button" title="Download current list as BibTeX"
+          onClick={() => { if (downloadable) downloadText(bibtexBulk(filtered!), `lit-${prefix}.bib`); }}
+          disabled={!downloadable}
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700">
+          <Download className="h-3 w-3" /> BibTeX
+        </button>
+        <button type="button" title="Download current list as RIS"
+          onClick={() => { if (downloadable) downloadText(risBulk(filtered!), `lit-${prefix}.ris`); }}
+          disabled={!downloadable}
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700">
+          <Download className="h-3 w-3" /> RIS
+        </button>
+        <button type="button" title="Download current list as CSV"
+          onClick={() => { if (downloadable) downloadText(csvOf(filtered!), `lit-${prefix}.csv`, 'text/csv;charset=utf-8'); }}
+          disabled={!downloadable}
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700">
+          <Download className="h-3 w-3" /> CSV
+        </button>
+        <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          <button type="button" onClick={() => setListView('list')}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+              listView === 'list'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'}`}>
+            <List className="h-3 w-3" /> List
+          </button>
+          {withGraph && (
+            <button type="button" onClick={() => setListView('graph')}
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+                listView === 'graph'
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'}`}>
+              <Network className="h-3 w-3" /> Graph
+            </button>
+          )}
+          <button type="button" onClick={() => setListView('timeline')}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+              listView === 'timeline'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'}`}>
+            <LineChart className="h-3 w-3" /> Timeline
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /** Result body: list / timeline / (for seeded-related only) graph.
+   *  withGraph + seed are decoupled — graph is gated separately
+   *  because seedless graphs aren't supported yet. */
+  function renderResultBody(filtered: Paper[] | null, withGraph: boolean, seed: Paper | null) {
+    if (!filtered || filtered.length === 0) return null;
+    if (listView === 'timeline') {
+      return <TimelineChart seed={seed} papers={filtered} onSelect={exploreFromPaper} />;
+    }
+    if (withGraph && listView === 'graph' && seed) {
+      return (
+        <RelatedGraph
+          seedTitle={seed.title || ''}
+          seedYear={seed.year ? String(seed.year) : ''}
+          seedAuthors={authorsStr(seed)}
+          // Coerce our looser Paper.authors (string | array)
+          // into the array-only shape RelatedGraph expects.
+          papers={filtered.map((p) => ({
+            ...p,
+            authors: Array.isArray(p.authors)
+              ? p.authors
+              : (typeof p.authors === 'string' && p.authors
+                  ? p.authors.split(/,\s*/).map((n) => ({ name: n }))
+                  : []),
+            year: typeof p.year === 'number' ? p.year : (p.year ? Number(p.year) || undefined : undefined),
+          }))}
+          added={new Set()}
+          adding={new Set()}
+          onAdd={async () => false}
+        />
+      );
+    }
+    return (
+      <ul className="space-y-2">
+        {filtered.map((p, idx) => (
+          <PaperRow
+            key={`${idx}-${p.paperId ?? p.title}`}
+            paper={p}
+            onExplore={() => exploreFromPaper(p)}
+          />
+        ))}
+      </ul>
+    );
+  }
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col px-4 py-10 sm:px-6">
@@ -494,15 +663,13 @@ export function LitExplorer() {
             {candidatesLabel || `${candidates.length} result${candidates.length === 1 ? '' : 's'}`}
             <span className="ml-1 text-zinc-400">— click a title to explore.</span>
           </p>
-          <ul className="space-y-2">
-            {candidates.map((p, idx) => (
-              <PaperRow
-                key={`cand-${idx}-${p.paperId ?? p.title}`}
-                paper={p}
-                onExplore={() => exploreFromPaper(p)}
-              />
-            ))}
-          </ul>
+          {renderToolbar(filteredCandidates, candidates, 'search', false)}
+          {renderResultBody(filteredCandidates, false, null)}
+          {filteredCandidates && filteredCandidates.length === 0 && (
+            <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
+              {candidates.length} loaded, none match the current filters.
+            </p>
+          )}
         </div>
       )}
 
@@ -541,160 +708,7 @@ export function LitExplorer() {
 
           {tab !== 'overview' && (
             <div>
-              {edgePapers && edgePapers.length > 0 && (
-                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
-                  <span className="text-zinc-400">
-                    {filteredEdges?.length ?? 0}
-                    {filteredEdges && edgePapers && filteredEdges.length !== edgePapers.length
-                      ? ` of ${edgePapers.length}`
-                      : ''}
-                  </span>
-                  <div className="inline-flex items-center rounded-full border border-zinc-200 focus-within:border-zinc-500 dark:border-zinc-700">
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      value={yearFrom}
-                      onChange={(e) => setYearFrom(e.target.value)}
-                      placeholder="from"
-                      aria-label="Year from"
-                      className="no-spin w-14 bg-transparent px-2 py-0.5 text-xs outline-none"
-                    />
-                    <span className="select-none text-zinc-400">–</span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      value={yearTo}
-                      onChange={(e) => setYearTo(e.target.value)}
-                      placeholder="to"
-                      aria-label="Year to"
-                      className="no-spin w-14 bg-transparent px-2 py-0.5 text-xs outline-none"
-                    />
-                  </div>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={minCites}
-                    onChange={(e) => setMinCites(e.target.value)}
-                    placeholder="min cites"
-                    aria-label="Minimum citations"
-                    className="no-spin w-20 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
-                  />
-                  <input
-                    type="text"
-                    value={textFilter}
-                    onChange={(e) => setTextFilter(e.target.value)}
-                    placeholder="author or venue"
-                    aria-label="Filter by author or venue"
-                    className="w-36 rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700"
-                  />
-                  <label className="inline-flex items-center gap-1 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={oaOnly}
-                      onChange={(e) => setOaOnly(e.target.checked)}
-                      className="accent-zinc-900 dark:accent-zinc-200"
-                    />
-                    Open access
-                  </label>
-                  <label
-                    className="inline-flex items-center gap-1 text-xs"
-                    title="Only show papers Semantic Scholar flags as influentially cited"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={influentialOnly}
-                      onChange={(e) => setInfluentialOnly(e.target.checked)}
-                      className="accent-zinc-900 dark:accent-zinc-200"
-                    />
-                    Influential
-                  </label>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                    aria-label="Sort order"
-                    className="rounded-full border border-zinc-200 bg-transparent px-2 py-0.5 text-xs outline-none dark:border-zinc-700"
-                  >
-                    <option value="relevance">Relevance</option>
-                    <option value="cites-desc">Most cited</option>
-                    <option value="year-desc">Newest</option>
-                    <option value="year-asc">Oldest</option>
-                  </select>
-                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">|</span>
-                  <button
-                    type="button"
-                    title="Download current list as BibTeX"
-                    onClick={() => {
-                      if (!filteredEdges?.length) return;
-                      downloadText(bibtexBulk(filteredEdges), `lit-${tab}.bib`);
-                    }}
-                    disabled={!filteredEdges?.length}
-                    className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                  >
-                    <Download className="h-3 w-3" /> BibTeX
-                  </button>
-                  <button
-                    type="button"
-                    title="Download current list as RIS"
-                    onClick={() => {
-                      if (!filteredEdges?.length) return;
-                      downloadText(risBulk(filteredEdges), `lit-${tab}.ris`);
-                    }}
-                    disabled={!filteredEdges?.length}
-                    className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                  >
-                    <Download className="h-3 w-3" /> RIS
-                  </button>
-                  <button
-                    type="button"
-                    title="Download current list as CSV"
-                    onClick={() => {
-                      if (!filteredEdges?.length) return;
-                      downloadText(csvOf(filteredEdges), `lit-${tab}.csv`, 'text/csv;charset=utf-8');
-                    }}
-                    disabled={!filteredEdges?.length}
-                    className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                  >
-                    <Download className="h-3 w-3" /> CSV
-                  </button>
-                  <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
-                    <button
-                      type="button"
-                      onClick={() => setListView('list')}
-                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
-                        listView === 'list'
-                          ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
-                          : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
-                      }`}
-                    >
-                      <List className="h-3 w-3" /> List
-                    </button>
-                    {tab === 'related' && (
-                      <button
-                        type="button"
-                        onClick={() => setListView('graph')}
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
-                          listView === 'graph'
-                            ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
-                            : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
-                        }`}
-                      >
-                        <Network className="h-3 w-3" /> Graph
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setListView('timeline')}
-                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
-                        listView === 'timeline'
-                          ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
-                          : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
-                      }`}
-                    >
-                      <LineChart className="h-3 w-3" /> Timeline
-                    </button>
-                  </div>
-                </div>
-              )}
+              {renderToolbar(filteredEdges, edgePapers, tab, tab === 'related')}
               {edgeLoading && (
                 <div className="flex items-center gap-2 rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -710,51 +724,7 @@ export function LitExplorer() {
                   No results for this leg.
                 </p>
               )}
-              {!edgeLoading && filteredEdges && filteredEdges.length > 0 && (() => {
-                if (listView === 'timeline') {
-                  return (
-                    <TimelineChart
-                      seed={paper}
-                      papers={filteredEdges}
-                      onSelect={exploreFromPaper}
-                    />
-                  );
-                }
-                if (tab === 'related' && listView === 'graph') {
-                  return (
-                    <RelatedGraph
-                      seedTitle={paper.title || ''}
-                      seedYear={paper.year ? String(paper.year) : ''}
-                      seedAuthors={authorsStr(paper)}
-                      // Coerce our looser Paper.authors (string | array)
-                      // into the array-only shape RelatedGraph expects.
-                      papers={filteredEdges.map((p) => ({
-                        ...p,
-                        authors: Array.isArray(p.authors)
-                          ? p.authors
-                          : (typeof p.authors === 'string' && p.authors
-                              ? p.authors.split(/,\s*/).map((n) => ({ name: n }))
-                              : []),
-                        year: typeof p.year === 'number' ? p.year : (p.year ? Number(p.year) || undefined : undefined),
-                      }))}
-                      added={new Set()}
-                      adding={new Set()}
-                      onAdd={async () => false}
-                    />
-                  );
-                }
-                return (
-                  <ul className="space-y-2">
-                    {filteredEdges.map((p, idx) => (
-                      <PaperRow
-                        key={`${idx}-${p.paperId ?? p.title}`}
-                        paper={p}
-                        onExplore={() => exploreFromPaper(p)}
-                      />
-                    ))}
-                  </ul>
-                );
-              })()}
+              {!edgeLoading && renderResultBody(filteredEdges, tab === 'related', paper)}
               {!edgeLoading && edgePapers && edgePapers.length > 0 && filteredEdges && filteredEdges.length === 0 && (
                 <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
                   {edgePapers.length} loaded, none match the current filters.
@@ -772,9 +742,6 @@ export function LitExplorer() {
           <span className="text-zinc-500 dark:text-zinc-400">
             arXiv · CrossRef · Europe PMC · OpenAlex · Semantic Scholar · OpenCitations
           </span>
-        </p>
-        <p className="text-center text-[10px] text-zinc-400/70">
-          <a href="https://thefarshad.com" className="hover:underline">thefarshad.com</a>
         </p>
       </footer>
     </main>
