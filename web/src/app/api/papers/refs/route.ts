@@ -1,15 +1,16 @@
 /**
- * GET /api/papers/refs?rowId=<id>
- * GET /api/papers/refs?ref=ARXIV:<id>
- * GET /api/papers/refs?ref=DOI:<id>
+ * GET /api/papers/refs?rowId=<id>[&direction=references|citations]
+ * GET /api/papers/refs?ref=ARXIV:<id>[&direction=…]
+ * GET /api/papers/refs?ref=DOI:<id>[&direction=…]
  *
- * Returns the list of papers the given paper *cites* (its
- * reference list), pulled from Semantic Scholar. Auth-gated and
- * scoped to the signed-in user when looking up by rowId.
+ * Returns one side of the paper's citation graph from Semantic
+ * Scholar:
+ *   direction=references  — papers the seed cites (default)
+ *   direction=citations   — papers that cite the seed
  *
- * Companion to /api/related-papers (which returns *related*
- * recommendations, not actual references) — both return the same
- * `RelatedPaper` shape so the UI reuses one card layout.
+ * Auth-gated; rowId lookups are scoped to the signed-in user.
+ * Returns the same `RelatedPaper` shape as /api/related-papers so
+ * the frontend reuses one card layout.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
@@ -17,7 +18,7 @@ import { db, schema } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { resolvePaperRef } from '@/lib/paper-ref';
 import { parseRef } from '@/lib/related-papers/types';
-import { fetchReferencesFromSS } from '@/lib/related-papers/semanticscholar';
+import { fetchPaperEdgesFromSS } from '@/lib/related-papers/semanticscholar';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,8 @@ export async function GET(req: NextRequest) {
 
   const rowId = req.nextUrl.searchParams.get('rowId');
   const refParam = req.nextUrl.searchParams.get('ref');
+  const direction =
+    req.nextUrl.searchParams.get('direction') === 'citations' ? 'citations' : 'references';
   const limit = Math.min(
     1000,
     Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 100),
@@ -69,12 +72,16 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const result = await fetchReferencesFromSS(ref, limit);
+  const result = await fetchPaperEdgesFromSS(ref, { direction, limit });
   if (!result.ok) {
     return NextResponse.json(
       { error: result.error, rateLimited: result.rateLimited ?? false },
       { status: result.status },
     );
   }
-  return NextResponse.json({ papers: result.papers, ref: `${ref.kind}:${ref.id}` });
+  return NextResponse.json({
+    papers: result.papers,
+    ref: `${ref.kind}:${ref.id}`,
+    direction,
+  });
 }

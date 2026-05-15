@@ -97,16 +97,15 @@ export async function fetchRelatedFromSemanticScholar(opts: {
 }
 
 /**
- * Fetch the list of papers a given paper cites (its references)
- * from Semantic Scholar. Returns `RelatedPaper` shapes so the
- * frontend reuses the existing card rendering. Capped at the SS
- * default 100 per call; the few papers with >100 references can
- * paginate later, but every single-paper bibliometric tool out
- * there starts at 100 too.
+ * Fetch the list of papers a given paper cites (`direction:
+ * 'references'`, default) or the list of papers that cite it
+ * (`direction: 'citations'`) from Semantic Scholar. Returns
+ * `RelatedPaper` shapes so the frontend reuses the existing card
+ * rendering. Capped at 1000 per call; the SS default is 100.
  */
-export async function fetchReferencesFromSS(
+export async function fetchPaperEdgesFromSS(
   ref: { kind: 'ARXIV' | 'DOI'; id: string },
-  limit: number = 100,
+  opts: { direction: 'references' | 'citations'; limit?: number },
 ): Promise<
   | { ok: true; papers: RelatedPaper[] }
   | { ok: false; status: number; error: string; rateLimited?: boolean }
@@ -114,8 +113,8 @@ export async function fetchReferencesFromSS(
   try {
     const ssId = `${ref.kind}:${ref.id}`;
     const url =
-      `https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(ssId)}/references` +
-      `?fields=${encodeURIComponent(FIELDS)}&limit=${Math.min(1000, Math.max(1, limit))}`;
+      `https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(ssId)}/${opts.direction}` +
+      `?fields=${encodeURIComponent(FIELDS)}&limit=${Math.min(1000, Math.max(1, opts.limit ?? 100))}`;
     const r = await fetch(url, { headers: ssHeaders(), next: { revalidate: 3600 } });
     if (!r.ok) {
       const text = await r.text().catch(() => '');
@@ -129,14 +128,27 @@ export async function fetchReferencesFromSS(
         rateLimited: r.status === 429,
       };
     }
-    const j = (await r.json()) as { data?: { citedPaper?: RelatedPaper | null }[] };
+    // /references returns { data: [{ citedPaper: … }] }; /citations
+    // returns { data: [{ citingPaper: … }] } — different keys, same
+    // shape, so unwrap both into a flat RelatedPaper[].
+    const j = (await r.json()) as {
+      data?: { citedPaper?: RelatedPaper | null; citingPaper?: RelatedPaper | null }[];
+    };
     const papers = (j.data ?? [])
-      .map((d) => d.citedPaper)
+      .map((d) => d.citedPaper ?? d.citingPaper)
       .filter((p): p is RelatedPaper => !!p && (!!p.title || !!p.externalIds));
     return { ok: true, papers };
   } catch (e) {
     return { ok: false, status: 502, error: (e as Error).message };
   }
+}
+
+/** Thin compat wrapper — older imports referenced this. */
+export function fetchReferencesFromSS(
+  ref: { kind: 'ARXIV' | 'DOI'; id: string },
+  limit: number = 100,
+) {
+  return fetchPaperEdgesFromSS(ref, { direction: 'references', limit });
 }
 
 /**

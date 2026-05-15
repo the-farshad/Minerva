@@ -60,14 +60,17 @@ export function RelatedView({
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [view, setView] = useState<'list' | 'graph' | 'sankey' | 'refs'>('list');
-  /** Papers that the seed paper *cites* (its bibliography), fetched
-   *  lazily on first switch to the References view via the new
-   *  /api/papers/refs endpoint. `null` = not loaded yet, `[]` = a
-   *  successful fetch that returned nothing (rare — papers usually
-   *  cite at least a few things), array = the references list. */
-  const [refs, setRefs] = useState<Paper[] | null>(null);
-  const [refsLoading, setRefsLoading] = useState(false);
-  const [refsError, setRefsError] = useState<string | null>(null);
+  /** Citation-graph data lives in one state object keyed by
+   *  direction so the user can toggle References ⇄ Cited-by
+   *  without re-fetching either side. Each leg is `null` until
+   *  its first lazy fetch; `[]` is "fetched and empty" (rare). */
+  const [edgesDir, setEdgesDir] = useState<'references' | 'citations'>('references');
+  const [edgesByDir, setEdgesByDir] = useState<{
+    references: Paper[] | null;
+    citations: Paper[] | null;
+  }>({ references: null, citations: null });
+  const [edgesLoading, setEdgesLoading] = useState(false);
+  const [edgesError, setEdgesError] = useState<string | null>(null);
   /** Incremental list reveal. The server returns up to 80 related
    *  papers; rendering them all at once is a wall. Show 30
    *  initially, "Load more" reveals another 30. Reset to 30 when
@@ -231,29 +234,32 @@ export function RelatedView({
     setYearFrom(''); setYearTo(''); setPdfOnly(false); setVenueFilter(''); setSortBy('relevance');
   }
 
-  // Lazy-fetch the references list the first time the References
-  // view is opened. Cached at the route layer (Next revalidate +
-  // SS itself), so a tab-flip doesn't re-hit the network.
+  // Lazy-fetch the active citation-graph leg (references or
+  // cited-by) the first time the user opens that side. Cached
+  // per-direction in state, so a toggle re-uses the prior fetch
+  // without hitting the network. The route layer (Next
+  // revalidate + SS itself) caches across page loads too.
   useEffect(() => {
-    if (view !== 'refs' || refs !== null || refsLoading) return;
-    setRefsLoading(true);
-    setRefsError(null);
-    void fetch(`/api/papers/refs?rowId=${encodeURIComponent(rowId)}&limit=200`)
+    if (view !== 'refs') return;
+    if (edgesByDir[edgesDir] !== null || edgesLoading) return;
+    setEdgesLoading(true);
+    setEdgesError(null);
+    void fetch(`/api/papers/refs?rowId=${encodeURIComponent(rowId)}&direction=${edgesDir}&limit=200`)
       .then(async (r) => {
         const j = (await r.json().catch(() => ({}))) as { papers?: Paper[]; error?: string };
         if (!r.ok) {
-          setRefsError(j.error || `refs: ${r.status}`);
-          setRefs([]);
+          setEdgesError(j.error || `refs: ${r.status}`);
+          setEdgesByDir((s) => ({ ...s, [edgesDir]: [] }));
         } else {
-          setRefs(j.papers || []);
+          setEdgesByDir((s) => ({ ...s, [edgesDir]: j.papers || [] }));
         }
       })
       .catch((e) => {
-        setRefsError((e as Error).message);
-        setRefs([]);
+        setEdgesError((e as Error).message);
+        setEdgesByDir((s) => ({ ...s, [edgesDir]: [] }));
       })
-      .finally(() => setRefsLoading(false));
-  }, [view, refs, refsLoading, rowId]);
+      .finally(() => setEdgesLoading(false));
+  }, [view, edgesDir, edgesByDir, edgesLoading, rowId]);
 
   // Reset the incremental reveal whenever the filtered set changes
   // — a freshly-narrowed list should start at the top, not deep in
@@ -494,14 +500,14 @@ export function RelatedView({
           <button
             type="button"
             onClick={() => setView('refs')}
-            title="Bibliography — the papers this paper cites"
+            title="The paper's citation graph — papers it cites, and papers that cite it"
             className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
               view === 'refs'
                 ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
             }`}
           >
-            <Quote className="h-3.5 w-3.5" /> References
+            <Quote className="h-3.5 w-3.5" /> Refs
           </button>
         </div>
       </div>
@@ -767,26 +773,56 @@ export function RelatedView({
         />
       )}
 
-      {view === 'refs' && (
-        <div className="mt-2">
-          {refsLoading && (
+      {view === 'refs' && (() => {
+        const edges = edgesByDir[edgesDir];
+        return (
+        <div className="mt-2 space-y-3">
+          <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+            <button
+              type="button"
+              onClick={() => setEdgesDir('references')}
+              title="Papers this paper cites (its bibliography)"
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+                edgesDir === 'references'
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+              }`}
+            >
+              References
+            </button>
+            <button
+              type="button"
+              onClick={() => setEdgesDir('citations')}
+              title="Papers that cite this paper"
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition ${
+                edgesDir === 'citations'
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+              }`}
+            >
+              Cited by
+            </button>
+          </div>
+          {edgesLoading && (
             <div className="flex items-center gap-2 rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading references…
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading {edgesDir === 'references' ? 'references' : 'citing papers'}…
             </div>
           )}
-          {!refsLoading && refsError && (
+          {!edgesLoading && edgesError && (
             <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
-              {refsError}
+              {edgesError}
             </div>
           )}
-          {!refsLoading && !refsError && refs && refs.length === 0 && (
+          {!edgesLoading && !edgesError && edges && edges.length === 0 && (
             <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
-              No references returned — either the paper genuinely cites nothing indexed, or Semantic Scholar doesn&rsquo;t have its bibliography.
+              {edgesDir === 'references'
+                ? 'No references returned — either the paper genuinely cites nothing indexed, or Semantic Scholar doesn’t have its bibliography.'
+                : 'No citations yet — Semantic Scholar has no indexed papers citing this one.'}
             </p>
           )}
-          {!refsLoading && refs && refs.length > 0 && (
+          {!edgesLoading && edges && edges.length > 0 && (
             <ul className="space-y-2">
-              {refs.map((p, idx) => {
+              {edges.map((p, idx) => {
                 const key = paperKey(p);
                 const url = paperUrl(p);
                 const isAdded = added.has(key);
@@ -843,7 +879,8 @@ export function RelatedView({
             </ul>
           )}
         </div>
-      )}
+        );
+      })()}
 
       <ul className={`mt-2 space-y-2 ${view !== 'list' ? 'hidden' : ''}`}>
         {visible.map((p, idx) => {
