@@ -671,22 +671,59 @@ export function SketchModal({
     const effFormat: PageFormat = explicitFormat
       ?? (pagesRef.current[pageIndex]?.paper?.size as PageFormat | undefined)
       ?? pageFormat;
-    if (effFormat === 'auto') {
-      // No paper rect to fit — just reset to identity.
-      resetView();
-      return;
-    }
-    const fmt = PAGE_FORMATS.find((f) => f.id === effFormat);
-    if (!fmt || fmt.pxW <= 0 || fmt.pxH <= 0) return;
     const c = canvasRef.current;
     if (!c) return;
     const dpr = window.devicePixelRatio || 1;
     const viewW = c.clientWidth || c.width / dpr;
     const viewH = c.clientHeight || c.height / dpr;
-    const fit = Math.min((viewW * 0.9) / fmt.pxW, (viewH * 0.9) / fmt.pxH);
+
+    // Pick what to fit: the paper rect when a format is set, else
+    // the bounding box of every stroke + text on the current page
+    // (auto-mode "fit to content"). With no content either, fall
+    // through to resetView — the previous always-reset behaviour
+    // for an empty auto-mode canvas.
+    let fitW = 0;
+    let fitH = 0;
+    let fitX = 0;
+    let fitY = 0;
+    const fmt = effFormat !== 'auto'
+      ? PAGE_FORMATS.find((f) => f.id === effFormat && f.pxW > 0 && f.pxH > 0)
+      : null;
+    if (fmt) {
+      fitW = fmt.pxW;
+      fitH = fmt.pxH;
+      fitX = 0;
+      fitY = 0;
+    } else {
+      const pts: { x: number; y: number }[] = [];
+      for (const s of strokesRef.current) for (const p of s.points) pts.push({ x: p.x, y: p.y });
+      for (const t of textsRef.current) {
+        // Texts have no width metric in their stored shape, so we
+        // approximate with fontSize × length × 0.6 (rough average
+        // glyph advance) — close enough for a one-tap "fit it".
+        const w = t.text ? t.fontSize * 0.6 * Math.max(...t.text.split('\n').map((ln) => ln.length)) : 0;
+        const h = t.text ? t.fontSize * 1.25 * t.text.split('\n').length : 0;
+        pts.push({ x: t.x, y: t.y });
+        pts.push({ x: t.x + w, y: t.y + h });
+      }
+      const bb = polylineBBox(pts);
+      if (bb && (bb.maxX > bb.minX || bb.maxY > bb.minY)) {
+        const pad = 24; // model-space padding around the content
+        fitX = bb.minX - pad;
+        fitY = bb.minY - pad;
+        fitW = (bb.maxX - bb.minX) + 2 * pad;
+        fitH = (bb.maxY - bb.minY) + 2 * pad;
+      } else {
+        // Empty auto-mode canvas — nothing to fit; just reset.
+        resetView();
+        return;
+      }
+    }
+
+    const fit = Math.min((viewW * 0.9) / fitW, (viewH * 0.9) / fitH);
     const fitScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
-    const centerTx = (viewW - fitScale * fmt.pxW) / 2;
-    const centerTy = (viewH - fitScale * fmt.pxH) / 2;
+    const centerTx = (viewW - fitScale * fitW) / 2 - fitScale * fitX;
+    const centerTy = (viewH - fitScale * fitH) / 2 - fitScale * fitY;
     setScale(fitScale);
     setTx(centerTx);
     setTy(centerTy);
@@ -2726,7 +2763,7 @@ export function SketchModal({
             onClick={() => fitPaperToView()}
             onPointerUp={(e) => { if (e.pointerType === 'pen') fitPaperToView(); }}
             style={{ cursor: 'pointer' }}
-            title={effPaper.size === 'auto' ? 'Reset view' : 'Fit page to screen'}
+            title={effPaper.size === 'auto' ? 'Fit content (or reset view if empty)' : 'Fit page to screen'}
             className="select-none rounded-full px-2 py-0.5 text-[10px] text-zinc-600 hover:bg-white dark:text-zinc-400 dark:hover:bg-zinc-950"
           >
             Fit
