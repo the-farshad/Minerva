@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart } from 'lucide-react';
+import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 import { TimelineChart } from './timeline-chart';
+import { applyTheme } from '@/components/theme-card';
+import { readPref, writePref } from '@/lib/prefs';
 
 type Paper = {
   kind?: string;
@@ -421,7 +423,7 @@ export function LitExplorer() {
   }, [edgePapers, yearFrom, yearTo, oaOnly, sortBy]);
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
+    <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
       <header className="mb-6">
         <h1 className="text-3xl font-semibold tracking-tight">Literature</h1>
       </header>
@@ -735,14 +737,15 @@ export function LitExplorer() {
         </>
       )}
 
-      <footer className="mt-12 space-y-1 text-center text-xs text-zinc-400">
-        <p>
+      <footer className="mt-12 flex flex-col items-center gap-3 text-xs text-zinc-400">
+        <ThemePicker />
+        <p className="text-center">
           Sources:{' '}
           <span className="text-zinc-500 dark:text-zinc-400">
             arXiv · CrossRef · Europe PMC · OpenAlex · Semantic Scholar · OpenCitations
           </span>
         </p>
-        <p>
+        <p className="text-center">
           <a href="https://thefarshad.com" className="hover:underline">thefarshad.com</a>
         </p>
       </footer>
@@ -948,5 +951,51 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
         )}
       </div>
     </li>
+  );
+}
+
+type LitTheme = 'system' | 'light' | 'dark' | 'sepia';
+
+const THEME_OPTIONS: { value: LitTheme; label: string; Icon: typeof Sun }[] = [
+  { value: 'system', label: 'Match system',  Icon: Monitor  },
+  { value: 'light',  label: 'Light',         Icon: Sun      },
+  { value: 'dark',   label: 'Dark',          Icon: Moon     },
+  { value: 'sepia',  label: 'Sepia',         Icon: BookOpen },
+];
+
+function ThemePicker() {
+  // Initial state is 'system'; the real value is read from
+  // localStorage in the effect below. Pre-paint application is
+  // already handled by the inline boot script in app/layout.tsx,
+  // so this only needs to keep the visible selection in sync.
+  const [theme, setTheme] = useState<LitTheme>('system');
+  useEffect(() => {
+    setTheme(readPref<LitTheme>('theme', 'system'));
+  }, []);
+  function pick(t: LitTheme) {
+    setTheme(t);
+    writePref('theme', t === 'system' ? '' : t);
+    applyTheme(t);
+  }
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+      {THEME_OPTIONS.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => pick(o.value)}
+          aria-label={o.label}
+          title={o.label}
+          aria-pressed={theme === o.value}
+          className={`inline-flex items-center justify-center rounded-full p-1.5 transition ${
+            theme === o.value
+              ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+          }`}
+        >
+          <o.Icon className="h-3.5 w-3.5" />
+        </button>
+      ))}
+    </div>
   );
 }
