@@ -50,8 +50,11 @@ export function NotesPane({
 }) {
   const [value, setValue] = useState(initial);
   const [saving, setSaving] = useState<'idle' | 'pending' | 'saved' | 'error'>('idle');
+  // Default to 'split' (edit + preview side by side) — a markdown
+  // note opens showing both by default. A saved preference still
+  // wins for anyone who picked a mode before.
   const [mode, setMode] = useState<'edit' | 'split' | 'preview'>(
-    () => (readPref<string>('notes.mode', 'edit') as 'edit' | 'split' | 'preview') || 'edit',
+    () => (readPref<string>('notes.mode', 'split') as 'edit' | 'split' | 'preview') || 'split',
   );
   const t = useRef<ReturnType<typeof setTimeout> | null>(null);
   function changeMode(next: 'edit' | 'split' | 'preview') {
@@ -470,14 +473,19 @@ export function NotesPane({
             <Printer className="h-3.5 w-3.5" />
           </button>
           {onTypeChange && (
+            /* Note content type — Text or Markdown. "Sketch" is no
+             * longer a standalone note type (sketches live inline
+             * inside markdown notes); existing sketch-typed rows
+             * still render via the effType === 'sketch' branch
+             * below, they just can't be newly created here. */
             <div className="inline-flex items-center rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800" title="Note content type">
-              {(['text', 'md', 'sketch'] as const).map((tp) => (
+              {(['text', 'md'] as const).map((tp) => (
                 <button
                   key={tp}
                   type="button"
                   onClick={() => onTypeChange(tp)}
                   className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${effType === tp ? 'bg-white shadow-sm dark:bg-zinc-950' : 'opacity-60 hover:opacity-100'}`}
-                  title={tp === 'text' ? 'Plain text — no markdown rendering' : tp === 'md' ? 'Markdown — rendered preview available' : 'Sketch — pen-pressure canvas'}
+                  title={tp === 'text' ? 'Plain text — no markdown rendering' : 'Markdown — rendered preview available'}
                 >
                   {tp}
                 </button>

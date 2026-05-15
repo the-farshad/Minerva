@@ -2870,7 +2870,13 @@ export function SketchModal({
         * width / opacity / smoothing under a "Pen" popover and
         * size / style / surface / margins under "Paper". Bottom
         * placement so Pencil reach is short on iPad. */}
-      <footer className="relative z-[70] flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+      {/* `min-h` keeps the footer a fixed height as its contents
+        * swap (the eraser cluster, colour cluster, Pen trigger all
+        * render conditionally on the active tool). Without it the
+        * footer reflowed taller/shorter on a tool switch, the
+        * flex-1 canvas above resized to match, and the resize-driven
+        * redraw made the canvas visibly jump. */}
+      <footer className="relative z-[70] flex min-h-[3.25rem] flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
         {/* Tool selector. Primary tools stay visible; the eight
           * shape tools tuck behind one "Shapes" sub-nav button. The
           * two eraser modes (pixel + whole-object) share one
