@@ -19,6 +19,7 @@ import { eq, and } from 'drizzle-orm';
 import { resolvePaperRef } from '@/lib/paper-ref';
 import { parseRef } from '@/lib/related-papers/types';
 import { fetchPaperEdgesFromSS } from '@/lib/related-papers/semanticscholar';
+import { fetchPaperEdgesFromOpenCitations } from '@/lib/related-papers/opencitations';
 
 export const dynamic = 'force-dynamic';
 
@@ -79,6 +80,28 @@ export async function GET(req: NextRequest) {
   }
 
   const result = await fetchPaperEdgesFromSS(ref, { direction, limit });
+
+  // OpenCitations fallback. Two real cases drop here:
+  //   1. Semantic Scholar returned 200-ok but zero papers — common
+  //      for older papers Crossref-indexed but absent from SS's
+  //      similarity graph.
+  //   2. SS errored on a transient (rate-limit, network).
+  // OpenCitations is DOI-only, so arXiv-id-only lookups can't
+  // fall back; in that case we surface the SS result as-is.
+  const tryOpenCitations = ref.kind === 'DOI'
+    && ((result.ok && result.papers.length === 0) || (!result.ok && result.status !== 404));
+  if (tryOpenCitations) {
+    const oc = await fetchPaperEdgesFromOpenCitations(ref, { direction, limit });
+    if (oc.ok && oc.papers.length > 0) {
+      return NextResponse.json({
+        papers: oc.papers,
+        ref: `${ref.kind}:${ref.id}`,
+        direction,
+        provider: 'opencitations',
+      });
+    }
+  }
+
   if (!result.ok) {
     return NextResponse.json(
       { error: result.error, rateLimited: result.rateLimited ?? false },
@@ -89,5 +112,6 @@ export async function GET(req: NextRequest) {
     papers: result.papers,
     ref: `${ref.kind}:${ref.id}`,
     direction,
+    provider: 'semanticscholar',
   });
 }
