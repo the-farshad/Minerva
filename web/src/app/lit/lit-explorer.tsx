@@ -697,8 +697,12 @@ export function LitExplorer() {
           <p className="mt-1.5 px-2 text-[11px] text-zinc-500">
             Combine terms with <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">AND</code>,{' '}
             <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">OR</code>,{' '}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">NOT</code>, or wrap a phrase in{' '}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">&quot;quotes&quot;</code>.
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">NOT</code>, wrap a phrase in{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">&quot;quotes&quot;</code>,
+            or target a field with{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">title:</code>,{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">abstract:</code>,{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">author:</code>.
           </p>
         )}
       </form>

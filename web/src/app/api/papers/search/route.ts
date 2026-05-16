@@ -59,19 +59,47 @@ function workToPaper(w: OAWork): RelatedPaper {
   };
 }
 
-async function searchOpenAlex(query: string, limit: number, offset: number): Promise<RelatedPaper[]> {
+/** Field-targeted search prefixes (findpapers-style). When a query
+ *  starts with one of these, route the rest of the string into the
+ *  matching OpenAlex full-text filter so the match is restricted to
+ *  that field. SS has no equivalent — those queries skip SS. */
+const FIELD_PREFIX_RE = /^(title|abstract|author):\s*(.+)$/i;
+const OA_FIELD_FILTER: Record<string, string> = {
+  title: 'title.search',
+  abstract: 'abstract.search',
+  author: 'raw_author_name.search',
+};
+
+async function searchOpenAlex(
+  query: string,
+  limit: number,
+  offset: number,
+  field?: string,
+): Promise<RelatedPaper[]> {
   const perPage = Math.min(100, Math.max(1, limit));
   // OpenAlex pages are 1-indexed; translate offset by dividing into
   // whole-page chunks. Callers asking for `offset` non-multiple of
   // `limit` will lose the in-page tail, but the /lit UI always
   // requests in `limit`-sized strides so this is fine.
   const page = Math.max(1, Math.floor(offset / perPage) + 1);
-  const url =
-    `https://api.openalex.org/works?search=${encodeURIComponent(query)}` +
-    `&per_page=${perPage}&page=${page}` +
-    `&select=id,doi,title,authorships,publication_year,open_access,primary_location,cited_by_count` +
-    `&mailto=${encodeURIComponent('minerva@thefarshad.com')}`;
-  const r = await fetch(url, { headers: { Accept: 'application/json' }, next: { revalidate: 300 } });
+  const params = new URLSearchParams();
+  // Field-targeted search uses a `filter=<field>.search:<query>`
+  // clause instead of the generic `search=` param so the match is
+  // restricted to that field. Falls back to a body-wide search when
+  // no field was specified.
+  if (field && OA_FIELD_FILTER[field]) {
+    params.set('filter', `${OA_FIELD_FILTER[field]}:${query}`);
+  } else {
+    params.set('search', query);
+  }
+  params.set('per_page', String(perPage));
+  params.set('page', String(page));
+  params.set('select', 'id,doi,title,authorships,publication_year,open_access,primary_location,cited_by_count');
+  params.set('mailto', 'minerva@thefarshad.com');
+  const r = await fetch(`https://api.openalex.org/works?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+    next: { revalidate: 300 },
+  });
   if (!r.ok) return [];
   const j = (await r.json()) as { results?: OAWork[] };
   return (j.results || []).map(workToPaper).filter((p) => p.title);
@@ -125,13 +153,32 @@ function mergeDedup(primary: RelatedPaper[], secondary: RelatedPaper[]): Related
 }
 
 export async function GET(req: NextRequest) {
-  const q = (req.nextUrl.searchParams.get('q') || '').trim();
-  if (!q) return NextResponse.json({ papers: [] });
+  const qRaw = (req.nextUrl.searchParams.get('q') || '').trim();
+  if (!qRaw) return NextResponse.json({ papers: [] });
   const limit = Math.min(
     MAX_LIMIT,
     Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || DEFAULT_LIMIT),
   );
   const offset = Math.max(0, Number(req.nextUrl.searchParams.get('offset')) || 0);
+
+  // Strip a field prefix off the front of the query. The rest of
+  // the request shape stays the same; only the OpenAlex URL changes.
+  const fieldMatch = qRaw.match(FIELD_PREFIX_RE);
+  const field = fieldMatch ? fieldMatch[1].toLowerCase() : undefined;
+  const q = fieldMatch ? fieldMatch[2].trim() : qRaw;
+
+  // Field-targeted searches skip SS (no equivalent filter syntax)
+  // and go straight to OpenAlex. SS would ignore the field hint and
+  // return a generic best-match list anyway.
+  if (field) {
+    const oa = await searchOpenAlex(q, limit, offset, field);
+    return NextResponse.json({
+      papers: oa,
+      provider: 'openalex',
+      field,
+      hasMore: oa.length === limit,
+    });
+  }
 
   // Boolean queries skip SS (no operator support) and go straight
   // to OpenAlex. SS would silently ignore the operators and return
