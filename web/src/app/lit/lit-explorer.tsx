@@ -713,6 +713,33 @@ export function LitExplorer() {
         </div>
       )}
 
+      {!paper && !candidates && !loading && !err && (
+        <div className="rounded-md border border-zinc-200 bg-zinc-50/60 p-4 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+          <p className="mb-2 font-medium text-zinc-700 dark:text-zinc-300">Try one of these:</p>
+          <ul className="grid gap-1.5">
+            {LANDING_EXAMPLES.map((ex) => (
+              <li key={ex.q}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode(ex.mode);
+                    setQuery(ex.q);
+                    if (ex.mode === 'keyword') void runKeywordSearch(ex.q);
+                    else void resolveAndSetSeed(ex.q);
+                  }}
+                  className="group inline-flex items-baseline gap-2 rounded text-left hover:text-zinc-900 dark:hover:text-zinc-100"
+                >
+                  <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700 group-hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:group-hover:bg-zinc-700">
+                    {ex.q}
+                  </code>
+                  <span className="text-zinc-500">{ex.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {!paper && candidates && candidates.length > 0 && (() => {
         // Synthesize a seed node from the search label so the Graph
         // view has something to radiate around. The label is whatever
@@ -1031,6 +1058,17 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
 /** How many papers per Load-more page. Matches the API DEFAULT_LIMIT
  *  so the first request and every subsequent page are the same size. */
 const PAGE_SIZE = 50;
+
+/** Quick-tap examples shown on first load so newcomers see the
+ *  search surface without having to read the hint. Each example
+ *  picks a different facet of the explorer (DOI, arXiv, author
+ *  hub, boolean keyword). */
+const LANDING_EXAMPLES: { q: string; mode: SearchMode; label: string }[] = [
+  { q: '10.1038/nature14539',       mode: 'id',      label: 'Resolve by DOI' },
+  { q: '1706.03762',                mode: 'id',      label: 'Resolve by arXiv ID' },
+  { q: 'author:LeCun',              mode: 'keyword', label: 'Top-cited papers by an author' },
+  { q: 'transformer AND attention', mode: 'keyword', label: 'Boolean keyword search' },
+];
 
 type LitTheme = 'system' | 'light' | 'dark' | 'sepia';
 

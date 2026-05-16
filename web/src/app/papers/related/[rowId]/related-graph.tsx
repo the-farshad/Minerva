@@ -341,20 +341,51 @@ export function RelatedGraph({
 
   /** Legend rows for the top clusters, in size-descending order.
    *  Up to CLUSTER_PALETTE.length entries are coloured; everything
-   *  else is collapsed into a single "Other" row. */
+   *  else is collapsed into a single "Other" row. Each cluster's
+   *  label is the dominant publication decade among its papers
+   *  (e.g. "2020s"), which is more meaningful than "Cluster 1" and
+   *  is usually distinct because tightly-coupled papers tend to
+   *  cluster around the same era. Ties or missing-year clusters
+   *  fall back to a numeric label. */
   const clusterLegend = useMemo<{ color: string; count: number; label: string }[]>(() => {
     const sizes = new Map<number, number>();
-    for (const id of clusters.values()) sizes.set(id, (sizes.get(id) ?? 0) + 1);
+    const decadesByCluster = new Map<number, Map<number, number>>();
+    for (const node of graphData.nodes) {
+      const cid = clusters.get(node.id);
+      if (cid == null) continue;
+      sizes.set(cid, (sizes.get(cid) ?? 0) + 1);
+      const year = node.paper?.year;
+      if (typeof year !== 'number' || year < 1900) continue;
+      const decade = Math.floor(year / 10) * 10;
+      if (!decadesByCluster.has(cid)) decadesByCluster.set(cid, new Map());
+      const m = decadesByCluster.get(cid)!;
+      m.set(decade, (m.get(decade) ?? 0) + 1);
+    }
     const sorted = [...sizes.entries()].sort((a, b) => b[1] - a[1]);
+    const usedLabels = new Map<string, number>();
+    function dominantDecade(cid: number, fallback: string): string {
+      const m = decadesByCluster.get(cid);
+      if (!m || m.size === 0) return fallback;
+      let best = 0;
+      let bestCount = -1;
+      for (const [d, c] of m) {
+        if (c > bestCount) { best = d; bestCount = c; }
+      }
+      const label = `${best}s`;
+      // Disambiguate when two clusters share a dominant decade.
+      const seen = usedLabels.get(label) ?? 0;
+      usedLabels.set(label, seen + 1);
+      return seen === 0 ? label : `${label} #${seen + 1}`;
+    }
     const top = sorted.slice(0, CLUSTER_PALETTE.length).map(([id, count], i) => ({
       color: CLUSTER_PALETTE[i],
       count,
-      label: `Cluster ${i + 1}`,
+      label: dominantDecade(id, `Cluster ${i + 1}`),
     }));
     const tail = sorted.slice(CLUSTER_PALETTE.length).reduce((sum, [, c]) => sum + c, 0);
     if (tail > 0) top.push({ color: isDark ? CLUSTER_TAIL_DARK : CLUSTER_TAIL_LIGHT, count: tail, label: 'Other' });
     return top;
-  }, [clusters, isDark]);
+  }, [clusters, graphData.nodes, isDark]);
 
   function nodeRadius(n: GraphNode): number {
     if (n.isSeed) return 14;

@@ -88,7 +88,17 @@ async function searchOpenAlex(
   // restricted to that field. Falls back to a body-wide search when
   // no field was specified.
   if (field && OA_FIELD_FILTER[field]) {
-    params.set('filter', `${OA_FIELD_FILTER[field]}:${query}`);
+    // Auto-phrase multi-word field-targeted queries. OpenAlex's
+    // `filter=<field>.search:foo bar` treats whitespace as an
+    // AND-of-terms — so a query like `abstract:retrieval augmented`
+    // returns papers that mention both words anywhere, not the
+    // phrase. Wrapping in quotes forces phrase matching, which is
+    // what a field-targeted query nearly always wants. Skip the
+    // wrap when the user supplied their own quotes, or when there's
+    // only one term.
+    const needsQuote = query.includes(' ') && !query.includes('"');
+    const filterValue = needsQuote ? `"${query}"` : query;
+    params.set('filter', `${OA_FIELD_FILTER[field]}:${filterValue}`);
   } else {
     params.set('search', query);
   }
