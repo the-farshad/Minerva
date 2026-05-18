@@ -185,6 +185,12 @@ export function SharesView() {
                       <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
                         <Check className="h-3.5 w-3.5" /> Accepted
                       </span>
+                      <Link
+                        href={`/shared-with-me/${s.recipientId}`}
+                        className="rounded-full border border-zinc-200 px-3 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                      >
+                        View
+                      </Link>
                       <button
                         type="button"
                         onClick={() => void act(s.recipientId, 'decline')}
