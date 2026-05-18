@@ -21,6 +21,7 @@ import { appPickMany } from './multi-picker';
 import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
 import { GroupNotes } from './group-notes';
+import { GroupAboutDialog } from './group-about';
 
 export type { Row } from '@/lib/row';
 
@@ -126,6 +127,10 @@ export function GroupedGrid({
   const videoFileRef = useRef<HTMLInputElement>(null);
   const uploadTarget = useRef<string | null>(null);
   const [uploadingTo, setUploadingTo] = useState<string | null>(null);
+  // Which group's "About" dialog is open, keyed by group key.
+  // Single piece of state instead of one-per-group so useState hook
+  // order stays stable across the .map() below.
+  const [aboutOpenFor, setAboutOpenFor] = useState<string | null>(null);
   // The schema's `multiselect(...)` options for this column — updated
   // in-place when the user clicks Add/Remove in the CategoryBar.
   const [catOptions, setCatOptions] = useState<string[]>(() => {
@@ -506,6 +511,13 @@ export function GroupedGrid({
                             className="z-[60] min-w-[12rem] overflow-hidden rounded-md border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
                           >
                             <DropdownMenu.Item
+                              onSelect={() => setAboutOpenFor(key)}
+                              className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            >
+                              <Info className="h-3.5 w-3.5" /> About this {section.preset === 'youtube' ? 'playlist' : 'category'}
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+                            <DropdownMenu.Item
                               onSelect={async () => {
                                 toast.info(`Refreshing metadata for ${groupRows.length} items…`);
                                 let done = 0, failed = 0, skipped = 0;
@@ -757,6 +769,13 @@ export function GroupedGrid({
                 ))}
               </div>
             )}
+            <GroupAboutDialog
+              open={aboutOpenFor === key}
+              onOpenChange={(open) => { if (!open) setAboutOpenFor(null); }}
+              preset={section.preset}
+              groupKey={key}
+              rows={groupRows}
+            />
           </section>
         );
       })}
