@@ -13,7 +13,7 @@
  * it. Stopwords + min-3-letter + min-2-occurrence pruning keeps the
  * graph readable. Capped at the top 40 keywords by frequency.
  */
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
@@ -60,6 +60,11 @@ type KwLink = { source: string; target: string; weight: number };
 export function KeywordGraph({ papers }: { papers: Paper[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
+  // Decouple the graph's background from the page theme so the
+  // export looks the same on light or dark screens. Default light
+  // because the typical export target is white. Toggled in the
+  // toolbar below.
+  const [bgMode, setBgMode] = useState<'light' | 'dark'>('light');
 
   const { nodes, links } = useMemo(() => {
     const wordPapers = new Map<string, number>();
@@ -101,7 +106,7 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
     );
   }
 
-  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  const isDark = bgMode === 'dark';
   const nMax = Math.max(...nodes.map((n) => n.papers));
   function nodeRadius(n: KwNode): number {
     return 4 + Math.min(14, Math.sqrt(n.papers) * 3);
@@ -155,16 +160,42 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
         <button type="button" onClick={doExportGraphML}
           className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
         >GraphML</button>
+        <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={() => setBgMode('light')}
+            title="Light background — for exports targeting white pages"
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              bgMode === 'light'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >BG ☀</button>
+          <button
+            type="button"
+            onClick={() => setBgMode('dark')}
+            title="Dark background — for slides / dark presentations"
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              bgMode === 'dark'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >BG ☾</button>
+        </div>
       </div>
       <FullscreenShell>
         {({ width, height }) => (
-          <div className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+          <div
+            className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+            style={{ backgroundColor: isDark ? '#0b0d10' : '#fafafa' }}
+          >
             <ForceGraph2D
+              key={`bg-${bgMode}`}
               ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
               width={width}
               height={height}
               graphData={{ nodes, links }}
-              backgroundColor={isDark ? '#18181b' : '#fafafa'}
+              backgroundColor={isDark ? '#0b0d10' : '#fafafa'}
               nodeRelSize={6}
               nodeCanvasObject={(raw, ctx, globalScale) => {
                 const n = raw as KwNode;

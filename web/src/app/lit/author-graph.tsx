@@ -61,6 +61,13 @@ export function AuthorGraph({
   onAuthorClick?: (name: string) => void;
 }) {
   const [layout, setLayout] = useState<'force' | 'circular'>('force');
+  // bgMode independent of the page theme so an export looks the
+  // same regardless of whether the user is browsing in light or
+  // dark mode. Defaults to 'light' because the most common export
+  // target (print, slides, papers) is a white background. The
+  // user can flip to dark for in-app review.
+  const [bgMode, setBgMode] = useState<'light' | 'dark'>('light');
+  const isDarkBg = bgMode === 'dark';
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -150,7 +157,9 @@ export function AuthorGraph({
     );
   }
 
-  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  // Was tied to the page theme; now driven by the bgMode toggle so
+  // export and in-graph rendering stay in sync regardless of theme.
+  const isDark = isDarkBg;
   function nodeRadius(n: CoAuthorNode): number {
     if (n.isFocal) return 12;
     return 4 + Math.min(10, Math.log2(1 + n.papers) * 2);
@@ -235,6 +244,32 @@ export function AuthorGraph({
         <button type="button" onClick={doExportGraphML}
           className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
         >GraphML</button>
+        <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={() => setBgMode('light')}
+            title="Light background — for exports targeting white pages"
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              bgMode === 'light'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            BG ☀
+          </button>
+          <button
+            type="button"
+            onClick={() => setBgMode('dark')}
+            title="Dark background — for slides / dark presentations"
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              bgMode === 'dark'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            BG ☾
+          </button>
+        </div>
         <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
           <button
             type="button"
@@ -264,13 +299,17 @@ export function AuthorGraph({
       {layout === 'force' ? (
         <FullscreenShell>
           {({ width, height }) => (
-            <div className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+            <div
+              className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
+            >
               <ForceGraph2D
+                key={`bg-${bgMode}`}
                 ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
                 width={width}
                 height={height}
                 graphData={{ nodes, links }}
-                backgroundColor={isDark ? '#18181b' : '#fafafa'}
+                backgroundColor={isDarkBg ? '#0b0d10' : '#fafafa'}
                 nodeRelSize={6}
                 nodeCanvasObject={(raw, ctx, globalScale) => {
                   const n = raw as CoAuthorNode;
@@ -312,7 +351,10 @@ export function AuthorGraph({
       ) : (
         <FullscreenShell>
           {() => (
-            <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+            <div
+              className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
+            >
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${circular.W} ${circular.H}`}
