@@ -19,9 +19,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
-  X, ExternalLink, Clock, Eye, EyeOff, BookOpen, Users, Calendar, FileText,
+  X, ExternalLink, Clock, Eye, EyeOff, BookOpen, Users, Calendar, FileText, Pencil,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { readingMinutes, formatReadingMinutes } from '@/lib/reading-time';
+import { appPrompt } from './prompt';
 
 type Row = { id: string; data: Record<string, unknown>; updatedAt?: string; createdAt?: string };
 
@@ -65,6 +67,13 @@ function Body({ preset, rows, groupKey }: { preset: string; rows: Row[]; groupKe
 
 // ──────────────────────────── YouTube ────────────────────────────
 
+/** Where a manually-pasted playlist URL is remembered. Per-device
+ *  (localStorage), keyed by the group name + the section preset
+ *  prefix. Survives reloads + lets the user fix the case where the
+ *  list= parameter wasn't preserved during import. */
+const PLAYLIST_URL_KEY = (groupKey: string) => `minerva.v2.playlistUrl.${groupKey}`;
+const PL_RE = /[?&]list=([A-Za-z0-9_-]+)/;
+
 function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
   // Re-read from localStorage on open so progress reflects any
   // playback that happened since this tab mounted.
@@ -76,8 +85,24 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
   }, []);
   void tick;
 
+  // The user-saved playlist URL (or list=id) for this group, if
+  // any. Read on mount and again after the storage event so a
+  // change persists immediately across an open dialog.
+  const [storedListId, setStoredListId] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PLAYLIST_URL_KEY(groupKey));
+      if (!raw) { setStoredListId(null); return; }
+      const m = raw.match(PL_RE);
+      // Accept either a full YouTube URL or a bare list= id paste.
+      setStoredListId(m ? m[1] : (/^[A-Za-z0-9_-]{10,}$/.test(raw) ? raw : null));
+    } catch { setStoredListId(null); }
+  }, [groupKey, tick]);
+
   const stats = useMemo(() => {
-    let listId = '';
+    // The manually-saved URL wins over per-row URL parsing — that's
+    // the whole point of letting the user paste it.
+    let listId = storedListId ?? '';
     let totalSec = 0;
     let watchedSec = 0;
     let completed = 0;
@@ -159,7 +184,39 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
       lastWatchedTitle,
       etaText,
     };
-  }, [rows]);
+  }, [rows, storedListId]);
+
+  async function savePlaylistUrl() {
+    const seed = storedListId ? `https://www.youtube.com/playlist?list=${storedListId}` : '';
+    const input = await appPrompt('Playlist URL', {
+      body: 'Paste the YouTube playlist URL (the one that starts with /playlist?list=…). You can also paste just the list= id.',
+      initial: seed,
+      placeholder: 'https://www.youtube.com/playlist?list=PL…',
+      okLabel: 'Save',
+    });
+    if (input == null) return;
+    const trimmed = input.trim();
+    try {
+      if (!trimmed) {
+        localStorage.removeItem(PLAYLIST_URL_KEY(groupKey));
+        setStoredListId(null);
+        toast.success('Playlist URL cleared.');
+        return;
+      }
+      const m = trimmed.match(PL_RE);
+      const bareId = /^[A-Za-z0-9_-]{10,}$/.test(trimmed) ? trimmed : null;
+      const id = m ? m[1] : bareId;
+      if (!id) {
+        toast.error("Didn't recognise that as a YouTube playlist URL or list= id.");
+        return;
+      }
+      localStorage.setItem(PLAYLIST_URL_KEY(groupKey), trimmed);
+      setStoredListId(id);
+      toast.success('Playlist URL saved for this group.');
+    } catch (e) {
+      toast.error('Save failed: ' + (e as Error).message);
+    }
+  }
 
   const hasDurations = stats.withDuration > 0;
 
@@ -220,36 +277,46 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
       {/* Original-playlist jump-link is the user's most asked-for
        *  shortcut here, so it gets its own emphasised row when a
        *  listId is discoverable on any row. */}
-      {/* Always provide a way to jump to the playlist on YouTube.
-       *  When a listId is parseable out of any row's URL we link
-       *  to the canonical /playlist?list=… page; otherwise (the
-       *  common case for playlists imported video-by-video where
-       *  the list= param wasn't preserved) we link to YouTube's
-       *  search results for the playlist name so the user can
-       *  still navigate to it in one hop. */}
-      {stats.listId ? (
-        <a
-          href={`https://www.youtube.com/playlist?list=${stats.listId}`}
-          target="_blank"
-          rel="noopener"
-          className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+      {/* Playlist jump-link + "set / edit URL" affordance. The
+       *  link goes to the canonical /playlist?list=… page whenever
+       *  a listId is known — either parsed from a row's URL or
+       *  saved by the user. The pencil button lets the user paste
+       *  the real URL when the importer didn't preserve list= on
+       *  the per-video URLs (the MIT-style case the user hit). */}
+      <div className="flex flex-wrap items-stretch gap-2">
+        {stats.listId ? (
+          <a
+            href={`https://www.youtube.com/playlist?list=${stats.listId}`}
+            target="_blank"
+            rel="noopener"
+            className="inline-flex flex-1 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Open “{groupKey}” on YouTube
+            <span className="ml-auto text-[10px] text-zinc-500">youtube.com/playlist?list={stats.listId.slice(0, 12)}…</span>
+          </a>
+        ) : (
+          <a
+            href={`https://www.youtube.com/results?search_query=${encodeURIComponent(groupKey + ' playlist')}`}
+            target="_blank"
+            rel="noopener"
+            className="inline-flex flex-1 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Search YouTube for “{groupKey}”
+            <span className="ml-auto text-[10px] text-zinc-500">no list= id stored — paste one →</span>
+          </a>
+        )}
+        <button
+          type="button"
+          onClick={() => void savePlaylistUrl()}
+          title={storedListId ? 'Edit the playlist URL saved for this group' : 'Paste the playlist URL so the link goes to the real playlist instead of a YouTube search'}
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
         >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Open “{groupKey}” on YouTube
-          <span className="ml-auto text-[10px] text-zinc-500">youtube.com/playlist?list={stats.listId.slice(0, 12)}…</span>
-        </a>
-      ) : (
-        <a
-          href={`https://www.youtube.com/results?search_query=${encodeURIComponent(groupKey + ' playlist')}`}
-          target="_blank"
-          rel="noopener"
-          className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Search YouTube for “{groupKey}”
-          <span className="ml-auto text-[10px] text-zinc-500">no list= id stored on these rows</span>
-        </a>
-      )}
+          <Pencil className="h-3.5 w-3.5" />
+          {storedListId ? 'Edit URL' : 'Set URL'}
+        </button>
+      </div>
     </div>
   );
 }
