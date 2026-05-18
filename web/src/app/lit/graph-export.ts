@@ -169,15 +169,33 @@ function inlineComputedStyles(src: SVGSVGElement): SVGSVGElement {
 function applyTextStyle(clone: SVGSVGElement, style?: Pick<ExportStyle, 'fontSize' | 'textColor'>) {
   if (!style || (style.fontSize == null && !style.textColor)) return;
   clone.querySelectorAll<SVGTextElement>('text').forEach((t) => {
-    // Inline style — not the SVG attribute — because the chart's
-    // text elements wear Tailwind utility classes (fill-zinc-500,
-    // text-[10px], …) and a CSS class beats a same-name attribute.
-    // inlineComputedStyles also wrote inline styles on this clone,
-    // so we need style.fill / style.fontSize to overwrite those,
-    // not setAttribute calls that would silently lose. This is the
-    // bug the user hit: "text color seems does not work".
-    if (style.fontSize != null) t.style.fontSize = `${style.fontSize}px`;
-    if (style.textColor) t.style.fill = style.textColor;
+    // Belt + suspenders: write the override to every signal a
+    // downstream consumer might read.
+    //   - inline t.style.* — beats Tailwind utility class CSS
+    //     (e.g. fill-zinc-500), beats the inline styles
+    //     inlineComputedStyles wrote earlier.
+    //   - SVG attribute setAttribute('fill', …) — what svg2pdf
+    //     actually reads on text elements; ignores style.fill on
+    //     <text> in older builds of the library.
+    //   - t.style.color — for elements rendering text via
+    //     `fill: currentColor`, the color cascade is what matters.
+    // Strip any inherited fill-* class so a class-driven rule can't
+    // re-paint the text after we set the explicit color.
+    if (style.fontSize != null) {
+      t.style.fontSize = `${style.fontSize}px`;
+      t.setAttribute('font-size', String(style.fontSize));
+    }
+    if (style.textColor) {
+      t.style.fill = style.textColor;
+      t.setAttribute('fill', style.textColor);
+      t.style.color = style.textColor;
+      // Remove every fill-* class so Tailwind's CSS rule can't win
+      // the cascade in environments (svg2pdf, off-screen
+      // rasterise) where class selectors still match.
+      const cls = (t.getAttribute('class') || '').split(/\s+/).filter((c) => c && !/^fill-/.test(c));
+      if (cls.length > 0) t.setAttribute('class', cls.join(' '));
+      else t.removeAttribute('class');
+    }
   });
 }
 
@@ -410,7 +428,11 @@ export function nodesToSVG(
       text.setAttribute('text-anchor', 'middle');
       text.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
       text.setAttribute('font-size', String(fontSize));
+      // Both attribute + inline style so svg2pdf and the off-screen
+      // rasteriser see the same colour regardless of which signal
+      // each one prefers to read.
       text.setAttribute('fill', textFill);
+      text.style.fill = textFill;
       // Truncate long labels — a force graph with 80+ authors
       // makes the page unreadable if every label runs full.
       text.textContent = n.label.length > 32 ? n.label.slice(0, 31) + '…' : n.label;
