@@ -2,18 +2,21 @@
  * Reading-time estimation for papers.
  *
  * Two inputs supported, in order of precedence:
- *   - `pages` (from PDF metadata): ~3 min/page is the typical
- *     academic-paper rate (dense layout, equations, figures).
- *   - `words` (from text extraction): 250 wpm is the canonical
- *     adult silent-reading rate; we apply it when pages isn't
- *     available so a reading estimate isn't withheld for older
- *     rows that pre-date the page-count column.
+ *   - `pages` (from PDF metadata): ~6 min/page is realistic for
+ *     a careful read of a dense academic paper (equations, figures,
+ *     methods walkthrough). The previous 3 min/page assumed a
+ *     skim, which under-counted a real read by ~2×.
+ *   - `words` (from text extraction): 180 wpm — academic prose is
+ *     denser than the 250 wpm typical for casual / journalistic
+ *     reading. Applied when pages isn't available so the estimate
+ *     isn't withheld for older rows that pre-date the page-count
+ *     column.
  *
  * Returned value is integer minutes. Callers should display it as
  * "~N min" so the user reads it as an estimate, not a stopwatch.
  */
-export const MINUTES_PER_PAGE = 3;
-export const WORDS_PER_MINUTE = 250;
+export const MINUTES_PER_PAGE = 6;
+export const WORDS_PER_MINUTE = 180;
 
 export function readingMinutesFromPages(pages: number | undefined | null): number | null {
   if (!pages || pages <= 0) return null;

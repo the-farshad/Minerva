@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen, RotateCcw } from 'lucide-react';
 import { readingMinutes, formatReadingMinutes, MINUTES_PER_PAGE, WORDS_PER_MINUTE } from '@/lib/reading-time';
 import { relativeTime, formatDateTime } from '@/lib/relative-time';
 import type { Row } from '@/lib/row';
@@ -611,6 +611,35 @@ export function GroupedGrid({
                       >
                         <Download className="h-3.5 w-3.5" />
                       </button>
+                      {section.preset === 'youtube' && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ok = await appConfirm(
+                              `Reset watch progress for all ${groupRows.length} videos in "${key}"?`,
+                              { body: 'Each video will restart from the beginning the next time you play it. Counts only — videos themselves are untouched.', dangerLabel: 'Reset' },
+                            );
+                            if (!ok) return;
+                            let cleared = 0;
+                            for (const gr of groupRows) {
+                              const url = String((gr.data as Record<string, unknown>).url || '');
+                              if (!url) continue;
+                              const k = 'minerva.v2.resume.' + url;
+                              if (localStorage.getItem(k) != null) {
+                                localStorage.removeItem(k);
+                                cleared++;
+                              }
+                            }
+                            // Re-render progress bars on this tab.
+                            window.dispatchEvent(new StorageEvent('storage'));
+                            toast.success(`Cleared progress on ${cleared} video${cleared === 1 ? '' : 's'}.`);
+                          }}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                          title={`Reset watch progress for every video in "${key}"`}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={async () => {
