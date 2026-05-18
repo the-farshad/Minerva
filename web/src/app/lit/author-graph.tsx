@@ -342,19 +342,28 @@ export function AuthorGraph({
           )}
         </FullscreenShell>
       ) : (
-        <>
-          <ChordInfoBar
-            sel={chordSel}
-            nodes={nodes}
-            links={links}
-            onClear={() => setChordSel(null)}
-          />
-          <FullscreenShell>
+        <FullscreenShell>
           {() => (
             <div
-              className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
               style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
             >
+              {/* Chord-selection readout floats over the chart so
+                * it stays visible when the user maximises into
+                * fullscreen (the shell is fixed inset-0; anything
+                * rendered outside it would be covered). z-10
+                * stays well below the maximise button (z-10 too,
+                * but positioned right while we're top-left). */}
+              <div className="pointer-events-none absolute left-2 top-2 z-10 max-w-[calc(100%-3rem)]">
+                <div className="pointer-events-auto">
+                  <ChordInfoBar
+                    sel={chordSel}
+                    nodes={nodes}
+                    links={links}
+                    onClear={() => setChordSel(null)}
+                  />
+                </div>
+              </div>
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${circular.W} ${circular.H}`}
@@ -517,8 +526,7 @@ export function AuthorGraph({
               </svg>
             </div>
           )}
-          </FullscreenShell>
-        </>
+        </FullscreenShell>
       )}
     </div>
   );
@@ -543,9 +551,11 @@ function ChordInfoBar({
   onClear: () => void;
 }) {
   if (!sel) {
+    // No selection: keep the bar tiny + unobtrusive — a one-line
+    // hint at the top-left of the chart area.
     return (
-      <div className="mb-2 rounded-md border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
-        Click an arc or an author dot to drill in.
+      <div className="rounded-md border border-dashed border-zinc-200 bg-white/80 px-2 py-1 text-[10px] text-zinc-500 backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/70">
+        Click an arc or an author dot to drill in
       </div>
     );
   }
@@ -553,7 +563,7 @@ function ChordInfoBar({
     const s = nodes.find((n) => n.id === sel.sId);
     const t = nodes.find((n) => n.id === sel.tId);
     return (
-      <div className="mb-2 flex items-center gap-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+      <div className="flex items-center gap-2 rounded-md border border-blue-300 bg-blue-50/90 px-3 py-1.5 text-xs text-blue-900 backdrop-blur dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-100">
         <span className="truncate">
           <strong>{s?.label || sel.sId}</strong>
           {' ↔ '}
@@ -583,7 +593,7 @@ function ChordInfoBar({
     if (sId === sel.id || tId === sel.id) coauthors++;
   }
   return (
-    <div className="mb-2 flex items-center gap-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+    <div className="flex items-center gap-2 rounded-md border border-blue-300 bg-blue-50/90 px-3 py-1.5 text-xs text-blue-900 backdrop-blur dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-100">
       <span className="truncate"><strong>{n?.label || sel.id}</strong></span>
       <span className="shrink-0 text-blue-700 dark:text-blue-300">
         · {n?.papers ?? 0} paper{n?.papers === 1 ? '' : 's'} · {coauthors} co-author{coauthors === 1 ? '' : 's'}
