@@ -123,7 +123,18 @@ export function CompareView() {
                   {authors && (
                     <>
                       <dt className="text-zinc-500">Authors</dt>
-                      <dd className="col-span-2 line-clamp-2 text-zinc-700 dark:text-zinc-300">{authors}</dd>
+                      <dd className="col-span-2 line-clamp-2 text-zinc-700 dark:text-zinc-300">
+                        {authors.split(/,\s*/).map((name, i, arr) => (
+                          <span key={`${name}-${i}`}>
+                            <a
+                              href={`/lit?q=${encodeURIComponent(`author:${name}`)}`}
+                              title={`See more papers by ${name}`}
+                              className="hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
+                            >{name}</a>
+                            {i < arr.length - 1 ? ', ' : ''}
+                          </span>
+                        ))}
+                      </dd>
                     </>
                   )}
                   {doi && (

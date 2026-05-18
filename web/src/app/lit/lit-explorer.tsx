@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3, Users, Hash, Library, Route, Star, Pin } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 import { TimelineChart } from './timeline-chart';
@@ -232,6 +233,7 @@ function detectSearchKind(raw: string): 'id' | 'keyword' {
 }
 
 export function LitExplorer() {
+  const urlParams = useSearchParams();
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<Paper | null>(null);
@@ -264,6 +266,28 @@ export function LitExplorer() {
   /** Top-N high-impact papers citing the seed
    *  (Connected Papers-style "Derivative Works"). */
   const [derivatives, setDerivatives] = useState<Paper[] | null>(null);
+
+  // URL-driven initial query (?q=…). Lets compare-view / external
+  // links and clickable author chips deep-link into a search.
+  // Runs once per URL change.
+  useEffect(() => {
+    const q = urlParams.get('q');
+    if (!q || !q.trim()) return;
+    setQuery(q);
+    if (detectSearchKind(q) === 'id') {
+      void resolveAndSetSeed(q);
+    } else if (/^author:\s*/i.test(q)) {
+      // author:Foo Bar → author-hub search rather than the generic
+      // OA filter route, so the AuthorProfile card and Coauthors
+      // view-mode chip both light up correctly.
+      const name = q.replace(/^author:\s*/i, '').trim();
+      void runAuthorSearch(name);
+    } else {
+      void runKeywordSearch(q);
+    }
+    // Intentional: only react to URL changes, not state churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlParams]);
 
   const [tab, setTab] = useState<Tab>('overview');
   const [listView, setListView] = useState<ListView>('list');
@@ -1291,7 +1315,26 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
           </div>
           {(authors || paper.venue) && (
             <div className="mt-0.5 truncate text-xs text-zinc-500">
-              {authors}
+              {/* Every author name links to /lit?q=author:<name> so
+                * the click works the same way here as on the
+                * Overview card, in the Compare grid, and from any
+                * other page that might surface a PaperRow. The
+                * lit-explorer's URL effect picks up the query and
+                * runs the author-hub search. */}
+              {authors
+                ? authors.split(/,\s*/).map((name, i, arr) => (
+                    <span key={`${name}-${i}`}>
+                      <a
+                        href={`/lit?q=${encodeURIComponent(`author:${name}`)}`}
+                        title={`See more papers by ${name}`}
+                        className="hover:text-zinc-700 hover:underline dark:hover:text-zinc-300"
+                      >
+                        {name}
+                      </a>
+                      {i < arr.length - 1 ? ', ' : ''}
+                    </span>
+                  ))
+                : null}
               {authors && paper.venue ? ' · ' : ''}
               {paper.venue}
             </div>
@@ -1381,6 +1424,76 @@ function median(nums: number[]): number {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
+/** Compact horizontal bar chart used inside ResultSummary for the
+ *  top-keywords / top-authors / top-venues tallies. Each row is a
+ *  label + a bar whose fill is proportional to count/max. */
+function HBarChart({
+  entries,
+  max,
+  href,
+}: {
+  entries: { label: string; value: number }[];
+  max: number;
+  /** Optional href builder — when present, each row becomes a link.
+   *  Used to make recurring-authors clickable into /lit?q=author:X. */
+  href?: (label: string) => string;
+}) {
+  if (entries.length === 0 || max <= 0) return null;
+  return (
+    <ul className="mt-1 space-y-1">
+      {entries.map((e) => {
+        const pct = Math.max(2, (e.value / max) * 100);
+        const inner = (
+          <span className="flex items-center gap-2 text-[11px]">
+            <span className="w-36 shrink-0 truncate text-zinc-700 dark:text-zinc-300" title={e.label}>{e.label}</span>
+            <span className="block h-3 flex-1 overflow-hidden rounded-sm bg-zinc-200/70 dark:bg-zinc-800">
+              <span className="block h-3 rounded-sm bg-zinc-700 dark:bg-zinc-300" style={{ width: `${pct}%` }} />
+            </span>
+            <span className="w-6 text-right text-zinc-500">{e.value}</span>
+          </span>
+        );
+        return (
+          <li key={e.label}>
+            {href ? (
+              <a href={href(e.label)} className="block rounded-sm hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40">
+                {inner}
+              </a>
+            ) : inner}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Small donut showing the OA fraction. Pure SVG. */
+function OADonut({ ratio }: { ratio: number }) {
+  const r = 24;
+  const circ = 2 * Math.PI * r;
+  const filled = circ * ratio;
+  return (
+    <svg width={60} height={60} viewBox="0 0 60 60" className="shrink-0">
+      <circle cx={30} cy={30} r={r} fill="none" stroke="currentColor" strokeWidth={6}
+        className="text-zinc-200 dark:text-zinc-800" />
+      <circle
+        cx={30} cy={30} r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={6}
+        strokeLinecap="round"
+        strokeDasharray={`${filled} ${circ - filled}`}
+        strokeDashoffset={circ / 4}
+        className="text-emerald-500 dark:text-emerald-400"
+        style={{ transform: 'rotate(-90deg)', transformOrigin: '50% 50%' }}
+      />
+      <text x={30} y={32} textAnchor="middle" dominantBaseline="middle"
+        className="fill-zinc-900 text-[12px] font-semibold dark:fill-zinc-100">
+        {Math.round(ratio * 100)}%
+      </text>
+    </svg>
+  );
+}
+
 function ResultSummary({ papers }: { papers: Paper[] }) {
   const stats = useMemo(() => {
     if (!papers || papers.length < 3) return null;
@@ -1443,7 +1556,7 @@ function ResultSummary({ papers }: { papers: Paper[] }) {
         <span className="ml-2 text-zinc-500">{stats.oaPct}% OA</span>
         <span className="ml-2 text-zinc-400">(click to expand)</span>
       </summary>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
         <div>
           <div className="text-[10px] uppercase tracking-wide text-zinc-500">Citations</div>
           <div className="mt-0.5">
@@ -1454,48 +1567,52 @@ function ResultSummary({ papers }: { papers: Paper[] }) {
             max <strong>{fmt(stats.citesMax)}</strong>
           </div>
         </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Open access</div>
-          <div className="mt-0.5">
-            <strong>{stats.oaCount}</strong> of {stats.total} ({stats.oaPct}%)
+        <div className="flex items-center gap-3">
+          <OADonut ratio={stats.oaPct / 100} />
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Open access</div>
+            <div className="mt-0.5">
+              <strong>{stats.oaCount}</strong> of {stats.total}
+            </div>
           </div>
         </div>
-        {stats.topWords.length > 0 && (
-          <div className="sm:col-span-2">
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Common title keywords</div>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {stats.topWords.map((w) => (
-                <span key={w.word} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
-                  {w.word} <span className="text-zinc-400">×{w.count}</span>
-                </span>
-              ))}
+        {stats.topWords.length > 0 && (() => {
+          const maxK = Math.max(...stats.topWords.map((w) => w.count));
+          return (
+            <div className="sm:col-span-2">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">Common title keywords</div>
+              <HBarChart
+                entries={stats.topWords.map((w) => ({ label: w.word, value: w.count }))}
+                max={maxK}
+              />
             </div>
-          </div>
-        )}
-        {stats.topAuthors.length > 0 && (
-          <div className="sm:col-span-2">
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Recurring authors</div>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {stats.topAuthors.map(([name, count]) => (
-                <span key={name} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
-                  {name} <span className="text-zinc-400">×{count}</span>
-                </span>
-              ))}
+          );
+        })()}
+        {stats.topAuthors.length > 0 && (() => {
+          const maxA = Math.max(...stats.topAuthors.map(([, c]) => c));
+          return (
+            <div className="sm:col-span-2">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">Recurring authors</div>
+              <HBarChart
+                entries={stats.topAuthors.map(([name, count]) => ({ label: name, value: count }))}
+                max={maxA}
+                href={(name) => `/lit?q=${encodeURIComponent(`author:${name}`)}`}
+              />
             </div>
-          </div>
-        )}
-        {stats.topVenues.length > 0 && (
-          <div className="sm:col-span-2">
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Recurring venues</div>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {stats.topVenues.map(([name, count]) => (
-                <span key={name} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
-                  {name} <span className="text-zinc-400">×{count}</span>
-                </span>
-              ))}
+          );
+        })()}
+        {stats.topVenues.length > 0 && (() => {
+          const maxV = Math.max(...stats.topVenues.map(([, c]) => c));
+          return (
+            <div className="sm:col-span-2">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">Recurring venues</div>
+              <HBarChart
+                entries={stats.topVenues.map(([name, count]) => ({ label: name, value: count }))}
+                max={maxV}
+              />
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </details>
   );

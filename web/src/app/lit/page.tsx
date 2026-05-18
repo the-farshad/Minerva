@@ -11,11 +11,20 @@
  * Served at lit.thefarshad.com by the Host-based middleware
  * rewrite, or directly at minerva.thefarshad.com/lit.
  */
+import { Suspense } from 'react';
 import { LitExplorer } from './lit-explorer';
 
 export const metadata = { title: 'Literature' };
 export const dynamic = 'force-static';
 
 export default function LitPage() {
-  return <LitExplorer />;
+  // useSearchParams in LitExplorer requires a Suspense boundary
+  // under Next 16 static prerendering, so wrap it. The fallback is
+  // intentionally null — first paint without query params looks
+  // identical to a fresh load, no skeleton needed.
+  return (
+    <Suspense fallback={null}>
+      <LitExplorer />
+    </Suspense>
+  );
 }
