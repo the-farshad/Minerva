@@ -376,8 +376,20 @@ export function AuthorGraph({
                   *  practice the user couldn't see the previous
                   *  zinc-500/0.55 setup. */}
                 {links.map((l, i) => {
-                  const a = circular.positions.get(l.source);
-                  const b = circular.positions.get(l.target);
+                  // react-force-graph-2d mutates link.source /
+                  // link.target into resolved node objects after
+                  // the force simulation runs. Once the user has
+                  // viewed the force layout, switching back to
+                  // circular hits this map with objects (no match)
+                  // and every edge silently rendered as null.
+                  // Extract the id whether we get a string or the
+                  // mutated node object.
+                  const sId = typeof l.source === 'object' && l.source !== null
+                    ? (l.source as { id: string }).id : l.source;
+                  const tId = typeof l.target === 'object' && l.target !== null
+                    ? (l.target as { id: string }).id : l.target;
+                  const a = circular.positions.get(sId);
+                  const b = circular.positions.get(tId);
                   if (!a || !b) return null;
                   // Edges read fine on light theme but the user
                   // reported them invisible on the live site, so
