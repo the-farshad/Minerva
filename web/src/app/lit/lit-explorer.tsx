@@ -8,6 +8,7 @@ import { DensityChart } from './density-chart';
 import { AuthorGraph } from './author-graph';
 import { KeywordGraph } from './keyword-graph';
 import { ConceptTimeline, type ConceptTimelinePoint } from './concept-timeline';
+import { AuthorProfile, type AuthorProfileData } from './author-profile';
 import { applyTheme, applyFont } from '@/components/theme-card';
 import { readPref, writePref } from '@/lib/prefs';
 
@@ -229,6 +230,9 @@ export function LitExplorer() {
     worksCount: number;
     counts: ConceptTimelinePoint[];
   }>(null);
+  /** OpenAlex author profile, fetched whenever runAuthorSearch
+   *  resolves a real author. Null = not author mode or no match. */
+  const [authorProfile, setAuthorProfile] = useState<AuthorProfileData | null>(null);
 
   const [tab, setTab] = useState<Tab>('overview');
   const [listView, setListView] = useState<ListView>('list');
@@ -264,6 +268,7 @@ export function LitExplorer() {
     setCandidatesHasMore(false);
     setConcepts([]);
     setConceptActivity(null);
+    setAuthorProfile(null);
     setEdgeCache({});
     setTab('overview');
     // Reset list filters whenever the seed changes — a year range
@@ -310,6 +315,7 @@ export function LitExplorer() {
     setCandidatesHasMore(false);
     setConcepts([]);
     setConceptActivity(null);
+    setAuthorProfile(null);
     setEdgeCache({});
     setTab('overview');
     try {
@@ -365,6 +371,7 @@ export function LitExplorer() {
     setCandidatesHasMore(false);
     setConcepts([]);
     setConceptActivity(null);
+    setAuthorProfile(null);
     setEdgeCache({});
     setTab('overview');
     try {
@@ -387,6 +394,14 @@ export function LitExplorer() {
           got.length > 0 ? `Papers by ${resolved}` : `No papers found for ${resolved}`,
         );
         if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+        // Side-fire the profile lookup. Best-effort; missing data
+        // just hides the card.
+        void fetch(`/api/authors/profile?q=${encodeURIComponent(name.trim())}`)
+          .then((pr) => pr.ok ? pr.json() : null)
+          .then((pj) => {
+            if (pj && pj.author) setAuthorProfile(pj.author as AuthorProfileData);
+          })
+          .catch(() => { /* tolerate */ });
       }
     } catch (e) {
       setErr((e as Error).message);
@@ -462,6 +477,7 @@ export function LitExplorer() {
     setCandidatesHasMore(false);
     setConcepts([]);
     setConceptActivity(null);
+    setAuthorProfile(null);
     setEdgeCache({});
     setTab('overview');
     setYearFrom(''); setYearTo(''); setMinCites(''); setTextFilter('');
@@ -840,6 +856,9 @@ export function LitExplorer() {
                 worksCount={conceptActivity.worksCount}
                 counts={conceptActivity.counts}
               />
+            )}
+            {authorProfile && candidatesKind === 'author' && (
+              <AuthorProfile profile={authorProfile} />
             )}
             {renderToolbar(filteredCandidates, candidates, 'search', true, candidatesKind === 'author')}
             {filteredCandidates && <ResultSummary papers={filteredCandidates} />}
