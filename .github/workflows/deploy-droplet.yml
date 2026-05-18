@@ -91,26 +91,37 @@ jobs:
              # compose's in-place replacement, which intermittently
              # races the docker daemon: the renamed-old container
              # gets touched by a follow-up command and the daemon
-             # 404s on '<uuid>_minerva-web'. Either '|| true' is in
-             # case the container is already gone (already-failed
-             # previous deploy) — we don't want that to fail us here.
+             # 404s on '<uuid>_minerva-web'. '|| true' covers the
+             # case where the container was already gone after a
+             # previously-failed deploy.
              echo '[deploy] stop+rm old minerva-web (avoid replacement race)'
              docker compose stop minerva-web 2>/dev/null || true
              docker compose rm -f minerva-web 2>/dev/null || true
-             echo '[deploy] up -d (full stack)'
-             docker compose up -d
-             sleep 8
-             # The real success metric is the web container answering.
-             # compose up -d sometimes returns non-zero on stale state
-             # cleanup even though the new container is healthy; gate
-             # the deploy's exit code on the health probe instead.
-             if curl -sS --max-time 10 http://127.0.0.1:3000/api/version >/dev/null 2>&1; then
+             echo '[deploy] up -d minerva-web'
+             docker compose up -d minerva-web
+             # Retry the health probe for up to ~60s. Next.js cold
+             # start on the droplet runs 10-20s; an 8s flat sleep
+             # was racing the boot and tripping the failure branch
+             # even when the container was on its way up.
+             echo '[deploy] waiting for web to answer /api/version'
+             ok=no
+             for i in \$(seq 1 30); do
+               if curl -sS --max-time 5 http://127.0.0.1:3000/api/version >/dev/null 2>&1; then
+                 ok=yes; break
+               fi
+               sleep 2
+             done
+             if [ \"\$ok\" = \"yes\" ]; then
                echo '[deploy] web container is healthy'
              else
-               echo '[deploy] web container not responding - failing deploy'
-               docker logs --tail 30 minerva-web 2>&1 | tail -30 || true
+               echo '[deploy] web container not responding after 60s - failing deploy'
+               docker compose ps minerva-web 2>&1 | tail -3 || true
+               docker logs --tail 40 minerva-web 2>&1 | tail -40 || true
                exit 1
              fi
+             # Web is up. Reconcile the rest of the stack (e.g. a
+             # freshly-built services image) in a non-fatal pass.
+             docker compose up -d || echo '[deploy] full-stack up -d returned non-zero (web already healthy, ignoring)'
              (curl -sS --max-time 10 http://127.0.0.1:8765/health | head -c 200) || echo '[deploy] helper not answering yet, starts slowly - deploy still ok'
              echo
              echo '[deploy] done'"
