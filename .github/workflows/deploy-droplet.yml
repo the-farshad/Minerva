@@ -86,17 +86,31 @@ jobs:
              docker compose pull minerva-web
              echo '[deploy] building minerva-services'
              docker compose build minerva-services || echo '[deploy] services build failed - continuing with the rest of the stack'
-             # Single up -d call. compose detects which services'
-             # image-id or build hash changed since the last run and
-             # recreates only those. Splitting into a --force-recreate
-             # pass followed by a full-stack up -d used to race the
-             # docker daemon: the in-flight recreate would rename the
-             # old container with a UUID prefix, then the trailing
-             # up -d would try to operate on the half-renamed name and
-             # fail with "No such container: <uuid>_minerva-web".
+             # Stop+remove the old web container before bringing the
+             # new one up. The brief (~2s) downtime is preferable to
+             # compose's in-place replacement, which intermittently
+             # races the docker daemon: the renamed-old container
+             # gets touched by a follow-up command and the daemon
+             # 404s on '<uuid>_minerva-web'. Either '|| true' is in
+             # case the container is already gone (already-failed
+             # previous deploy) — we don't want that to fail us here.
+             echo '[deploy] stop+rm old minerva-web (avoid replacement race)'
+             docker compose stop minerva-web 2>/dev/null || true
+             docker compose rm -f minerva-web 2>/dev/null || true
              echo '[deploy] up -d (full stack)'
              docker compose up -d
-             sleep 10
+             sleep 8
+             # The real success metric is the web container answering.
+             # compose up -d sometimes returns non-zero on stale state
+             # cleanup even though the new container is healthy; gate
+             # the deploy's exit code on the health probe instead.
+             if curl -sS --max-time 10 http://127.0.0.1:3000/api/version >/dev/null 2>&1; then
+               echo '[deploy] web container is healthy'
+             else
+               echo '[deploy] web container not responding - failing deploy'
+               docker logs --tail 30 minerva-web 2>&1 | tail -30 || true
+               exit 1
+             fi
              (curl -sS --max-time 10 http://127.0.0.1:8765/health | head -c 200) || echo '[deploy] helper not answering yet, starts slowly - deploy still ok'
              echo
              echo '[deploy] done'"
