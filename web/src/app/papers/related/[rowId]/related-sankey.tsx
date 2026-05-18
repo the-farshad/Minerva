@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { sankey, sankeyLinkHorizontal, sankeyLeft } from 'd3-sankey';
+import { GraphExportMenu, type ExportBg } from '@/app/lit/graph-export-menu';
 
 /** Citation flow as a Sankey diagram. Each paper is a node; each
  *  citation (paper A cites paper B, where both are in the visible
@@ -40,6 +41,15 @@ export function RelatedSankey({
   const [size, setSize] = useState({ w: 800, h: 540 });
   const [focused, setFocused] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [exportBg, setExportBg] = useState<ExportBg>(() => {
+    if (typeof document === 'undefined') return 'light';
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return 'dark';
+    if (t === 'light' || t === 'sepia') return 'light';
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
+    return 'light';
+  });
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -182,10 +192,17 @@ export function RelatedSankey({
         >
           {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         </button>
+        <GraphExportMenu
+          filename="papers-related-sankey"
+          source={{ svgEl: () => svgRef.current }}
+          bg={exportBg}
+          onBgChange={setExportBg}
+        />
         {fullscreen && <span className="ml-auto text-[10px] text-zinc-500">Press Esc to exit</span>}
       </div>
       <div ref={containerRef} className={fullscreen ? 'flex-1 w-full' : 'w-full'}>
         <svg
+          ref={svgRef}
           width={size.w}
           height={size.h}
           viewBox={`0 0 ${size.w} ${size.h}`}

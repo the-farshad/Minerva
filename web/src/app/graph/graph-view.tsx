@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
+import { ChartShell } from '../lit/chart-shell';
 
 type Node = {
   id: string; title: string; sectionId: string; sectionSlug: string;
@@ -64,8 +65,14 @@ export function GraphView({
           No rows to graph yet.
         </p>
       ) : (
+        <ChartShell
+          filename="minerva-cross-section-graph"
+          summary={`Cross-section graph · ${nodes.length} nodes · ${edges.length} edge${edges.length === 1 ? '' : 's'}`}
+        >
+          {(svgRef) => (
         <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
           <svg
+            ref={svgRef}
             viewBox={`0 0 ${layout.width} ${layout.height}`}
             className="block w-full"
             style={{ minHeight: layout.height }}
@@ -129,6 +136,8 @@ export function GraphView({
             })}
           </svg>
         </div>
+          )}
+        </ChartShell>
       )}
       <p className="mt-3 text-xs text-zinc-500">
         Edges are drawn whenever one row&rsquo;s field value matches another row&rsquo;s URL.
