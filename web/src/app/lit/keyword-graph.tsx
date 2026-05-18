@@ -17,7 +17,7 @@ import { useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import { exportPNGFromCanvas, exportGraphJSON, exportGraphML } from './graph-export';
+import { exportPNGFromCanvas, exportSVGFromCanvas, exportPDFFromCanvas, exportGraphJSON, exportGraphML } from './graph-export';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -114,10 +114,12 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
       : `rgba(91,33,182,${0.35 + 0.6 * t})`;
   }
 
-  function doExportPNG() {
-    const canvas = containerRef.current?.querySelector('canvas');
-    exportPNGFromCanvas(canvas as HTMLCanvasElement | null, 'lit-keywords.png');
+  function canvasEl(): HTMLCanvasElement | null {
+    return (containerRef.current?.querySelector('canvas') as HTMLCanvasElement | null) ?? null;
   }
+  function doExportPNG() { exportPNGFromCanvas(canvasEl(), 'lit-keywords.png'); }
+  function doExportSVG() { exportSVGFromCanvas(canvasEl(), 'lit-keywords.svg'); }
+  function doExportPDF() { void exportPDFFromCanvas(canvasEl(), 'lit-keywords.pdf'); }
   function doExportJSON() {
     exportGraphJSON(
       nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers } })),
@@ -141,6 +143,12 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
         <button type="button" onClick={doExportPNG}
           className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
         >PNG</button>
+        <button type="button" onClick={doExportSVG}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >SVG</button>
+        <button type="button" onClick={doExportPDF}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >PDF</button>
         <button type="button" onClick={doExportJSON}
           className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
         >JSON</button>

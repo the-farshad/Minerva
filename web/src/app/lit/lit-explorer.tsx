@@ -204,11 +204,34 @@ function downloadText(content: string, filename: string, mime = 'text/plain;char
 
 type Tab = 'overview' | 'refs' | 'cites' | 'related';
 type ListView = 'list' | 'graph' | 'timeline' | 'density' | 'coauthors' | 'keywords';
-type SearchMode = 'id' | 'keyword';
+
+/** Route a free-form search query to one of two backends:
+ *  - 'id'      → single-paper resolution via /api/import/lookup.
+ *                Used for DOIs, arXiv ids, paper URLs.
+ *  - 'keyword' → multi-paper search via /api/papers/search.
+ *                Used for everything else, including titles
+ *                (which the keyword merge surfaces as candidates),
+ *                boolean queries, and field-targeted prefixes. */
+function detectSearchKind(raw: string): 'id' | 'keyword' {
+  const q = raw.trim();
+  if (!q) return 'keyword';
+  // Keyword indicators — these short-circuit even if the rest of
+  // the query "looks like" an identifier.
+  if (/^(title|abstract|author):/i.test(q)) return 'keyword';
+  if (/\b(AND|OR|NOT)\b/.test(q)) return 'keyword';
+  if (q.includes('"')) return 'keyword';
+  // Identifier shapes — DOI, bare arXiv id, or any URL.
+  if (/^https?:\/\//i.test(q)) return 'id';
+  if (/^10\.\d{4,9}\/\S+$/.test(q)) return 'id';
+  if (/^\d{4}\.\d{4,5}(v\d+)?$/.test(q)) return 'id';
+  // Everything else (titles, multi-word phrases, single words)
+  // goes through keyword search — the candidates pane lets the
+  // user click into the right paper.
+  return 'keyword';
+}
 
 export function LitExplorer() {
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<SearchMode>('id');
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<Paper | null>(null);
   const [err, setErr] = useState<string>('');
@@ -448,10 +471,10 @@ export function LitExplorer() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (mode === 'keyword') {
-      await runKeywordSearch(query);
-    } else {
+    if (detectSearchKind(query) === 'id') {
       await resolveAndSetSeed(query);
+    } else {
+      await runKeywordSearch(query);
     }
   }
 
@@ -467,9 +490,9 @@ export function LitExplorer() {
    *    can be a different paper when titles collide (the bug that
    *    used to make clicking some cards open a different paper).
    *
-   *  The search mode (Identifier vs Keyword) and the input value
-   *  are deliberately preserved, so a keyword search stays a
-   *  keyword search after a click and the user can iterate. */
+   *  The search input is deliberately preserved, so a keyword query
+   *  remains visible after click-to-explore and the user can
+   *  iterate. */
   function exploreFromPaper(p: Paper) {
     const doi = p.doi || p.externalIds?.DOI;
     const arxiv = p.arxiv || p.externalIds?.ArXiv;
@@ -543,12 +566,10 @@ export function LitExplorer() {
     return () => { cancelled = true; };
   }, [ref, paper?.title]);
 
-  /** Topic-chip click: switch into keyword mode and run a paper
-   *  search on the concept's display name. The result list lands in
-   *  the candidates pane, same as the keyword input and the author
-   *  click. */
+  /** Topic-chip click: run a paper search on the concept's display
+   *  name. The result list lands in the candidates pane, same as
+   *  typing the keyword into the search bar would. */
   function exploreFromConcept(name: string) {
-    setMode('keyword');
     setQuery(name);
     void runKeywordSearch(name);
   }
@@ -791,22 +812,6 @@ export function LitExplorer() {
       </header>
 
       <form onSubmit={onSubmit} className="mb-6">
-        <div className="mb-2 inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
-          {(['id', 'keyword'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={`rounded-full px-2.5 py-1 text-xs transition ${
-                mode === m
-                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
-                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
-              }`}
-            >
-              {m === 'id' ? 'Identifier' : 'Keyword'}
-            </button>
-          ))}
-        </div>
         <label className="flex items-stretch rounded-full border border-zinc-300 bg-white shadow-sm focus-within:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
           <span className="flex shrink-0 items-center pl-4 text-zinc-400">
             <Search className="h-4 w-4" />
@@ -815,9 +820,7 @@ export function LitExplorer() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={mode === 'id'
-              ? 'Search by DOI, arXiv ID, URL, or title'
-              : 'Search by keyword, phrase, or topic'}
+            placeholder="DOI, arXiv ID, URL, or keywords"
             className="flex-1 bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-zinc-400"
             autoFocus
           />
@@ -826,23 +829,20 @@ export function LitExplorer() {
             disabled={loading || !query.trim()}
             className="m-1 inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-1.5 text-xs font-medium text-white transition disabled:opacity-40 dark:bg-white dark:text-zinc-900"
           >
-            {loading
-              ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {mode === 'id' ? 'Looking up' : 'Searching'}</>
-              : 'Search'}
+            {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching</> : 'Search'}
           </button>
         </label>
-        {mode === 'keyword' && (
-          <p className="mt-1.5 px-2 text-[11px] text-zinc-500">
-            Combine terms with <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">AND</code>,{' '}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">OR</code>,{' '}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">NOT</code>, wrap a phrase in{' '}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">&quot;quotes&quot;</code>,
-            or target a field with{' '}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">title:</code>,{' '}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">abstract:</code>,{' '}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">author:</code>.
-          </p>
-        )}
+        <p className="mt-1.5 px-2 text-[11px] text-zinc-500">
+          Identifiers (DOI, arXiv, URL) resolve a single paper. Free text searches.
+          Combine terms with <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">AND</code>,{' '}
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">OR</code>,{' '}
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">NOT</code>, wrap a phrase in{' '}
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">&quot;quotes&quot;</code>,
+          or target a field with{' '}
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">title:</code>,{' '}
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">abstract:</code>,{' '}
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">author:</code>.
+        </p>
       </form>
 
       {err && (
@@ -860,10 +860,9 @@ export function LitExplorer() {
                 <button
                   type="button"
                   onClick={() => {
-                    setMode(ex.mode);
                     setQuery(ex.q);
-                    if (ex.mode === 'keyword') void runKeywordSearch(ex.q);
-                    else void resolveAndSetSeed(ex.q);
+                    if (detectSearchKind(ex.q) === 'id') void resolveAndSetSeed(ex.q);
+                    else void runKeywordSearch(ex.q);
                   }}
                   className="group inline-flex items-baseline gap-2 rounded text-left hover:text-zinc-900 dark:hover:text-zinc-100"
                 >
@@ -909,7 +908,6 @@ export function LitExplorer() {
                 papers={filteredCandidates}
                 focalAuthor={candidatesQuery}
                 onAuthorClick={(name) => {
-                  setMode('keyword');
                   setQuery(name);
                   void runAuthorSearch(name);
                 }}
@@ -1438,11 +1436,11 @@ function ResultSummary({ papers }: { papers: Paper[] }) {
  *  search surface without having to read the hint. Each example
  *  picks a different facet of the explorer (DOI, arXiv, author
  *  hub, boolean keyword). */
-const LANDING_EXAMPLES: { q: string; mode: SearchMode; label: string }[] = [
-  { q: '10.1038/nature14539',       mode: 'id',      label: 'Resolve by DOI' },
-  { q: '1706.03762',                mode: 'id',      label: 'Resolve by arXiv ID' },
-  { q: 'author:LeCun',              mode: 'keyword', label: 'Top-cited papers by an author' },
-  { q: 'transformer AND attention', mode: 'keyword', label: 'Boolean keyword search' },
+const LANDING_EXAMPLES: { q: string; label: string }[] = [
+  { q: '10.1038/nature14539',       label: 'Resolve by DOI' },
+  { q: '1706.03762',                label: 'Resolve by arXiv ID' },
+  { q: 'author:LeCun',              label: 'Top-cited papers by an author' },
+  { q: 'transformer AND attention', label: 'Boolean keyword search' },
 ];
 
 type LitTheme = 'system' | 'light' | 'dark' | 'sepia';

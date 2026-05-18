@@ -19,7 +19,7 @@ import { useMemo, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import { exportPNGFromCanvas, exportGraphJSON, exportGraphML } from './graph-export';
+import { exportPNGFromCanvas, exportSVGFromCanvas, exportPDFFromCanvas, exportGraphJSON, exportGraphML } from './graph-export';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -133,10 +133,12 @@ export function AuthorGraph({
     return { W, H, positions, ordered };
   }, [nodes]);
 
-  function doExportPNG() {
-    const canvas = containerRef.current?.querySelector('canvas');
-    exportPNGFromCanvas(canvas as HTMLCanvasElement | null, 'lit-coauthors.png');
+  function canvasEl(): HTMLCanvasElement | null {
+    return (containerRef.current?.querySelector('canvas') as HTMLCanvasElement | null) ?? null;
   }
+  function doExportPNG() { exportPNGFromCanvas(canvasEl(), 'lit-coauthors.png'); }
+  function doExportSVG() { exportSVGFromCanvas(canvasEl(), 'lit-coauthors.svg'); }
+  function doExportPDF() { void exportPDFFromCanvas(canvasEl(), 'lit-coauthors.pdf'); }
   function doExportJSON() {
     exportGraphJSON(
       nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers, isFocal: n.isFocal } })),
@@ -160,6 +162,12 @@ export function AuthorGraph({
         <button type="button" onClick={doExportPNG}
           className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
         >PNG</button>
+        <button type="button" onClick={doExportSVG}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >SVG</button>
+        <button type="button" onClick={doExportPDF}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >PDF</button>
         <button type="button" onClick={doExportJSON}
           className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
         >JSON</button>
@@ -241,25 +249,33 @@ export function AuthorGraph({
           )}
         </FullscreenShell>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
-          <svg viewBox={`0 0 ${circular.W} ${circular.H}`} className="block w-full">
-            {/* Edges first so nodes sit on top. */}
-            {links.map((l, i) => {
-              const a = circular.positions.get(l.source);
-              const b = circular.positions.get(l.target);
-              if (!a || !b) return null;
-              const widthScale = Math.min(3, 0.4 + Math.log2(1 + l.weight));
-              return (
-                <line
-                  key={`e-${i}`}
-                  x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                  stroke="currentColor"
-                  strokeOpacity={0.35}
-                  strokeWidth={widthScale}
-                  className="text-zinc-500 dark:text-zinc-400"
-                />
-              );
-            })}
+        <FullscreenShell>
+          {() => (
+            <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+              <svg
+                viewBox={`0 0 ${circular.W} ${circular.H}`}
+                preserveAspectRatio="xMidYMid meet"
+                className="block h-full w-full"
+              >
+                {/* Edges first so nodes sit on top. Explicit colour
+                  *  (no currentColor) so the edges remain visible
+                  *  regardless of which Tailwind text-* class might
+                  *  cascade down from a fullscreen wrapper. */}
+                {links.map((l, i) => {
+                  const a = circular.positions.get(l.source);
+                  const b = circular.positions.get(l.target);
+                  if (!a || !b) return null;
+                  const widthScale = Math.min(3, 0.6 + Math.log2(1 + l.weight));
+                  return (
+                    <line
+                      key={`e-${i}`}
+                      x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                      stroke={isDark ? '#a1a1aa' : '#52525b'}
+                      strokeOpacity={0.55}
+                      strokeWidth={widthScale}
+                    />
+                  );
+                })}
             {circular.ordered.map((n) => {
               const pos = circular.positions.get(n.id)!;
               const r = nodeRadius(n);
@@ -294,8 +310,10 @@ export function AuthorGraph({
                 </g>
               );
             })}
-          </svg>
-        </div>
+              </svg>
+            </div>
+          )}
+        </FullscreenShell>
       )}
     </div>
   );
