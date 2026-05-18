@@ -387,6 +387,89 @@ export function RelatedGraph({
     return top;
   }, [clusters, graphData.nodes, isDark]);
 
+  /** Download helpers for graph export. PNG snapshots the rendered
+   *  canvas as-is (current zoom and pan included); JSON / GraphML
+   *  serialise the underlying graph structure so the layout can be
+   *  re-rendered in Gephi, Cytoscape, or any other tool. */
+  function downloadBlob(content: string, filename: string, mime: string) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function exportGraphPNG() {
+    const canvas = containerRef.current?.querySelector('canvas');
+    if (!canvas) return;
+    const url = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url; a.download = 'lit-graph.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+  function exportGraphJSON() {
+    const out = {
+      nodes: graphData.nodes.map((n) => ({
+        id: n.id,
+        label: n.label,
+        isSeed: !!n.isSeed,
+        cluster: clusters.get(n.id) ?? null,
+        ...(n.paper ? {
+          paper: {
+            title: n.paper.title,
+            doi: n.paper.externalIds?.DOI,
+            arxiv: n.paper.externalIds?.ArXiv,
+            year: n.paper.year,
+            venue: n.paper.venue,
+            citationCount: n.paper.citationCount,
+            authors: (n.paper.authors || []).map((a) => a.name).filter(Boolean),
+          },
+        } : {}),
+      })),
+      links: graphData.links.map((l) => {
+        const s = typeof l.source === 'string' ? l.source : (l.source as unknown as GraphNode).id;
+        const t = typeof l.target === 'string' ? l.target : (l.target as unknown as GraphNode).id;
+        return { source: s, target: t, weight: l.weight };
+      }),
+    };
+    downloadBlob(JSON.stringify(out, null, 2), 'lit-graph.json', 'application/json;charset=utf-8');
+  }
+  function exportGraphML() {
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const lines: string[] = [];
+    lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+    lines.push('<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">');
+    lines.push('<key id="label" for="node" attr.name="label" attr.type="string"/>');
+    lines.push('<key id="cluster" for="node" attr.name="cluster" attr.type="int"/>');
+    lines.push('<key id="cites" for="node" attr.name="citations" attr.type="int"/>');
+    lines.push('<key id="year" for="node" attr.name="year" attr.type="int"/>');
+    lines.push('<key id="weight" for="edge" attr.name="weight" attr.type="double"/>');
+    lines.push('<graph id="G" edgedefault="undirected">');
+    for (const n of graphData.nodes) {
+      lines.push(`  <node id="${esc(n.id)}">`);
+      lines.push(`    <data key="label">${esc(n.label)}</data>`);
+      lines.push(`    <data key="cluster">${clusters.get(n.id) ?? -1}</data>`);
+      if (n.paper?.citationCount != null) lines.push(`    <data key="cites">${n.paper.citationCount}</data>`);
+      if (n.paper?.year != null) lines.push(`    <data key="year">${n.paper.year}</data>`);
+      lines.push(`  </node>`);
+    }
+    let edgeIdx = 0;
+    for (const l of graphData.links) {
+      const s = typeof l.source === 'string' ? l.source : (l.source as unknown as GraphNode).id;
+      const t = typeof l.target === 'string' ? l.target : (l.target as unknown as GraphNode).id;
+      lines.push(`  <edge id="e${edgeIdx++}" source="${esc(s)}" target="${esc(t)}">`);
+      lines.push(`    <data key="weight">${l.weight}</data>`);
+      lines.push(`  </edge>`);
+    }
+    lines.push('</graph>');
+    lines.push('</graphml>');
+    downloadBlob(lines.join('\n'), 'lit-graph.graphml', 'application/xml;charset=utf-8');
+  }
+
   function nodeRadius(n: GraphNode): number {
     if (n.isSeed) return 14;
     // VOSviewer-style: scale node size by citation count when
@@ -552,6 +635,32 @@ export function RelatedGraph({
           />
           <span className="w-6 font-mono text-[10px]">{spacing}</span>
         </label>
+        <span className="text-zinc-300 dark:text-zinc-700">|</span>
+        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Export:</span>
+        <button
+          type="button"
+          onClick={exportGraphPNG}
+          title="Save the current canvas view as a PNG"
+          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          PNG
+        </button>
+        <button
+          type="button"
+          onClick={exportGraphJSON}
+          title="Download the graph structure as JSON (nodes + links + clusters)"
+          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          JSON
+        </button>
+        <button
+          type="button"
+          onClick={exportGraphML}
+          title="Download as GraphML for Gephi / Cytoscape"
+          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          GraphML
+        </button>
         {fullscreen && (
           <span className="ml-auto text-[10px] text-zinc-500">Press Esc to exit</span>
         )}

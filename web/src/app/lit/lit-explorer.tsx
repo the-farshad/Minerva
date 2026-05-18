@@ -787,6 +787,7 @@ export function LitExplorer() {
               <span className="ml-1 text-zinc-400">— click a title to explore.</span>
             </p>
             {renderToolbar(filteredCandidates, candidates, 'search', true)}
+            {filteredCandidates && <ResultSummary papers={filteredCandidates} />}
             {renderResultBody(filteredCandidates, true, synthSeed)}
             {filteredCandidates && filteredCandidates.length === 0 && (
               <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
@@ -847,6 +848,7 @@ export function LitExplorer() {
           {tab !== 'overview' && (
             <div>
               {renderToolbar(filteredEdges, edgePapers, tab, tab === 'related')}
+              {filteredEdges && <ResultSummary papers={filteredEdges} />}
               {edgeLoading && (
                 <div className="flex items-center gap-2 rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -1090,6 +1092,170 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
 /** How many papers per Load-more page. Matches the API DEFAULT_LIMIT
  *  so the first request and every subsequent page are the same size. */
 const PAGE_SIZE = 50;
+
+/** English stopwords removed from title-keyword tallies. Skews
+ *  toward filler / generic-academic words rather than content terms;
+ *  the goal is a "what's this corpus about" snapshot, not perfect
+ *  IR-grade tokenisation. */
+const TITLE_STOPWORDS = new Set([
+  'the','of','and','a','an','in','on','for','to','with','from','by','at','as','is','are','was','were','be','been','being',
+  'this','that','these','those','it','its','their','his','her','our','your','my','we','they','he','she','you','i','me','us','them',
+  'but','or','not','no','so','if','when','where','what','who','why','how',
+  'can','could','should','would','may','might','will','shall','must',
+  'have','has','had','do','does','did','doing','done','get','got',
+  'paper','study','studies','analysis','using','based','approach','approaches','method','methods','methodology','work','works','results','result','novel','new','via','toward','towards','across',
+  'use','uses','used','using','show','shows','shown','present','presents','presented','propose','proposed','model','models',
+  'between','within','through','over','under','about','into','onto','off','out','than','then','also','more','most','less','than','such',
+]);
+
+function topKeywordsFromTitles(papers: Paper[], k: number): { word: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const p of papers) {
+    const t = (p.title || '').toLowerCase();
+    if (!t) continue;
+    // Single pass through alphanum tokens; bigrams aren't worth the
+    // extra noise at this corpus scale.
+    const tokens = t.replace(/[^a-z0-9-\s]/g, ' ').split(/\s+/);
+    for (const raw of tokens) {
+      const w = raw.trim();
+      if (w.length < 3) continue;
+      if (TITLE_STOPWORDS.has(w)) continue;
+      counts.set(w, (counts.get(w) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .filter(([, c]) => c >= 2) // a word only seen once isn't telling us anything
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, k)
+    .map(([word, count]) => ({ word, count }));
+}
+
+function median(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function ResultSummary({ papers }: { papers: Paper[] }) {
+  const stats = useMemo(() => {
+    if (!papers || papers.length < 3) return null;
+    const total = papers.length;
+    const years = papers
+      .map((p) => typeof p.year === 'number' ? p.year : Number(p.year) || 0)
+      .filter((y) => y >= 1900);
+    const yearMin = years.length ? Math.min(...years) : null;
+    const yearMax = years.length ? Math.max(...years) : null;
+    const cites = papers.map((p) => p.citationCount ?? 0);
+    const citesSum = cites.reduce((a, b) => a + b, 0);
+    const citesMed = Math.round(median(cites));
+    const citesMax = cites.length ? Math.max(...cites) : 0;
+    const oaCount = papers.filter((p) => p.openAccessPdf?.url || p.pdf).length;
+    const oaPct = Math.round(100 * oaCount / total);
+    const authorCount = new Map<string, number>();
+    for (const p of papers) {
+      const list = typeof p.authors === 'string'
+        ? p.authors.split(/,\s*/)
+        : (p.authors || []).map((a) => a.name || '');
+      for (const a of list) {
+        const key = a.trim();
+        if (!key) continue;
+        authorCount.set(key, (authorCount.get(key) ?? 0) + 1);
+      }
+    }
+    const topAuthors = [...authorCount.entries()]
+      .filter(([, c]) => c >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+    const venueCount = new Map<string, number>();
+    for (const p of papers) {
+      if (!p.venue) continue;
+      venueCount.set(p.venue, (venueCount.get(p.venue) ?? 0) + 1);
+    }
+    const topVenues = [...venueCount.entries()]
+      .filter(([, c]) => c >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+    const topWords = topKeywordsFromTitles(papers, 6);
+    return { total, yearMin, yearMax, citesSum, citesMed, citesMax, oaCount, oaPct, topAuthors, topVenues, topWords };
+  }, [papers]);
+
+  if (!stats) return null;
+
+  function fmt(n: number) {
+    return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+  }
+
+  return (
+    <details className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/60 p-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+      <summary className="cursor-pointer select-none text-zinc-700 dark:text-zinc-300">
+        <span className="font-medium">{stats.total} papers</span>
+        {stats.yearMin && stats.yearMax && (
+          <span className="ml-2 text-zinc-500">{stats.yearMin}–{stats.yearMax}</span>
+        )}
+        <span className="ml-2 text-zinc-500">·</span>
+        <span className="ml-2 text-zinc-500">{fmt(stats.citesSum)} cites total</span>
+        <span className="ml-2 text-zinc-500">·</span>
+        <span className="ml-2 text-zinc-500">{stats.oaPct}% OA</span>
+        <span className="ml-2 text-zinc-400">(click to expand)</span>
+      </summary>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Citations</div>
+          <div className="mt-0.5">
+            total <strong>{fmt(stats.citesSum)}</strong>
+            <span className="mx-1.5 text-zinc-400">·</span>
+            median <strong>{fmt(stats.citesMed)}</strong>
+            <span className="mx-1.5 text-zinc-400">·</span>
+            max <strong>{fmt(stats.citesMax)}</strong>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Open access</div>
+          <div className="mt-0.5">
+            <strong>{stats.oaCount}</strong> of {stats.total} ({stats.oaPct}%)
+          </div>
+        </div>
+        {stats.topWords.length > 0 && (
+          <div className="sm:col-span-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Common title keywords</div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {stats.topWords.map((w) => (
+                <span key={w.word} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
+                  {w.word} <span className="text-zinc-400">×{w.count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {stats.topAuthors.length > 0 && (
+          <div className="sm:col-span-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Recurring authors</div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {stats.topAuthors.map(([name, count]) => (
+                <span key={name} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
+                  {name} <span className="text-zinc-400">×{count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {stats.topVenues.length > 0 && (
+          <div className="sm:col-span-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Recurring venues</div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {stats.topVenues.map(([name, count]) => (
+                <span key={name} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
+                  {name} <span className="text-zinc-400">×{count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
 
 /** Quick-tap examples shown on first load so newcomers see the
  *  search surface without having to read the hint. Each example
