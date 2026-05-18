@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { StickyNote, X, Eye, Pencil } from 'lucide-react';
+import { Notebook, NotebookPen, X, Eye, Pencil } from 'lucide-react';
 import { readPref, writePref } from '@/lib/prefs';
 import { renderMarkdown } from '@/lib/markdown';
 
@@ -40,7 +40,9 @@ export function GroupNotes({ sectionSlug, groupKey }: { sectionSlug: string; gro
             ? 'inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/40'
             : 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'}
         >
-          <StickyNote className="h-3.5 w-3.5" />
+          {hasContent
+            ? <NotebookPen className="h-3.5 w-3.5" />
+            : <Notebook className="h-3.5 w-3.5" />}
           <span>Notes</span>
         </button>
       </Dialog.Trigger>
