@@ -97,6 +97,12 @@ export function RelatedGraph({
    *  User-controllable via a slider so layouts can be tightened or
    *  spread out without remounting the simulation. */
   const [spacing, setSpacing] = useState(10);
+  /** Background mode for the canvas — decoupled from the page
+   *  theme so exports look the same regardless of dark/light
+   *  preference. Defaults to light (the most common export target).
+   *  See bgMode/sun-moon toggle in the AuthorGraph / KeywordGraph
+   *  components for the same pattern. */
+  const [bgMode, setBgMode] = useState<'light' | 'dark'>('light');
 
   // Resize the canvas to the container so the layout fills its
   // wrapper and stays sharp across reflows. Fullscreen mode uses
@@ -275,7 +281,9 @@ export function RelatedGraph({
     labelDark: '#fafafa',
     dim: 'rgba(180,180,180,0.06)',
   };
-  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  // Was tied to the page theme; now driven by the bgMode toggle so
+  // the canvas + every isDark-keyed colour line up with the export.
+  const isDark = bgMode === 'dark';
 
   /** Compute paper clusters via label propagation on the
    *  bibliographic-coupling subgraph. Two papers are in the same
@@ -661,6 +669,28 @@ export function RelatedGraph({
         >
           GraphML
         </button>
+        <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={() => setBgMode('light')}
+            title="Light background — for exports targeting white pages"
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              bgMode === 'light'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >BG ☀</button>
+          <button
+            type="button"
+            onClick={() => setBgMode('dark')}
+            title="Dark background — for slides / dark presentations"
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              bgMode === 'dark'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >BG ☾</button>
+        </div>
         {fullscreen && (
           <span className="ml-auto text-[10px] text-zinc-500">Press Esc to exit</span>
         )}
@@ -684,7 +714,7 @@ export function RelatedGraph({
           width={size.w}
           height={size.h}
           graphData={graphData}
-          backgroundColor={isDark ? '#18181b' : '#fafafa'}
+          backgroundColor={isDark ? '#0b0d10' : '#fafafa'}
           nodeRelSize={6}
           // nodeVal feeds d3-force's default collide-radius
           // calculation; align it with our drawn node radii so

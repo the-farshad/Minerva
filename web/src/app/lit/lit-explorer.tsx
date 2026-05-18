@@ -1336,7 +1336,21 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
                   ))
                 : null}
               {authors && paper.venue ? ' · ' : ''}
-              {paper.venue}
+              {paper.venue ? (
+                /* OA has no clean free-text-venue filter, so a
+                   click runs a phrase keyword search instead — the
+                   venue name in quotes narrows the multi-source
+                   merge to papers that mention it, which is
+                   close-enough to "papers in this venue" without
+                   a two-step source-id lookup. */
+                <a
+                  href={`/lit?q=${encodeURIComponent(`"${paper.venue}"`)}`}
+                  title={`Find papers mentioning ${paper.venue}`}
+                  className="hover:text-zinc-700 hover:underline dark:hover:text-zinc-300"
+                >
+                  {paper.venue}
+                </a>
+              ) : null}
             </div>
           )}
         </div>
