@@ -64,7 +64,17 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
   // export looks the same on light or dark screens. Default light
   // because the typical export target is white. Toggled in the
   // toolbar below.
-  const [bgMode, setBgMode] = useState<'light' | 'dark'>('light');
+  /** Read the active page theme so the graph background matches
+   *  by default. User can still override via the BG toggle. */
+  const detectInitialBg = (): 'light' | 'dark' => {
+    if (typeof document === 'undefined') return 'light';
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return 'dark';
+    if (t === 'light' || t === 'sepia') return 'light';
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
+    return 'light';
+  };
+  const [bgMode, setBgMode] = useState<'light' | 'dark'>(() => detectInitialBg());
 
   const { nodes, links } = useMemo(() => {
     const wordPapers = new Map<string, number>();
@@ -209,8 +219,11 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
               }}
               linkColor={() => isDark ? 'rgba(196,181,253,0.25)' : 'rgba(91,33,182,0.25)'}
               linkWidth={(l) => {
+                // Linear scaling so the line thickness reads as
+                // the actual co-occurrence count, not a flattened
+                // log of it.
                 const w = (l as unknown as KwLink).weight || 1;
-                return Math.min(4, 0.5 + Math.log2(1 + w));
+                return Math.max(0.6, Math.min(7, 0.5 + w * 0.6));
               }}
               cooldownTicks={120}
               minZoom={0.4}

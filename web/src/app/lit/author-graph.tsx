@@ -57,12 +57,25 @@ export function AuthorGraph({
   onAuthorClick?: (name: string) => void;
 }) {
   const [layout, setLayout] = useState<'force' | 'circular'>('force');
+  /** Read the active page theme so the graph background matches
+   *  by default instead of always starting on light. The user can
+   *  still override via the BG toggle; this only sets the initial
+   *  value. Sepia is treated as a light variant. Falls back to
+   *  prefers-color-scheme when the theme is set to system. */
+  const detectInitialBg = (): 'light' | 'dark' => {
+    if (typeof document === 'undefined') return 'light';
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return 'dark';
+    if (t === 'light' || t === 'sepia') return 'light';
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
+    return 'light';
+  };
   // bgMode independent of the page theme so an export looks the
   // same regardless of whether the user is browsing in light or
   // dark mode. Defaults to 'light' because the most common export
   // target (print, slides, papers) is a white background. The
   // user can flip to dark for in-app review.
-  const [bgMode, setBgMode] = useState<'light' | 'dark'>('light');
+  const [bgMode, setBgMode] = useState<'light' | 'dark'>(() => detectInitialBg());
   const isDarkBg = bgMode === 'dark';
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
@@ -327,8 +340,12 @@ export function AuthorGraph({
                 }}
                 linkColor={() => isDark ? 'rgba(161,161,170,0.35)' : 'rgba(82,82,91,0.4)'}
                 linkWidth={(l) => {
+                  // Linear scaling — one collaboration is ~1 px,
+                  // ten is ~8 px. Direct mapping reads as the
+                  // actual collaboration count instead of the
+                  // gentler log-scaled variant we had before.
                   const w = (l as unknown as CoAuthorLink).weight || 1;
-                  return Math.min(4, 0.6 + Math.log2(1 + w));
+                  return Math.max(0.8, Math.min(8, 0.6 + w * 0.7));
                 }}
                 onNodeClick={(node) => {
                   const n = node as CoAuthorNode;
@@ -405,11 +422,12 @@ export function AuthorGraph({
                   // Chord-style: a quadratic Bezier whose control
                   // point sits at the centre of the ring pulls every
                   // arc through the middle, producing the bundled
-                  // look of D3's chord layout. Stroke width grows
-                  // log-scaled with the co-authorship weight so a
-                  // single shared paper stays visible while many
-                  // shared papers read as a heavy band.
-                  const widthScale = Math.min(8, 1.6 + Math.log2(1 + l.weight) * 1.8);
+                  // look of D3's chord layout. Width scales linearly
+                  // with the co-authorship count so a 5-paper chord
+                  // is visibly ~5× a 1-paper chord. Capped at 12
+                  // px so a single very heavy collaborator pair
+                  // doesn't crowd the rest off the canvas.
+                  const widthScale = Math.max(1.2, Math.min(12, 1.4 + l.weight * 0.8));
                   const baseOpacity = Math.min(0.95, 0.65 + Math.log2(1 + l.weight) * 0.1);
                   const cx = circular.W / 2;
                   const cy = circular.H / 2;

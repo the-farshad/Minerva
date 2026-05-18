@@ -1386,17 +1386,23 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
         <div className="flex shrink-0 items-start gap-0.5">
           <button
             type="button"
-            title={pinned ? 'Unpin from comparison' : 'Pin for comparison'}
+            title={pinned ? 'Unpin from comparison' : 'Pin for comparison — opens at /lit/compare'}
             aria-pressed={pinned}
             onClick={(e) => {
               e.stopPropagation();
               const now = togglePin(paper);
               setPinned(now);
             }}
+            // The unpinned state used to live behind a
+            // group-hover:opacity-100 — invisible at rest, invisible
+            // on touch devices, so users never discovered Compare.
+            // Always render the star; the pinned variant uses
+            // amber, the unpinned uses zinc-300 so it still reads
+            // as a secondary action next to the title.
             className={`rounded-full p-1.5 transition ${
               pinned
                 ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30'
-                : 'text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300'
+                : 'text-zinc-300 hover:bg-zinc-100 hover:text-amber-500 dark:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-amber-400'
             }`}
           >
             <Star className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
