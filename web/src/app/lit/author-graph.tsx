@@ -337,14 +337,21 @@ export function AuthorGraph({
                   const a = circular.positions.get(l.source);
                   const b = circular.positions.get(l.target);
                   if (!a || !b) return null;
-                  const widthScale = Math.min(3.2, 0.8 + Math.log2(1 + l.weight));
+                  // Edges read fine on light theme but the user
+                  // reported them invisible on the live site, so
+                  // these are deliberately heavy: 1.6 px floor (in
+                  // viewBox units, ~1.5 px on screen after fit),
+                  // log-scaled to 5 px max, opacity floor 0.7.
+                  const widthScale = Math.min(5, 1.6 + Math.log2(1 + l.weight) * 1.2);
+                  const opacity = Math.min(0.95, 0.7 + Math.log2(1 + l.weight) * 0.1);
                   return (
                     <line
                       key={`e-${i}`}
                       x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                      stroke={isDark ? '#d4d4d8' : '#3f3f46'}
-                      strokeOpacity={Math.min(0.85, 0.4 + Math.log2(1 + l.weight) * 0.15)}
+                      stroke={isDark ? '#e4e4e7' : '#27272a'}
+                      strokeOpacity={opacity}
                       strokeWidth={widthScale}
+                      strokeLinecap="round"
                     />
                   );
                 })}

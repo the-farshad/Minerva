@@ -857,7 +857,7 @@ export function LitExplorer() {
             {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching</> : 'Search'}
           </button>
         </label>
-        <div className="mt-1.5 flex flex-wrap items-center gap-1 px-2 text-[11px] text-zinc-500">
+        <div className="mt-1.5 flex flex-wrap items-center justify-center gap-1 px-2 text-[11px] text-zinc-500">
           <span>Field:</span>
           {FIELD_PREFIXES.map((f) => (
             <button
