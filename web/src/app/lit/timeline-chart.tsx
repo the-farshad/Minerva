@@ -15,6 +15,7 @@
  * project's hand-rolled-vanilla-style charts on the rest of the app.
  */
 import { useMemo, useState } from 'react';
+import { ChartShell } from './chart-shell';
 
 type Paper = {
   paperId?: string;
@@ -123,8 +124,10 @@ export function TimelineChart({
   for (let pow = 1; Math.pow(10, pow - 1) <= cMax; pow++) yTicks.push(Math.pow(10, pow));
 
   return (
+    <ChartShell filename="lit-timeline" summary="Citation timeline · publication year × citation count">
+      {(svgRef) => (
     <div className="relative w-full">
-      <svg viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Citation timeline">
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Citation timeline">
         {/* grid lines + axis labels */}
         {xTicks.map((y) => (
           <g key={`x-${y}`}>
@@ -223,5 +226,7 @@ export function TimelineChart({
         </div>
       )}
     </div>
+      )}
+    </ChartShell>
   );
 }

@@ -12,6 +12,7 @@
  * (the per-theme overrides in globals.css handle sepia / vt323).
  */
 import { useMemo, useState } from 'react';
+import { ChartShell } from './chart-shell';
 
 type Paper = {
   paperId?: string;
@@ -111,8 +112,10 @@ export function DensityChart({ papers }: { papers: Paper[] }) {
   }
 
   return (
+    <ChartShell filename="lit-density" summary="Density heatmap · papers binned by year × cites">
+      {(svgRef) => (
     <div className="relative w-full">
-      <svg viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Density heatmap">
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Density heatmap">
         {xTicks.map((y) => (
           <text key={`x-${y}`} x={xLabelPos(y)} y={H - 10} textAnchor="middle" className="fill-zinc-500 text-[10px]">
             {y}
@@ -181,5 +184,7 @@ export function DensityChart({ papers }: { papers: Paper[] }) {
         </div>
       )}
     </div>
+      )}
+    </ChartShell>
   );
 }

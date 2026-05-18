@@ -13,6 +13,7 @@
  * sepia/vt323 overrides already cover.
  */
 import { useMemo, useState } from 'react';
+import { ChartShell } from './chart-shell';
 
 type Paper = {
   year?: number | string;
@@ -148,8 +149,10 @@ export function CitationFlow({ flow }: { flow: CitationFlowInput }) {
   }
 
   return (
+    <ChartShell filename="lit-citation-flow" summary="Citation flow · references → seed → citers">
+      {(svgRef) => (
     <div className="relative w-full">
-      <svg viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Citation flow">
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Citation flow">
         {/* Left wing: refs ribbons */}
         {refsLayout.map((b) => {
           const a = seedAnchor(b.y, b.h, b.count, refsTotal);
@@ -222,5 +225,7 @@ export function CitationFlow({ flow }: { flow: CitationFlowInput }) {
         </div>
       )}
     </div>
+      )}
+    </ChartShell>
   );
 }
