@@ -233,6 +233,10 @@ export function LitExplorer() {
   /** OpenAlex author profile, fetched whenever runAuthorSearch
    *  resolves a real author. Null = not author mode or no match. */
   const [authorProfile, setAuthorProfile] = useState<AuthorProfileData | null>(null);
+  /** Top-N foundational papers for the seed's related cohort
+   *  (Connected Papers-style "Prior Works"). Fetched lazily when
+   *  the seed has a usable ref. */
+  const [priors, setPriors] = useState<Paper[] | null>(null);
 
   const [tab, setTab] = useState<Tab>('overview');
   const [listView, setListView] = useState<ListView>('list');
@@ -269,6 +273,7 @@ export function LitExplorer() {
     setConcepts([]);
     setConceptActivity(null);
     setAuthorProfile(null);
+    setPriors(null);
     setEdgeCache({});
     setTab('overview');
     // Reset list filters whenever the seed changes — a year range
@@ -316,6 +321,7 @@ export function LitExplorer() {
     setConcepts([]);
     setConceptActivity(null);
     setAuthorProfile(null);
+    setPriors(null);
     setEdgeCache({});
     setTab('overview');
     try {
@@ -372,6 +378,7 @@ export function LitExplorer() {
     setConcepts([]);
     setConceptActivity(null);
     setAuthorProfile(null);
+    setPriors(null);
     setEdgeCache({});
     setTab('overview');
     try {
@@ -478,6 +485,7 @@ export function LitExplorer() {
     setConcepts([]);
     setConceptActivity(null);
     setAuthorProfile(null);
+    setPriors(null);
     setEdgeCache({});
     setTab('overview');
     setYearFrom(''); setYearTo(''); setMinCites(''); setTextFilter('');
@@ -504,6 +512,23 @@ export function LitExplorer() {
       .catch(() => { /* tolerate */ });
     return () => { cancelled = true; };
   }, [ref]);
+
+  // Prior-works lookup: pre-fetch as soon as a seed lands so the
+  // panel is ready by the time the user clicks the Related tab.
+  // Best-effort; an empty result just hides the panel.
+  useEffect(() => {
+    if (!ref) return;
+    let cancelled = false;
+    const titleQ = paper?.title ? `&title=${encodeURIComponent(paper.title)}` : '';
+    const url = `/api/papers/prior?ref=${encodeURIComponent(ref)}&limit=8${titleQ}`;
+    void fetch(url)
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        if (!cancelled && j && Array.isArray(j.papers)) setPriors(j.papers);
+      })
+      .catch(() => { /* tolerate */ });
+    return () => { cancelled = true; };
+  }, [ref, paper?.title]);
 
   /** Topic-chip click: switch into keyword mode and run a paper
    *  search on the concept's display name. The result list lands in
@@ -937,6 +962,23 @@ export function LitExplorer() {
 
           {tab !== 'overview' && (
             <div>
+              {tab === 'related' && priors && priors.length > 0 && (
+                <details className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/60 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <summary className="cursor-pointer select-none text-zinc-700 dark:text-zinc-300">
+                    <span className="font-medium">Foundations</span>
+                    <span className="ml-2 text-zinc-500">{priors.length} prior works cited by many in this set</span>
+                  </summary>
+                  <ul className="mt-2 space-y-2">
+                    {priors.map((p, idx) => (
+                      <PaperRow
+                        key={`prior-${idx}-${p.paperId ?? p.title}`}
+                        paper={p}
+                        onExplore={() => exploreFromPaper(p)}
+                      />
+                    ))}
+                  </ul>
+                </details>
+              )}
               {renderToolbar(filteredEdges, edgePapers, tab, tab === 'related')}
               {filteredEdges && <ResultSummary papers={filteredEdges} />}
               {edgeLoading && (
