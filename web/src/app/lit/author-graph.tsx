@@ -18,6 +18,8 @@
 import { useMemo, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
+import { FullscreenShell } from './fullscreen-shell';
+import { exportPNGFromCanvas, exportGraphJSON, exportGraphML } from './graph-export';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -131,10 +133,39 @@ export function AuthorGraph({
     return { W, H, positions, ordered };
   }, [nodes]);
 
+  function doExportPNG() {
+    const canvas = containerRef.current?.querySelector('canvas');
+    exportPNGFromCanvas(canvas as HTMLCanvasElement | null, 'lit-coauthors.png');
+  }
+  function doExportJSON() {
+    exportGraphJSON(
+      nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers, isFocal: n.isFocal } })),
+      links,
+      'lit-coauthors.json',
+    );
+  }
+  function doExportGraphML() {
+    exportGraphML(
+      nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers, isFocal: n.isFocal } })),
+      links,
+      'lit-coauthors.graphml',
+    );
+  }
+
   return (
     <div ref={containerRef} className="relative">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span>Co-author network — {nodes.length} authors, {links.length} edges</span>
+        <span className="text-zinc-300 dark:text-zinc-700">|</span>
+        <button type="button" onClick={doExportPNG}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >PNG</button>
+        <button type="button" onClick={doExportJSON}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >JSON</button>
+        <button type="button" onClick={doExportGraphML}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >GraphML</button>
         <div className="ml-auto inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
           <button
             type="button"
@@ -162,51 +193,53 @@ export function AuthorGraph({
       </div>
 
       {layout === 'force' ? (
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
-          style={{ height: 480 }}
-        >
-          <ForceGraph2D
-            ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
-            width={760}
-            height={480}
-            graphData={{ nodes, links }}
-            backgroundColor={isDark ? '#18181b' : '#fafafa'}
-            nodeRelSize={6}
-            nodeCanvasObject={(raw, ctx, globalScale) => {
-              const n = raw as CoAuthorNode;
-              const r = nodeRadius(n);
-              const x = n.x ?? 0; const y = n.y ?? 0;
-              ctx.beginPath();
-              ctx.arc(x, y, r, 0, Math.PI * 2);
-              ctx.fillStyle = nodeFill(n);
-              ctx.fill();
-              if (n.isFocal) {
-                ctx.strokeStyle = isDark ? '#fafafa' : '#18181b';
-                ctx.lineWidth = 2 / globalScale;
-                ctx.stroke();
-              }
-              if (globalScale > 0.8) {
-                ctx.fillStyle = isDark ? '#fafafa' : '#18181b';
-                ctx.font = `${(n.isFocal ? 11 : 9) / globalScale}px ui-sans-serif, system-ui`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'top';
-                ctx.fillText(n.label, x, y + r + 2 / globalScale);
-              }
-            }}
-            linkColor={() => isDark ? 'rgba(161,161,170,0.35)' : 'rgba(82,82,91,0.4)'}
-            linkWidth={(l) => {
-              const w = (l as unknown as CoAuthorLink).weight || 1;
-              return Math.min(4, 0.6 + Math.log2(1 + w));
-            }}
-            onNodeClick={(node) => {
-              const n = node as CoAuthorNode;
-              if (onAuthorClick) onAuthorClick(n.id);
-            }}
-            cooldownTicks={100}
-            minZoom={0.4}
-            maxZoom={6}
-          />
-        </div>
+        <FullscreenShell>
+          {({ width, height }) => (
+            <div className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+              <ForceGraph2D
+                ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
+                width={width}
+                height={height}
+                graphData={{ nodes, links }}
+                backgroundColor={isDark ? '#18181b' : '#fafafa'}
+                nodeRelSize={6}
+                nodeCanvasObject={(raw, ctx, globalScale) => {
+                  const n = raw as CoAuthorNode;
+                  const r = nodeRadius(n);
+                  const x = n.x ?? 0; const y = n.y ?? 0;
+                  ctx.beginPath();
+                  ctx.arc(x, y, r, 0, Math.PI * 2);
+                  ctx.fillStyle = nodeFill(n);
+                  ctx.fill();
+                  if (n.isFocal) {
+                    ctx.strokeStyle = isDark ? '#fafafa' : '#18181b';
+                    ctx.lineWidth = 2 / globalScale;
+                    ctx.stroke();
+                  }
+                  if (globalScale > 0.8) {
+                    ctx.fillStyle = isDark ? '#fafafa' : '#18181b';
+                    ctx.font = `${(n.isFocal ? 11 : 9) / globalScale}px ui-sans-serif, system-ui`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'top';
+                    ctx.fillText(n.label, x, y + r + 2 / globalScale);
+                  }
+                }}
+                linkColor={() => isDark ? 'rgba(161,161,170,0.35)' : 'rgba(82,82,91,0.4)'}
+                linkWidth={(l) => {
+                  const w = (l as unknown as CoAuthorLink).weight || 1;
+                  return Math.min(4, 0.6 + Math.log2(1 + w));
+                }}
+                onNodeClick={(node) => {
+                  const n = node as CoAuthorNode;
+                  if (onAuthorClick) onAuthorClick(n.id);
+                }}
+                cooldownTicks={100}
+                minZoom={0.4}
+                maxZoom={6}
+              />
+            </div>
+          )}
+        </FullscreenShell>
       ) : (
         <div className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
           <svg viewBox={`0 0 ${circular.W} ${circular.H}`} className="block w-full">

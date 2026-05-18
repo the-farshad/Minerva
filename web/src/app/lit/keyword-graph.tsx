@@ -16,6 +16,8 @@
 import { useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
+import { FullscreenShell } from './fullscreen-shell';
+import { exportPNGFromCanvas, exportGraphJSON, exportGraphML } from './graph-export';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -112,48 +114,79 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
       : `rgba(91,33,182,${0.35 + 0.6 * t})`;
   }
 
+  function doExportPNG() {
+    const canvas = containerRef.current?.querySelector('canvas');
+    exportPNGFromCanvas(canvas as HTMLCanvasElement | null, 'lit-keywords.png');
+  }
+  function doExportJSON() {
+    exportGraphJSON(
+      nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers } })),
+      links,
+      'lit-keywords.json',
+    );
+  }
+  function doExportGraphML() {
+    exportGraphML(
+      nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers } })),
+      links,
+      'lit-keywords.graphml',
+    );
+  }
+
   return (
     <div ref={containerRef} className="relative">
-      <div className="mb-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-        Title-keyword co-occurrence — {nodes.length} keywords, {links.length} edges
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <span>Title-keyword co-occurrence — {nodes.length} keywords, {links.length} edges</span>
+        <span className="text-zinc-300 dark:text-zinc-700">|</span>
+        <button type="button" onClick={doExportPNG}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >PNG</button>
+        <button type="button" onClick={doExportJSON}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >JSON</button>
+        <button type="button" onClick={doExportGraphML}
+          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >GraphML</button>
       </div>
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
-        style={{ height: 480 }}
-      >
-        <ForceGraph2D
-          ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
-          width={760}
-          height={480}
-          graphData={{ nodes, links }}
-          backgroundColor={isDark ? '#18181b' : '#fafafa'}
-          nodeRelSize={6}
-          nodeCanvasObject={(raw, ctx, globalScale) => {
-            const n = raw as KwNode;
-            const r = nodeRadius(n);
-            const x = n.x ?? 0; const y = n.y ?? 0;
-            ctx.beginPath();
-            ctx.arc(x, y, r, 0, Math.PI * 2);
-            ctx.fillStyle = nodeFill(n);
-            ctx.fill();
-            if (globalScale > 0.7) {
-              ctx.fillStyle = isDark ? '#fafafa' : '#18181b';
-              const fontSize = (8 + Math.min(4, Math.log2(1 + n.papers))) / globalScale;
-              ctx.font = `${fontSize}px ui-sans-serif, system-ui`;
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'top';
-              ctx.fillText(n.label, x, y + r + 2 / globalScale);
-            }
-          }}
-          linkColor={() => isDark ? 'rgba(196,181,253,0.25)' : 'rgba(91,33,182,0.25)'}
-          linkWidth={(l) => {
-            const w = (l as unknown as KwLink).weight || 1;
-            return Math.min(4, 0.5 + Math.log2(1 + w));
-          }}
-          cooldownTicks={120}
-          minZoom={0.4}
-          maxZoom={6}
-        />
-      </div>
+      <FullscreenShell>
+        {({ width, height }) => (
+          <div className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+            <ForceGraph2D
+              ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
+              width={width}
+              height={height}
+              graphData={{ nodes, links }}
+              backgroundColor={isDark ? '#18181b' : '#fafafa'}
+              nodeRelSize={6}
+              nodeCanvasObject={(raw, ctx, globalScale) => {
+                const n = raw as KwNode;
+                const r = nodeRadius(n);
+                const x = n.x ?? 0; const y = n.y ?? 0;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fillStyle = nodeFill(n);
+                ctx.fill();
+                if (globalScale > 0.7) {
+                  ctx.fillStyle = isDark ? '#fafafa' : '#18181b';
+                  const fontSize = (8 + Math.min(4, Math.log2(1 + n.papers))) / globalScale;
+                  ctx.font = `${fontSize}px ui-sans-serif, system-ui`;
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'top';
+                  ctx.fillText(n.label, x, y + r + 2 / globalScale);
+                }
+              }}
+              linkColor={() => isDark ? 'rgba(196,181,253,0.25)' : 'rgba(91,33,182,0.25)'}
+              linkWidth={(l) => {
+                const w = (l as unknown as KwLink).weight || 1;
+                return Math.min(4, 0.5 + Math.log2(1 + w));
+              }}
+              cooldownTicks={120}
+              minZoom={0.4}
+              maxZoom={6}
+            />
+          </div>
+        )}
+      </FullscreenShell>
     </div>
   );
 }

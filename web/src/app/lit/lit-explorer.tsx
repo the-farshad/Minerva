@@ -945,11 +945,12 @@ export function LitExplorer() {
       <footer className="mt-auto flex flex-col items-center gap-3 pt-12 text-xs text-zinc-400">
         <FontPicker />
         <p className="text-center">
-          Sources:{' '}
-          <span className="text-zinc-500 dark:text-zinc-400">
-            arXiv · CrossRef · DBLP · Europe PMC · OpenAlex · OpenCitations · Semantic Scholar
-          </span>
+          <a href="/lit/sources" className="text-zinc-500 hover:text-zinc-700 hover:underline dark:text-zinc-400 dark:hover:text-zinc-200">
+            7 free sources
+          </a>{' '}
+          — arXiv · CrossRef · DBLP · Europe PMC · OpenAlex · OpenCitations · Semantic Scholar
         </p>
+        <VersionTag />
       </footer>
     </main>
   );
@@ -1103,6 +1104,17 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
   const authors = authorsStr(paper);
   const cc = typeof paper.citationCount === 'number' ? paper.citationCount : null;
   const explorable = onExplore && (paper.doi || paper.externalIds?.DOI || paper.arxiv || paper.externalIds?.ArXiv || paper.title);
+  // When a paper comes back without a title (Semantic Scholar
+  // sometimes omits it for old / preprint records), fall back to
+  // the strongest identifier we have rather than the bare
+  // "(untitled)" string that used to render. The user gets a
+  // clickable handle on the paper instead of an unhelpful label.
+  const doi = paper.doi || paper.externalIds?.DOI;
+  const arxiv = paper.arxiv || paper.externalIds?.ArXiv;
+  const titleDisplay = paper.title
+    ?? (doi ? `(untitled, DOI ${doi})`
+       : arxiv ? `(untitled, arXiv ${arxiv})`
+       : '(untitled)');
   return (
     <li className="group rounded-md border border-zinc-200 bg-white p-3 transition hover:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-600">
       <div className="flex items-start justify-between gap-3">
@@ -1115,11 +1127,11 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
                 title="Explore this paper — make it the new seed"
                 className="text-left text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100"
               >
-                {paper.title || '(untitled)'}
+                {titleDisplay}
               </button>
             ) : link ? (
               <a href={link} target="_blank" rel="noopener" className="text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100">
-                {paper.title || '(untitled)'}
+                {titleDisplay}
               </a>
             ) : (
               <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{paper.title || '(untitled)'}</span>
@@ -1387,6 +1399,39 @@ function FontPicker() {
         </button>
       ))}
     </div>
+  );
+}
+
+function VersionTag() {
+  // Best-effort fetch of /api/version so the footer can display the
+  // commit SHA + build time. Tolerant of failure (the version
+  // endpoint is dynamic and may briefly 502 during a deploy);
+  // missing version just hides the line.
+  const [v, setV] = useState<null | { sha7: string; time: string }>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/version')
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        if (!cancelled && j && typeof j.sha7 === 'string') {
+          setV({ sha7: j.sha7, time: j.time || '' });
+        }
+      })
+      .catch(() => { /* tolerate */ });
+    return () => { cancelled = true; };
+  }, []);
+  if (!v) return null;
+  // Shorten the ISO timestamp to YYYY-MM-DD for the chip; the full
+  // string lives in the title attribute for power users.
+  const day = (v.time || '').slice(0, 10);
+  return (
+    <a
+      href="/api/version"
+      title={`Build ${v.sha7}${v.time ? ` at ${v.time}` : ''}`}
+      className="rounded-full border border-zinc-200 px-2 py-0.5 text-[10px] font-mono text-zinc-400 hover:text-zinc-600 dark:border-zinc-800 dark:hover:text-zinc-300"
+    >
+      v {v.sha7}{day ? ` · ${day}` : ''}
+    </a>
   );
 }
 
