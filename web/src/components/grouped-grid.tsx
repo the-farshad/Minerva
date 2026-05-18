@@ -475,36 +475,6 @@ export function GroupedGrid({
                           <Upload className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      {(section.preset === 'youtube' || section.preset === 'papers') && (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            toast.info(`Refreshing metadata for ${groupRows.length} items…`);
-                            let done = 0, failed = 0, skipped = 0;
-                            await Promise.all(groupRows.map(async (gr) => {
-                              try {
-                                const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/refresh-metadata`, { method: 'POST' });
-                                if (resp.status === 409) { skipped++; return; }
-                                const j = (await resp.json().catch(() => ({}))) as { data?: Record<string, unknown>; error?: string };
-                                if (!resp.ok) throw new Error(j.error || `refresh-metadata: ${resp.status}`);
-                                if (j.data && onRowUpdated) {
-                                  onRowUpdated({ id: gr.id, data: j.data, updatedAt: new Date().toISOString() });
-                                }
-                                done++;
-                              } catch { failed++; }
-                            }));
-                            const parts: string[] = [];
-                            if (done) parts.push(`refreshed ${done}`);
-                            if (skipped) parts.push(`${skipped} skipped (no source)`);
-                            if (failed) parts.push(`${failed} failed`);
-                            toast.success(parts.join(' · ') || 'Nothing to refresh.');
-                          }}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                          title={`Refresh metadata for every item in "${key}" via YouTube / arxiv / CrossRef`}
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" />
-                        </button>
-                      )}
                       {section.preset === 'papers' && (
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>
@@ -551,180 +521,187 @@ export function GroupedGrid({
                           </DropdownMenu.Portal>
                         </DropdownMenu.Root>
                       )}
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          // Filter out rows that already have a Drive
-                          // copy so a re-run on a half-finished playlist
-                          // doesn't re-download what's already there.
-                          // The server's save-offline also short-circuits
-                          // with `skipped:true` for these, but skipping
-                          // them here avoids the round-trip and gives an
-                          // honest count in the confirm dialog.
-                          const pending = groupRows.filter((gr) => !/drive:[\w-]{20,}/.test(String((gr.data as Record<string, unknown>).offline || '')));
-                          const already = groupRows.length - pending.length;
-                          if (pending.length === 0) {
-                            toast.info(`All ${groupRows.length} items in "${key}" are already offline — nothing to do.`);
-                            return;
-                          }
-                          const ok = await appConfirm(
-                            `Save ${pending.length} new item${pending.length === 1 ? '' : 's'} in "${key}" offline?`,
-                            { body: already > 0
-                              ? `${already} of ${groupRows.length} already have an offline copy and will be skipped.`
-                              : 'Downloads each item to your Drive in the background.' },
-                          );
-                          if (!ok) return;
-                          const kind = section.preset === 'youtube' ? 'video' : 'paper';
-                          toast.info(`Saving ${pending.length} item${pending.length === 1 ? '' : 's'} offline…`);
-                          let done = 0, failed = 0;
-                          // Serialize the saves: yt-dlp + the helper +
-                          // Drive throttle hard when N parallel video
-                          // downloads hit them at once (the user
-                          // reported one-by-one works but full-playlist
-                          // parallel breaks). Sequential with a 500 ms
-                          // inter-task gap is slower but reliable; the
-                          // background toast lets the user keep working.
-                          // A "progress" toast every 5 completions
-                          // shows movement on long playlists.
-                          for (let i = 0; i < pending.length; i++) {
-                            const gr = pending[i];
-                            try {
-                              const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/save-offline`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ kind }),
-                              });
-                              await readNdjsonResult(resp);
-                              done++;
-                            } catch { failed++; }
-                            if (i + 1 < pending.length) {
-                              if ((done + failed) % 5 === 0) {
-                                toast.info(`Saved ${done + failed}/${pending.length}…`);
-                              }
-                              await new Promise((r) => setTimeout(r, 500));
-                            }
-                          }
-                          toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}${already > 0 ? ` · ${already} already offline` : ''}.`);
-                        }}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                        title={`Save every item in "${key}" offline`}
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                      </button>
-                      {section.preset === 'youtube' && (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const ok = await appConfirm(
-                              `Reset watch progress for all ${groupRows.length} videos in "${key}"?`,
-                              { body: 'Each video will restart from the beginning the next time you play it. Counts only — videos themselves are untouched.', dangerLabel: 'Reset' },
-                            );
-                            if (!ok) return;
-                            let cleared = 0;
-                            for (const gr of groupRows) {
-                              const url = String((gr.data as Record<string, unknown>).url || '');
-                              if (!url) continue;
-                              const k = 'minerva.v2.resume.' + url;
-                              if (localStorage.getItem(k) != null) {
-                                localStorage.removeItem(k);
-                                cleared++;
-                              }
-                            }
-                            // Re-render progress bars on this tab.
-                            window.dispatchEvent(new StorageEvent('storage'));
-                            toast.success(`Cleared progress on ${cleared} video${cleared === 1 ? '' : 's'}.`);
-                          }}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                          title={`Reset watch progress for every video in "${key}"`}
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const ok = await appConfirm(
-                            `Delete all ${groupRows.length} items in "${key}"?`,
-                            { body: 'This cannot be undone.', dangerLabel: 'Delete all' },
-                          );
-                          if (!ok) return;
-                          // Server-side one-shot delete by group field —
-                          // no per-row round-trips, no per-row confirms.
-                          // groupCol is the column the grid is currently
-                          // grouped on (playlist for YouTube, category for
-                          // Papers, kind for anything else with a kind col).
-                          try {
-                            const resp = await fetch(`/api/sections/${section.slug}/rows/bulk-delete`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ field: groupCol, value: key }),
-                            });
-                            const j = (await resp.json().catch(() => ({}))) as { error?: string; deleted?: number; untagged?: number };
-                            if (!resp.ok) throw new Error(j.error || String(resp.status));
-                            // Surface both numbers — a multi-category row
-                            // dropped out of THIS group but stays alive in
-                            // its other ones, which matters for the user
-                            // to trust the action.
-                            const del = j.deleted ?? groupRows.length;
-                            const untag = j.untagged ?? 0;
-                            const msg = untag > 0
-                              ? `Deleted ${del} · removed "${key}" from ${untag} multi-tagged item${untag === 1 ? '' : 's'}.`
-                              : `Deleted ${del} items.`;
-                            toast.success(msg);
-                            // Optimistic local removal so the group
-                            // disappears the moment the delete
-                            // request returns, no page refresh.
-                            // For multi-tagged rows that were only
-                            // untagged (not deleted), the SSE row-
-                            // updated event will re-add them with
-                            // the updated tag set, so eventual
-                            // consistency holds. router.refresh()
-                            // is the last-resort fallback for
-                            // callers that don't wire the callback.
-                            if (onBulkDeleted) {
-                              onBulkDeleted(groupRows.map((r) => r.id));
-                            } else {
-                              router.refresh();
-                            }
-                          } catch (e) {
-                            notify.error('Delete failed: ' + (e as Error).message);
-                          }
-                        }}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
-                        title={`Delete every item in "${key}"`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          // Pull the category column's schema-defined
-                          // options so the picker offers them as chips,
-                          // then let the user add custom values too.
-                          const headers = section.schema.headers;
-                          const catIdx = headers.indexOf('category');
-                          const raw = catIdx >= 0 ? String(section.schema.types?.[catIdx] || '') : '';
-                          const m = raw.match(/^multiselect\(([^)]*)\)/);
-                          const options = m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
-                          const next = await appPickMany(`Categories for "${key}"`, options, {
-                            body: 'Pick one or more — applies to every item in this group.',
-                          });
-                          if (next === null) return;
-                          await Promise.all(groupRows.map((gr) =>
-                            fetch(`/api/sections/${section.slug}/rows/${gr.id}`, {
-                              method: 'PATCH',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ data: { category: next.join(', ') } }),
-                            }).catch(() => undefined),
-                          ));
-                          toast.success(`Set category on ${groupRows.length} items.`);
-                          router.refresh();
-                        }}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                        title={`Set category for every item in "${key}"`}
-                      >
-                        <Tags className="h-3.5 w-3.5" />
-                      </button>
+                      {/* Overflow menu — folds the secondary bulk
+                       *  actions (refresh / save offline / reset /
+                       *  set category / delete) into a single
+                       *  three-dots trigger so the group header
+                       *  stays uncluttered. Primary entry points
+                       *  (Upload, citation copy, sort, notes) stay
+                       *  inline because they're either frequent or
+                       *  visually distinct. */}
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                            title={`More actions for "${key}"`}
+                          >
+                            <MoreVertical className="h-3.5 w-3.5" />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            align="end"
+                            sideOffset={4}
+                            className="z-[60] min-w-[12rem] overflow-hidden rounded-md border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
+                          >
+                            <DropdownMenu.Item
+                              onSelect={async () => {
+                                toast.info(`Refreshing metadata for ${groupRows.length} items…`);
+                                let done = 0, failed = 0, skipped = 0;
+                                await Promise.all(groupRows.map(async (gr) => {
+                                  try {
+                                    const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/refresh-metadata`, { method: 'POST' });
+                                    if (resp.status === 409) { skipped++; return; }
+                                    const j = (await resp.json().catch(() => ({}))) as { data?: Record<string, unknown>; error?: string };
+                                    if (!resp.ok) throw new Error(j.error || `refresh-metadata: ${resp.status}`);
+                                    if (j.data && onRowUpdated) {
+                                      onRowUpdated({ id: gr.id, data: j.data, updatedAt: new Date().toISOString() });
+                                    }
+                                    done++;
+                                  } catch { failed++; }
+                                }));
+                                const parts: string[] = [];
+                                if (done) parts.push(`refreshed ${done}`);
+                                if (skipped) parts.push(`${skipped} skipped (no source)`);
+                                if (failed) parts.push(`${failed} failed`);
+                                toast.success(parts.join(' · ') || 'Nothing to refresh.');
+                              }}
+                              className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" /> Refresh metadata
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              onSelect={async () => {
+                                const pending = groupRows.filter((gr) => !/drive:[\w-]{20,}/.test(String((gr.data as Record<string, unknown>).offline || '')));
+                                const already = groupRows.length - pending.length;
+                                if (pending.length === 0) {
+                                  toast.info(`All ${groupRows.length} items in "${key}" are already offline — nothing to do.`);
+                                  return;
+                                }
+                                const ok = await appConfirm(
+                                  `Save ${pending.length} new item${pending.length === 1 ? '' : 's'} in "${key}" offline?`,
+                                  { body: already > 0
+                                    ? `${already} of ${groupRows.length} already have an offline copy and will be skipped.`
+                                    : 'Downloads each item to your Drive in the background.' },
+                                );
+                                if (!ok) return;
+                                const kind = section.preset === 'youtube' ? 'video' : 'paper';
+                                toast.info(`Saving ${pending.length} item${pending.length === 1 ? '' : 's'} offline…`);
+                                let done = 0, failed = 0;
+                                for (let i = 0; i < pending.length; i++) {
+                                  const gr = pending[i];
+                                  try {
+                                    const resp = await fetch(`/api/sections/${section.slug}/rows/${gr.id}/save-offline`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ kind }),
+                                    });
+                                    await readNdjsonResult(resp);
+                                    done++;
+                                  } catch { failed++; }
+                                  if (i + 1 < pending.length) {
+                                    if ((done + failed) % 5 === 0) {
+                                      toast.info(`Saved ${done + failed}/${pending.length}…`);
+                                    }
+                                    await new Promise((r) => setTimeout(r, 500));
+                                  }
+                                }
+                                toast.success(`Saved ${done}${failed ? ` · ${failed} failed` : ''}${already > 0 ? ` · ${already} already offline` : ''}.`);
+                              }}
+                              className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Save all offline
+                            </DropdownMenu.Item>
+                            {section.preset === 'youtube' && (
+                              <DropdownMenu.Item
+                                onSelect={async () => {
+                                  const ok = await appConfirm(
+                                    `Reset watch progress for all ${groupRows.length} videos in "${key}"?`,
+                                    { body: 'Each video will restart from the beginning the next time you play it. Counts only — videos themselves are untouched.', dangerLabel: 'Reset' },
+                                  );
+                                  if (!ok) return;
+                                  let cleared = 0;
+                                  for (const gr of groupRows) {
+                                    const url = String((gr.data as Record<string, unknown>).url || '');
+                                    if (!url) continue;
+                                    const k = 'minerva.v2.resume.' + url;
+                                    if (localStorage.getItem(k) != null) {
+                                      localStorage.removeItem(k);
+                                      cleared++;
+                                    }
+                                  }
+                                  window.dispatchEvent(new StorageEvent('storage'));
+                                  toast.success(`Cleared progress on ${cleared} video${cleared === 1 ? '' : 's'}.`);
+                                }}
+                                className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" /> Reset watch progress
+                              </DropdownMenu.Item>
+                            )}
+                            <DropdownMenu.Item
+                              onSelect={async () => {
+                                const headers = section.schema.headers;
+                                const catIdx = headers.indexOf('category');
+                                const raw = catIdx >= 0 ? String(section.schema.types?.[catIdx] || '') : '';
+                                const m = raw.match(/^multiselect\(([^)]*)\)/);
+                                const options = m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+                                const next = await appPickMany(`Categories for "${key}"`, options, {
+                                  body: 'Pick one or more — applies to every item in this group.',
+                                });
+                                if (next === null) return;
+                                await Promise.all(groupRows.map((gr) =>
+                                  fetch(`/api/sections/${section.slug}/rows/${gr.id}`, {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ data: { category: next.join(', ') } }),
+                                  }).catch(() => undefined),
+                                ));
+                                toast.success(`Set category on ${groupRows.length} items.`);
+                                router.refresh();
+                              }}
+                              className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            >
+                              <Tags className="h-3.5 w-3.5" /> Set category
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+                            <DropdownMenu.Item
+                              onSelect={async () => {
+                                const ok = await appConfirm(
+                                  `Delete all ${groupRows.length} items in "${key}"?`,
+                                  { body: 'This cannot be undone.', dangerLabel: 'Delete all' },
+                                );
+                                if (!ok) return;
+                                try {
+                                  const resp = await fetch(`/api/sections/${section.slug}/rows/bulk-delete`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ field: groupCol, value: key }),
+                                  });
+                                  const j = (await resp.json().catch(() => ({}))) as { error?: string; deleted?: number; untagged?: number };
+                                  if (!resp.ok) throw new Error(j.error || String(resp.status));
+                                  const del = j.deleted ?? groupRows.length;
+                                  const untag = j.untagged ?? 0;
+                                  const msg = untag > 0
+                                    ? `Deleted ${del} · removed "${key}" from ${untag} multi-tagged item${untag === 1 ? '' : 's'}.`
+                                    : `Deleted ${del} items.`;
+                                  toast.success(msg);
+                                  if (onBulkDeleted) {
+                                    onBulkDeleted(groupRows.map((r) => r.id));
+                                  } else {
+                                    router.refresh();
+                                  }
+                                } catch (e) {
+                                  notify.error('Delete failed: ' + (e as Error).message);
+                                }
+                              }}
+                              className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Delete all
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
                     </>
                   )}
                 </>
