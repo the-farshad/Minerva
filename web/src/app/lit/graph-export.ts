@@ -32,25 +32,35 @@ export function downloadBlob(content: string, filename: string, mime: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** Composite the canvas onto a solid background. Without this, a
- *  dark-theme export renders as light-text-on-black, which prints
- *  unreadably and looks broken in most image viewers. Returns a
- *  data URL the PNG / SVG / PDF exports all build from. */
-function canvasOnBackground(canvas: HTMLCanvasElement, bg: string = '#ffffff'): {
+/** Composite the canvas onto a solid background, optionally
+ *  upscaling for a high-resolution export. The source canvas is
+ *  already at the renderer's pixel ratio (usually 2× on retina);
+ *  doubling that gives ~4× display-pixel resolution which prints
+ *  cleanly. Without this, a dark-theme export renders as
+ *  light-text-on-black, which prints unreadably and looks broken
+ *  in most image viewers. Returns a data URL the PNG / SVG / PDF
+ *  exports all build from. */
+function canvasOnBackground(canvas: HTMLCanvasElement, bg: string = '#ffffff', scale: number = 2): {
   dataUrl: string;
   width: number;
   height: number;
 } {
+  const W = Math.round(canvas.width * scale);
+  const H = Math.round(canvas.height * scale);
   const tmp = document.createElement('canvas');
-  tmp.width = canvas.width;
-  tmp.height = canvas.height;
+  tmp.width = W;
+  tmp.height = H;
   const ctx = tmp.getContext('2d');
   if (ctx) {
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, tmp.width, tmp.height);
-    ctx.drawImage(canvas, 0, 0);
+    if (bg !== 'transparent') {
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(canvas, 0, 0, W, H);
   }
-  return { dataUrl: tmp.toDataURL('image/png'), width: tmp.width, height: tmp.height };
+  return { dataUrl: tmp.toDataURL('image/png'), width: W, height: H };
 }
 
 export function exportPNGFromCanvas(canvas: HTMLCanvasElement | null, filename: string, bg: string = '#ffffff') {
@@ -138,16 +148,24 @@ function serializeSVG(svg: SVGSVGElement, bg: string = '#ffffff'): string {
   const clone = inlineComputedStyles(svg);
   if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   if (!clone.getAttribute('xmlns:xlink')) clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+  // Strip elements tagged data-export-hide — these are in-chart UI
+  // controls (zoom-reset button, hover legends, etc.) that aren't
+  // part of the chart proper and shouldn't bleed into the saved
+  // file. Cleaner than threading an "exporting" state into every
+  // component and conditioning render on it.
+  clone.querySelectorAll('[data-export-hide]').forEach((el) => el.remove());
   const { width, height } = getSVGSize(svg);
   clone.setAttribute('width', String(width));
   clone.setAttribute('height', String(height));
-  // Prepend a white-background rect so the export reads on light
-  // viewers regardless of where it lands.
-  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-  rect.setAttribute('x', '0'); rect.setAttribute('y', '0');
-  rect.setAttribute('width', String(width)); rect.setAttribute('height', String(height));
-  rect.setAttribute('fill', bg);
-  clone.insertBefore(rect, clone.firstChild);
+  // Prepend a background rect so the export reads on light or dark
+  // viewers regardless of where it lands. Skipped for transparent.
+  if (bg !== 'transparent') {
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', '0'); rect.setAttribute('y', '0');
+    rect.setAttribute('width', String(width)); rect.setAttribute('height', String(height));
+    rect.setAttribute('fill', bg);
+    clone.insertBefore(rect, clone.firstChild);
+  }
   return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
 }
 
@@ -156,10 +174,19 @@ export function exportSVGFromElement(svg: SVGSVGElement | null, filename: string
   downloadBlob(serializeSVG(svg, bg), filename, 'image/svg+xml;charset=utf-8');
 }
 
+/** Resolution multiplier for SVG→PNG rasterisation. Vector paths
+ *  scale losslessly into the larger bitmap, so 3× gives a sharp
+ *  result on retina displays and 300-DPI-ish print without any
+ *  source-side change. Bumping past 4× starts producing files
+ *  large enough to time out the download anchor. */
+const EXPORT_RASTER_SCALE = 3;
+
 /** Rasterise an SVG to a data URL via an off-screen <img>. Returns
  *  null when the load fails (some SVG features — foreignObject
- *  with non-same-origin content — get refused by the browser). */
-function svgToRasterDataURL(svg: SVGSVGElement, bg: string = '#ffffff'): Promise<{ dataUrl: string; width: number; height: number } | null> {
+ *  with non-same-origin content — get refused by the browser).
+ *  Optional `scale` overrides the default high-res multiplier when
+ *  a caller wants a 1× preview-sized output. */
+function svgToRasterDataURL(svg: SVGSVGElement, bg: string = '#ffffff', scale: number = EXPORT_RASTER_SCALE): Promise<{ dataUrl: string; width: number; height: number } | null> {
   return new Promise((resolve) => {
     const { width, height } = getSVGSize(svg);
     const svgStr = serializeSVG(svg, bg);
@@ -167,15 +194,19 @@ function svgToRasterDataURL(svg: SVGSVGElement, bg: string = '#ffffff'): Promise
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => {
+      const W = Math.round(width * scale);
+      const H = Math.round(height * scale);
       const canvas = document.createElement('canvas');
-      canvas.width = width; canvas.height = height;
+      canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
       if (!ctx) { URL.revokeObjectURL(url); resolve(null); return; }
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(img, 0, 0, width, height);
+      if (bg !== 'transparent') {
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+      }
+      ctx.drawImage(img, 0, 0, W, H);
       URL.revokeObjectURL(url);
-      resolve({ dataUrl: canvas.toDataURL('image/png'), width, height });
+      resolve({ dataUrl: canvas.toDataURL('image/png'), width: W, height: H });
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;

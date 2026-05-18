@@ -71,6 +71,13 @@ export function AuthorGraph({
   // has react-force-graph-2d's built-in wheel zoom; SVG needs its
   // own. tx/ty are in viewBox units, scale is multiplicative.
   const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
+  // Chord-diagram selection: click a chord ribbon or a node circle
+  // to highlight it (and dim everything else). null clears the
+  // highlight; clicking the same target again toggles it off.
+  type ChordSel =
+    | { kind: 'link'; sId: string; tId: string; weight: number }
+    | { kind: 'node'; id: string };
+  const [chordSel, setChordSel] = useState<ChordSel | null>(null);
   const dragRef = useRef<{ startClientX: number; startClientY: number; startTx: number; startTy: number } | null>(null);
   function resetView() { setView({ scale: 1, tx: 0, ty: 0 }); }
   function onSvgWheel(e: React.WheelEvent<SVGSVGElement>) {
@@ -322,7 +329,14 @@ export function AuthorGraph({
           )}
         </FullscreenShell>
       ) : (
-        <FullscreenShell>
+        <>
+          <ChordInfoBar
+            sel={chordSel}
+            nodes={nodes}
+            links={links}
+            onClear={() => setChordSel(null)}
+          />
+          <FullscreenShell>
           {() => (
             <div
               className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
@@ -338,6 +352,12 @@ export function AuthorGraph({
                 onMouseMove={onSvgMouseMove}
                 onMouseUp={onSvgMouseUp}
                 onMouseLeave={onSvgMouseUp}
+                onClick={(e) => {
+                  // Click on bare SVG (not on a chord ribbon or
+                  // node circle, which both stopPropagation)
+                  // clears any active selection.
+                  if (e.target === e.currentTarget) setChordSel(null);
+                }}
               >
                 <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
                 {/* Edges first so nodes sit on top. Explicit colour
@@ -351,12 +371,8 @@ export function AuthorGraph({
                 {links.map((l, i) => {
                   // react-force-graph-2d mutates link.source /
                   // link.target into resolved node objects after
-                  // the force simulation runs. Once the user has
-                  // viewed the force layout, switching back to
-                  // circular hits this map with objects (no match)
-                  // and every edge silently rendered as null.
-                  // Extract the id whether we get a string or the
-                  // mutated node object.
+                  // the force simulation runs; resolve to id
+                  // either way for the Map lookup.
                   const sId = typeof l.source === 'object' && l.source !== null
                     ? (l.source as { id: string }).id : l.source;
                   const tId = typeof l.target === 'object' && l.target !== null
@@ -364,22 +380,46 @@ export function AuthorGraph({
                   const a = circular.positions.get(sId);
                   const b = circular.positions.get(tId);
                   if (!a || !b) return null;
-                  // Edges read fine on light theme but the user
-                  // reported them invisible on the live site, so
-                  // these are deliberately heavy: 1.6 px floor (in
-                  // viewBox units, ~1.5 px on screen after fit),
-                  // log-scaled to 5 px max, opacity floor 0.7.
-                  const widthScale = Math.min(5, 1.6 + Math.log2(1 + l.weight) * 1.2);
-                  const opacity = Math.min(0.95, 0.7 + Math.log2(1 + l.weight) * 0.1);
+                  // Chord-style: a quadratic Bezier whose control
+                  // point sits at the centre of the ring pulls every
+                  // arc through the middle, producing the bundled
+                  // look of D3's chord layout. Stroke width grows
+                  // log-scaled with the co-authorship weight so a
+                  // single shared paper stays visible while many
+                  // shared papers read as a heavy band.
+                  const widthScale = Math.min(8, 1.6 + Math.log2(1 + l.weight) * 1.8);
+                  const baseOpacity = Math.min(0.95, 0.65 + Math.log2(1 + l.weight) * 0.1);
+                  const cx = circular.W / 2;
+                  const cy = circular.H / 2;
+                  const path = `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`;
+                  const isSelected = chordSel?.kind === 'link' && chordSel.sId === sId && chordSel.tId === tId;
+                  const touchesSelectedNode = chordSel?.kind === 'node' && (chordSel.id === sId || chordSel.id === tId);
+                  const dim = chordSel != null && !isSelected && !touchesSelectedNode;
+                  const opacity = isSelected ? 1 : dim ? baseOpacity * 0.18 : baseOpacity;
+                  const stroke = isSelected
+                    ? '#2563eb'
+                    : isDark ? '#e4e4e7' : '#27272a';
                   return (
-                    <line
+                    <path
                       key={`e-${i}`}
-                      x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                      stroke={isDark ? '#e4e4e7' : '#27272a'}
+                      d={path}
+                      fill="none"
+                      stroke={stroke}
                       strokeOpacity={opacity}
-                      strokeWidth={widthScale}
+                      strokeWidth={isSelected ? widthScale + 1.5 : widthScale}
                       strokeLinecap="round"
-                    />
+                      className="cursor-pointer transition-[stroke-opacity,stroke-width] duration-150"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setChordSel((prev) =>
+                          prev?.kind === 'link' && prev.sId === sId && prev.tId === tId
+                            ? null
+                            : { kind: 'link', sId, tId, weight: l.weight },
+                        );
+                      }}
+                    >
+                      <title>{`${sId} ↔ ${tId} · ${l.weight} shared paper${l.weight === 1 ? '' : 's'}`}</title>
+                    </path>
                   );
                 })}
                 {links.length === 0 && (
@@ -402,25 +442,43 @@ export function AuthorGraph({
               const ly = pos.y + (r + 8) * Math.sin(angle);
               const rotate = (angle * 180) / Math.PI;
               const flip = rotate > 90 || rotate < -90;
+              const nodeSelected = chordSel?.kind === 'node' && chordSel.id === n.id;
+              const linkTouches = chordSel?.kind === 'link' && (chordSel.sId === n.id || chordSel.tId === n.id);
+              const focused = nodeSelected || linkTouches || n.isFocal;
+              const dim = chordSel != null && !nodeSelected && !linkTouches && !n.isFocal;
               return (
-                <g key={`n-${n.id}`}>
+                <g key={`n-${n.id}`} opacity={dim ? 0.35 : 1}>
                   <circle
-                    cx={pos.x} cy={pos.y} r={r}
-                    fill={nodeFill(n)}
-                    stroke={n.isFocal ? (isDark ? '#fafafa' : '#18181b') : 'none'}
-                    strokeWidth={n.isFocal ? 2 : 0}
-                    className="cursor-pointer"
-                    onClick={() => onAuthorClick?.(n.id)}
+                    cx={pos.x} cy={pos.y} r={nodeSelected ? r + 2 : r}
+                    fill={nodeSelected ? '#2563eb' : nodeFill(n)}
+                    stroke={focused ? (isDark ? '#fafafa' : '#18181b') : 'none'}
+                    strokeWidth={focused ? 2 : 0}
+                    className="cursor-pointer transition-[r,fill] duration-150"
+                    // Single-tap toggles chord-selection so the user
+                    // can drill into one author's connections. The
+                    // navigate-to-profile action stays on the label
+                    // text below so a quick click doesn't whisk the
+                    // user off the page.
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setChordSel((prev) =>
+                        prev?.kind === 'node' && prev.id === n.id
+                          ? null
+                          : { kind: 'node', id: n.id },
+                      );
+                    }}
                   >
-                    <title>{`${n.label} · ${n.papers} paper${n.papers === 1 ? '' : 's'}`}</title>
+                    <title>{`${n.label} · ${n.papers} paper${n.papers === 1 ? '' : 's'} — click to highlight`}</title>
                   </circle>
                   <text
                     x={lx} y={ly}
                     transform={`rotate(${flip ? rotate + 180 : rotate} ${lx} ${ly})`}
                     textAnchor={flip ? 'end' : 'start'}
                     dominantBaseline="middle"
-                    className="pointer-events-none fill-zinc-700 text-[10px] dark:fill-zinc-300"
+                    className="cursor-pointer fill-zinc-700 text-[10px] hover:underline dark:fill-zinc-300"
+                    onClick={(e) => { e.stopPropagation(); onAuthorClick?.(n.id); }}
                   >
+                    <title>Open author profile</title>
                     {n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}
                   </text>
                 </g>
@@ -432,6 +490,10 @@ export function AuthorGraph({
                     transform={`translate(${circular.W - 18} 18)`}
                     onClick={resetView}
                     className="cursor-pointer"
+                    /* In-graph UI control — strip from exports so
+                     * the saved file is the chart, not the chart
+                     * plus a stray reset arrow in the corner. */
+                    data-export-hide="true"
                   >
                     <circle r="12" fill={isDark ? '#27272a' : '#ffffff'} stroke={isDark ? '#52525b' : '#d4d4d8'} strokeWidth="1" />
                     <text textAnchor="middle" dominantBaseline="central" fill={isDark ? '#d4d4d8' : '#52525b'} className="text-[10px]">
@@ -442,8 +504,84 @@ export function AuthorGraph({
               </svg>
             </div>
           )}
-        </FullscreenShell>
+          </FullscreenShell>
+        </>
       )}
+    </div>
+  );
+}
+
+/** Selected-chord / selected-node info bar. Sits above the SVG
+ *  when something is highlighted in circular mode; lists the two
+ *  authors and the shared-paper count for a chord, or the author's
+ *  total + co-author count for a node. */
+function ChordInfoBar({
+  sel,
+  nodes,
+  links,
+  onClear,
+}: {
+  sel:
+    | { kind: 'link'; sId: string; tId: string; weight: number }
+    | { kind: 'node'; id: string }
+    | null;
+  nodes: CoAuthorNode[];
+  links: CoAuthorLink[];
+  onClear: () => void;
+}) {
+  if (!sel) {
+    return (
+      <div className="mb-2 rounded-md border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
+        Click an arc or an author dot to drill in.
+      </div>
+    );
+  }
+  if (sel.kind === 'link') {
+    const s = nodes.find((n) => n.id === sel.sId);
+    const t = nodes.find((n) => n.id === sel.tId);
+    return (
+      <div className="mb-2 flex items-center gap-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+        <span className="truncate">
+          <strong>{s?.label || sel.sId}</strong>
+          {' ↔ '}
+          <strong>{t?.label || sel.tId}</strong>
+        </span>
+        <span className="shrink-0 text-blue-700 dark:text-blue-300">
+          · {sel.weight} shared paper{sel.weight === 1 ? '' : 's'}
+        </span>
+        <button
+          type="button"
+          onClick={onClear}
+          className="ml-auto rounded-full px-2 py-0.5 text-[10px] text-blue-700 hover:bg-blue-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
+        >
+          Clear
+        </button>
+      </div>
+    );
+  }
+  // node
+  const n = nodes.find((x) => x.id === sel.id);
+  let coauthors = 0;
+  for (const l of links) {
+    const sId = typeof l.source === 'object' && l.source !== null
+      ? (l.source as { id: string }).id : l.source;
+    const tId = typeof l.target === 'object' && l.target !== null
+      ? (l.target as { id: string }).id : l.target;
+    if (sId === sel.id || tId === sel.id) coauthors++;
+  }
+  return (
+    <div className="mb-2 flex items-center gap-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+      <span className="truncate"><strong>{n?.label || sel.id}</strong></span>
+      <span className="shrink-0 text-blue-700 dark:text-blue-300">
+        · {n?.papers ?? 0} paper{n?.papers === 1 ? '' : 's'} · {coauthors} co-author{coauthors === 1 ? '' : 's'}
+      </span>
+      <button
+        type="button"
+        onClick={onClear}
+        className="ml-auto rounded-full px-2 py-0.5 text-[10px] text-blue-700 hover:bg-blue-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
+      >
+        Clear
+      </button>
     </div>
   );
 }
