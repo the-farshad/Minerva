@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3 } from 'lucide-react';
+import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3, Users } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 import { TimelineChart } from './timeline-chart';
 import { DensityChart } from './density-chart';
+import { AuthorGraph } from './author-graph';
 import { applyTheme, applyFont } from '@/components/theme-card';
 import { readPref, writePref } from '@/lib/prefs';
 
@@ -199,7 +200,7 @@ function downloadText(content: string, filename: string, mime = 'text/plain;char
 }
 
 type Tab = 'overview' | 'refs' | 'cites' | 'related';
-type ListView = 'list' | 'graph' | 'timeline' | 'density';
+type ListView = 'list' | 'graph' | 'timeline' | 'density' | 'coauthors';
 type SearchMode = 'id' | 'keyword';
 
 export function LitExplorer() {
@@ -524,7 +525,7 @@ export function LitExplorer() {
    *  Closes over the relevant state setters so callers only have to
    *  pass the list-shape data and the small per-context knobs
    *  (filename prefix, whether the Graph button is meaningful here). */
-  function renderToolbar(filtered: Paper[] | null, raw: Paper[] | null, prefix: string, withGraph: boolean) {
+  function renderToolbar(filtered: Paper[] | null, raw: Paper[] | null, prefix: string, withGraph: boolean, withCoauthors: boolean = false) {
     if (!raw || raw.length === 0) return null;
     const downloadable = filtered && filtered.length > 0;
     return (
@@ -625,6 +626,15 @@ export function LitExplorer() {
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'}`}>
             <Grid3x3 className="h-3 w-3" /> Density
           </button>
+          {withCoauthors && (
+            <button type="button" onClick={() => setListView('coauthors')}
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+                listView === 'coauthors'
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'}`}>
+              <Users className="h-3 w-3" /> Coauthors
+            </button>
+          )}
         </div>
       </div>
     );
@@ -786,15 +796,27 @@ export function LitExplorer() {
               {candidatesLabel || `${candidates.length} result${candidates.length === 1 ? '' : 's'}`}
               <span className="ml-1 text-zinc-400">— click a title to explore.</span>
             </p>
-            {renderToolbar(filteredCandidates, candidates, 'search', true)}
+            {renderToolbar(filteredCandidates, candidates, 'search', true, candidatesKind === 'author')}
             {filteredCandidates && <ResultSummary papers={filteredCandidates} />}
-            {renderResultBody(filteredCandidates, true, synthSeed)}
+            {listView === 'coauthors' && candidatesKind === 'author' && filteredCandidates && filteredCandidates.length > 0 ? (
+              <AuthorGraph
+                papers={filteredCandidates}
+                focalAuthor={candidatesQuery}
+                onAuthorClick={(name) => {
+                  setMode('keyword');
+                  setQuery(name);
+                  void runAuthorSearch(name);
+                }}
+              />
+            ) : (
+              renderResultBody(filteredCandidates, true, synthSeed)
+            )}
             {filteredCandidates && filteredCandidates.length === 0 && (
               <p className="rounded-md border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800">
                 {candidates.length} loaded, none match the current filters.
               </p>
             )}
-            {candidatesHasMore && listView !== 'graph' && listView !== 'density' && (
+            {candidatesHasMore && listView !== 'graph' && listView !== 'density' && listView !== 'coauthors' && (
               <div className="mt-3 flex justify-center">
                 <button
                   type="button"
@@ -880,7 +902,7 @@ export function LitExplorer() {
         <p className="text-center">
           Sources:{' '}
           <span className="text-zinc-500 dark:text-zinc-400">
-            arXiv · CrossRef · Europe PMC · OpenAlex · Semantic Scholar · OpenCitations
+            arXiv · CrossRef · DBLP · Europe PMC · OpenAlex · OpenCitations · Semantic Scholar
           </span>
         </p>
       </footer>

@@ -19,6 +19,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { searchPapers } from '@/lib/related-papers/semanticscholar';
+import { searchDBLP } from '@/lib/related-papers/dblp';
 import type { RelatedPaper } from '@/lib/related-papers/types';
 
 const MAX_LIMIT = 100;
@@ -204,28 +205,36 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Plain queries: fire SS + OA in parallel and merge. The dedup
-  // step folds duplicates (same DOI / arXiv id / normalised title)
-  // so the user sees one merged ranked list rather than two
-  // overlapping sets. SS is the primary because its similarity
-  // ranking is better-tuned for free-text paper search; OA fills in
-  // anything SS missed.
-  const [ss, oa] = await Promise.all([
+  // Plain queries: fire SS + OA + DBLP in parallel and merge. The
+  // dedup step folds duplicates (same DOI / arXiv id / normalised
+  // title) so the user sees one merged ranked list rather than three
+  // overlapping ones. SS is the primary because its similarity
+  // ranking is best-tuned for free-text paper search; OA fills in
+  // multidisciplinary coverage; DBLP catches CS conferences and
+  // workshops the others miss. DBLP has no abstracts or cite counts;
+  // when it brings in a new paper, those fields get backfilled if
+  // the dedup picks up a matching record from a richer source.
+  const [ss, oa, dblp] = await Promise.all([
     searchPapers(q, limit, offset),
     searchOpenAlex(q, limit, offset),
+    searchDBLP(q, limit, offset),
   ]);
   const ssPapers = ss.ok ? ss.papers : [];
-  const merged = mergeDedup(ssPapers, oa).slice(0, limit);
+  // Merge order = ranking priority. SS first (best ranker), then OA
+  // (broadest coverage), then DBLP (CS depth). Backfill semantics
+  // (mergeDedup) mean cite counts and abstracts always come from
+  // whichever backend has them, regardless of merge order.
+  const merged = mergeDedup(mergeDedup(ssPapers, oa), dblp).slice(0, limit);
 
   if (merged.length > 0) {
-    const provider =
-      ssPapers.length > 0 && oa.length > 0 ? 'semanticscholar+openalex'
-      : ssPapers.length > 0 ? 'semanticscholar'
-      : 'openalex';
+    const used: string[] = [];
+    if (ssPapers.length > 0) used.push('semanticscholar');
+    if (oa.length > 0) used.push('openalex');
+    if (dblp.length > 0) used.push('dblp');
     return NextResponse.json({
       papers: merged,
-      provider,
-      hasMore: ssPapers.length === limit || oa.length === limit,
+      provider: used.join('+') || 'merged',
+      hasMore: ssPapers.length === limit || oa.length === limit || dblp.length === limit,
     });
   }
 
@@ -235,5 +244,5 @@ export async function GET(req: NextRequest) {
       { status: ss.status },
     );
   }
-  return NextResponse.json({ papers: [], provider: 'semanticscholar+openalex', hasMore: false });
+  return NextResponse.json({ papers: [], provider: 'semanticscholar+openalex+dblp', hasMore: false });
 }
