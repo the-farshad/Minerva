@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOutAction } from '@/app/actions';
 import { LocalMirrorCard } from '@/components/local-mirror-card';
+import { PublicProfileCard } from '@/components/public-profile-card';
 import { AiCard } from '@/components/ai-card';
 import { ThemeCard } from '@/components/theme-card';
 import { FeedsCard } from '@/components/feeds-card';
@@ -154,6 +155,7 @@ export function SettingsView({
         <p className="mt-2 text-sm">
           Signed in as <strong>{email}</strong>.
         </p>
+        <PublicProfileCard />
         <LocalMirrorCard />
         <AiCard />
         <ThemeCard />

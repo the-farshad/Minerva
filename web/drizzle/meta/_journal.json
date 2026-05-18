@@ -78,6 +78,13 @@
       "when": 1778866626768,
       "tag": "0010_paper_lookup_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1779148800000,
+      "tag": "0011_users_public_profile",
+      "breakpoints": true
     }
   ]
 }

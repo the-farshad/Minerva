@@ -22,8 +22,18 @@ export const users = pgTable('users', {
   // cap on free tier). Stored as bigint because the default exceeds
   // 2 GB and individual videos / paper PDFs can be larger than that.
   quotaBytes: bigint('quotaBytes', { mode: 'number' }).default(5_000_000_000),
+  // Public profile fields — added in Sharing Phase 1. `username` is
+  // the handle other users can search for; lowercase + kebab,
+  // 3-24 chars, unique case-insensitively. `discoverable` defaults
+  // true; flipping it to false hides the user from the search API.
+  username: text('username'),
+  discoverable: boolean('discoverable').default(true).notNull(),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
-});
+}, (t) => ({
+  // Case-insensitive unique on username — two users can't both
+  // grab "Farshad" / "farshad" / "FARSHAD".
+  usernameUniq: uniqueIndex('users_username_lower_uniq').on(t.username),
+}));
 
 export const accounts = pgTable('accounts', {
   userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
