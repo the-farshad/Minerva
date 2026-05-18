@@ -236,6 +236,92 @@ export async function fetchRelatedFromOpenAlex(opts: {
   return { ok: true, papers, resolvedVia: opts.ref ? 'ref' : 'title', dropped };
 }
 
+/**
+ * Direction-aware refs / citations fetch backed by OpenAlex. Mirrors
+ * fetchPaperEdgesFromSS — same return shape — so the public refs
+ * route can swap in OA whenever SS is rate-limiting and the seed
+ * isn't a DOI (where OpenCitations would otherwise step in).
+ *
+ *   direction = 'references' → papers the seed cites.
+ *               Reads the seed work's `referenced_works`.
+ *   direction = 'citations'  → papers that cite the seed.
+ *               Uses /works?filter=cites:<seedId>&sort=cited_by_count:desc.
+ *
+ * Limited at 100 per call (OpenAlex's per_page max). The references
+ * path requires N+1 lookups (1 for the seed, N for the cited works)
+ * but each is cached upstream by Next's revalidate window.
+ */
+export async function fetchPaperEdgesFromOpenAlex(
+  ref: { kind: 'ARXIV' | 'DOI'; id: string },
+  opts: { direction: 'references' | 'citations'; limit?: number },
+): Promise<
+  | { ok: true; papers: RelatedPaper[] }
+  | { ok: false; status: number; error: string }
+> {
+  const limit = Math.min(100, Math.max(1, opts.limit ?? 50));
+  try {
+    // Resolve seed to an OpenAlex Work id (W…). DOI is direct;
+    // arXiv maps to the 10.48550/arXiv.<id> shape that OpenAlex
+    // mints for every modern preprint.
+    const seedKey = ref.kind === 'DOI'
+      ? `doi:${ref.id}`
+      : `doi:${encodeURIComponent('10.48550/arXiv.' + ref.id)}`;
+    const seedR = await fetch(politeUrl(`/works/${seedKey}?select=id,referenced_works`));
+    if (!seedR.ok) {
+      return { ok: false, status: seedR.status, error: `OpenAlex: ${seedR.status}` };
+    }
+    const seed = (await seedR.json()) as OAWork;
+    const seedId = (seed.id || '').replace(/^https:\/\/openalex\.org\//, '');
+    if (!seedId) return { ok: false, status: 404, error: 'OpenAlex returned no seed id.' };
+
+    const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,primary_location,referenced_works';
+
+    if (opts.direction === 'citations') {
+      const url = politeUrl(
+        `/works?filter=cites:${encodeURIComponent(seedId)}` +
+        `&sort=cited_by_count:desc&per_page=${limit}` +
+        `&select=${fields},cited_by_count`,
+      );
+      const r = await fetch(url, { headers: { Accept: 'application/json' }, next: { revalidate: 3600 } });
+      if (!r.ok) return { ok: false, status: r.status, error: `OpenAlex: ${r.status}` };
+      const j = (await r.json()) as { results?: (OAWork & { cited_by_count?: number })[] };
+      const papers = (j.results || []).map((w) => {
+        const p = workToPaper(w);
+        if (typeof w.cited_by_count === 'number') p.citationCount = w.cited_by_count;
+        return p;
+      });
+      return { ok: true, papers };
+    }
+
+    // direction === 'references' — fan out lookups for each cited work.
+    const refIds = (seed.referenced_works || [])
+      .map((u) => u.replace(/^https:\/\/openalex\.org\//, ''))
+      .filter(Boolean)
+      .slice(0, limit);
+    if (refIds.length === 0) return { ok: true, papers: [] };
+    const lookups = refIds.map(async (wid) => {
+      try {
+        const r = await fetch(politeUrl(`/works/${encodeURIComponent(wid)}?select=${fields},cited_by_count`));
+        if (!r.ok) return null;
+        return await r.json() as (OAWork & { cited_by_count?: number });
+      } catch {
+        return null;
+      }
+    });
+    const raw = await Promise.all(lookups);
+    const works = raw.filter((w): w is OAWork & { cited_by_count?: number } => w != null);
+    await backfillTitlesFromCrossRef(works);
+    const papers = works.map((w) => {
+      const p = workToPaper(w);
+      if (typeof w.cited_by_count === 'number') p.citationCount = w.cited_by_count;
+      return p;
+    });
+    return { ok: true, papers };
+  } catch (e) {
+    return { ok: false, status: 502, error: (e as Error).message };
+  }
+}
+
 /** For OpenAlex Works that came back without a title but with a
  *  DOI, fetch the missing title from CrossRef. Mutates the
  *  `works` array in place. Quiet on per-paper failure. */

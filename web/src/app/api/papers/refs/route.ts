@@ -20,6 +20,7 @@ import { resolvePaperRef } from '@/lib/paper-ref';
 import { parseRef } from '@/lib/related-papers/types';
 import { fetchPaperEdgesFromSS } from '@/lib/related-papers/semanticscholar';
 import { fetchPaperEdgesFromOpenCitations } from '@/lib/related-papers/opencitations';
+import { fetchPaperEdgesFromOpenAlex } from '@/lib/related-papers/openalex';
 import { getCachedLookup, setCachedLookup } from '@/lib/paper-cache';
 
 // References / citations drift as upstream re-indexes. A day is a
@@ -108,19 +109,32 @@ export async function GET(req: NextRequest) {
 
   const result = await fetchPaperEdgesFromSS(ref, { direction, limit });
 
-  // OpenCitations fallback. Two real cases drop here:
-  //   1. Semantic Scholar returned 200-ok but zero papers — common
-  //      for older papers Crossref-indexed but absent from SS's
-  //      similarity graph.
-  //   2. SS errored on a transient (rate-limit, network).
-  // OpenCitations is DOI-only, so arXiv-id-only lookups can't
-  // fall back; in that case we surface the SS result as-is.
-  const tryOpenCitations = ref.kind === 'DOI'
-    && ((result.ok && result.papers.length === 0) || (!result.ok && result.status !== 404));
-  if (tryOpenCitations) {
-    const oc = await fetchPaperEdgesFromOpenCitations(ref, { direction, limit });
-    if (oc.ok && oc.papers.length > 0) {
-      const body = { papers: oc.papers, provider: 'opencitations' };
+  // Fallback chain when Semantic Scholar fails or returns empty:
+  //   1. OpenCitations — DOI-only, but free and reliable for cited-DOI
+  //      papers Crossref indexes.
+  //   2. OpenAlex — works for both arXiv and DOI seeds; the only
+  //      fallback that can rescue an arXiv-only ref when SS is
+  //      rate-limiting this IP.
+  // We try both when applicable; whichever returns first non-empty
+  // is what the caller sees.
+  const shouldFallback = (result.ok && result.papers.length === 0)
+    || (!result.ok && result.status !== 404);
+  if (shouldFallback) {
+    if (ref.kind === 'DOI') {
+      const oc = await fetchPaperEdgesFromOpenCitations(ref, { direction, limit });
+      if (oc.ok && oc.papers.length > 0) {
+        const body = { papers: oc.papers, provider: 'opencitations' };
+        await setCachedLookup(cacheKey, body);
+        return NextResponse.json({
+          ...body,
+          ref: `${ref.kind}:${ref.id}`,
+          direction,
+        });
+      }
+    }
+    const oa = await fetchPaperEdgesFromOpenAlex(ref, { direction, limit });
+    if (oa.ok && oa.papers.length > 0) {
+      const body = { papers: oa.papers, provider: 'openalex' };
       await setCachedLookup(cacheKey, body);
       return NextResponse.json({
         ...body,
