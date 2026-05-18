@@ -64,11 +64,18 @@ function workToPaper(w: OAWork): RelatedPaper {
  *  starts with one of these, route the rest of the string into the
  *  matching OpenAlex full-text filter so the match is restricted to
  *  that field. SS has no equivalent — those queries skip SS. */
-const FIELD_PREFIX_RE = /^(title|abstract|author):\s*(.+)$/i;
+const FIELD_PREFIX_RE = /^(title|abstract|author|affiliation|keyword|fulltext|ta):\s*(.+)$/i;
 const OA_FIELD_FILTER: Record<string, string> = {
   title: 'title.search',
   abstract: 'abstract.search',
   author: 'raw_author_name.search',
+  affiliation: 'raw_affiliation_strings.search',
+  keyword: 'keyword.search',
+  fulltext: 'fulltext.search',
+  // `ta:` = "title-and-abstract" — narrows to either field without
+  // forcing one over the other. Useful when the term may appear in
+  // either place (e.g. an algorithm name).
+  ta: 'title_and_abstract.search',
 };
 
 async function searchOpenAlex(

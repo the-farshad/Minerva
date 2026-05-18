@@ -832,17 +832,31 @@ export function LitExplorer() {
             {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching</> : 'Search'}
           </button>
         </label>
-        <p className="mt-1.5 px-2 text-[11px] text-zinc-500">
-          Identifiers (DOI, arXiv, URL) resolve a single paper. Free text searches.
-          Combine terms with <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">AND</code>,{' '}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">OR</code>,{' '}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">NOT</code>, wrap a phrase in{' '}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">&quot;quotes&quot;</code>,
-          or target a field with{' '}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">title:</code>,{' '}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">abstract:</code>,{' '}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">author:</code>.
-        </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-1 px-2 text-[11px] text-zinc-500">
+          <span>Field:</span>
+          {FIELD_PREFIXES.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              title={`Restrict the search to ${f.label.toLowerCase()}`}
+              onClick={() => {
+                // Strip any existing prefix off the query first so
+                // chip-clicks swap prefixes rather than nesting them.
+                const stripped = query.replace(/^(title|abstract|author|affiliation|keyword|fulltext|ta):\s*/i, '');
+                setQuery(`${f.key}:${stripped}`);
+              }}
+              className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-[10px] text-zinc-600 transition hover:border-zinc-400 hover:bg-white hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            >
+              {f.key}:
+            </button>
+          ))}
+          <span className="ml-2 text-zinc-400">
+            · combine with <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">AND</code>{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">OR</code>{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">NOT</code>{' '}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">&quot;quotes&quot;</code>
+          </span>
+        </div>
       </form>
 
       {err && (
@@ -1440,6 +1454,18 @@ function ResultSummary({ papers }: { papers: Paper[] }) {
     </details>
   );
 }
+
+/** Field-search prefixes the user can chip-tap to prepend. Mirrors
+ *  the API's FIELD_PREFIX_RE in /api/papers/search. */
+const FIELD_PREFIXES: { key: string; label: string }[] = [
+  { key: 'title',       label: 'Title' },
+  { key: 'abstract',    label: 'Abstract' },
+  { key: 'ta',          label: 'Title or abstract' },
+  { key: 'author',      label: 'Author' },
+  { key: 'affiliation', label: 'Affiliation / institution' },
+  { key: 'keyword',     label: 'Keyword / concept' },
+  { key: 'fulltext',    label: 'Full text' },
+];
 
 /** Quick-tap examples shown on first load so newcomers see the
  *  search surface without having to read the hint. Each example
