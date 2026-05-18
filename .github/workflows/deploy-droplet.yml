@@ -82,19 +82,18 @@ jobs:
              docker image prune -af 2>&1 | tail -1 || true
              docker builder prune -af 2>&1 | tail -1 || true
              df -h / | tail -1
-             before=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
              echo '[deploy] pulling minerva-web'
              docker compose pull minerva-web
-             after=\$(docker image inspect thefarshad/minerva-web:latest --format '{{.Id}}' 2>/dev/null || echo missing)
-             # Recreate the user-facing web container FIRST. A failed
-             # minerva-services build below must not block the web
-             # rollout — the web image is already on disk and ready.
-             if [ \"\$before\" != \"\$after\" ]; then
-               echo '[deploy] web image changed, force-recreating minerva-web'
-               docker compose up -d --force-recreate --no-deps minerva-web
-             fi
              echo '[deploy] building minerva-services'
              docker compose build minerva-services || echo '[deploy] services build failed - continuing with the rest of the stack'
+             # Single up -d call. compose detects which services'
+             # image-id or build hash changed since the last run and
+             # recreates only those. Splitting into a --force-recreate
+             # pass followed by a full-stack up -d used to race the
+             # docker daemon: the in-flight recreate would rename the
+             # old container with a UUID prefix, then the trailing
+             # up -d would try to operate on the half-renamed name and
+             # fail with "No such container: <uuid>_minerva-web".
              echo '[deploy] up -d (full stack)'
              docker compose up -d
              sleep 10
