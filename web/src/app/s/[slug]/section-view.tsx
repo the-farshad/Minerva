@@ -698,7 +698,7 @@ export function SectionView({
           );
         }
         if (eff === 'list')     return <Table section={section} rows={sorted} onOpen={openPreview} onPatch={patchRow} onDelete={deleteRow} />;
-        if (eff === 'grid')     return <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onRowUpdated={(row) => setRows((rs) => rs.map((x) => (x.id === row.id ? row : x)))} />;
+        if (eff === 'grid')     return <GroupedGrid section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onRowUpdated={(row) => setRows((rs) => rs.map((x) => (x.id === row.id ? row : x)))} onBulkDeleted={(ids) => setRows((rs) => rs.filter((r) => !ids.includes(r.id)))} />;
         if (eff === 'kanban')   return <KanbanView section={section} rows={sorted} onOpen={openPreview} onDelete={deleteRow} onPatch={patchRow} onCreate={createRow} onAddColumn={addColumn} onRenameColumn={renameColumn} onDeleteColumn={deleteColumn} />;
         return <CalendarView section={section} rows={sorted} onOpen={openPreview} />;
       })()}

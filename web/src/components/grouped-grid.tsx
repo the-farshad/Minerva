@@ -93,6 +93,7 @@ export function GroupedGrid({
   onOpen,
   onDelete,
   onRowUpdated,
+  onBulkDeleted,
 }: {
   section: Section;
   rows: Row[];
@@ -102,6 +103,12 @@ export function GroupedGrid({
    * bulk metadata refresh) so the parent's cache replaces it
    * in-place instead of waiting for a full refetch. */
   onRowUpdated?: (row: Row) => void;
+  /** Called after a successful bulk-delete (delete-all-in-group)
+   * with the row IDs the user expected to disappear. Lets the
+   * parent drop them from its local rows array right away so the
+   * group vanishes without waiting for router.refresh() or the
+   * SSE catch-up. */
+  onBulkDeleted?: (rowIds: string[]) => void;
 }) {
   const router = useRouter();
   const groupCol = GROUP_COL(section.schema.headers);
@@ -390,31 +397,48 @@ export function GroupedGrid({
                 <div className="ml-2"><ReadingTimeTotal rows={groupRows} /></div>
               )}
               {section.preset === 'youtube' && (() => {
-                /* Find the first YouTube playlist URL in this group
-                 * (rows have data.url like
-                 * `https://youtube.com/watch?v=…&list=PL…`). If any
-                 * row carries one, surface a small clickable link to
-                 * the playlist itself — quick jump to the canonical
-                 * YouTube view without leaving the group context.
-                 * Skipped when no row has `list=` in its URL. */
+                /* For groups that look like a YouTube playlist
+                 * (any row carrying `list=…` in its URL), surface
+                 * a small info pill with the playlist name, the
+                 * video count, and a quick-jump link to the
+                 * canonical YouTube playlist view. Skipped when
+                 * no row in the group has `list=`.
+                 */
                 const PL_RE = /[?&]list=([A-Za-z0-9_-]+)/;
                 let listId = '';
+                let playlistName = '';
                 for (const gr of groupRows) {
-                  const url = String((gr.data as Record<string, unknown>).url || '');
-                  const m = url.match(PL_RE);
-                  if (m) { listId = m[1]; break; }
+                  const data = gr.data as Record<string, unknown>;
+                  if (!listId) {
+                    const m = String(data.url || '').match(PL_RE);
+                    if (m) listId = m[1];
+                  }
+                  if (!playlistName && typeof data.playlist === 'string' && data.playlist) {
+                    playlistName = data.playlist;
+                  }
+                  if (listId && playlistName) break;
                 }
                 if (!listId) return null;
+                const label = playlistName || `Playlist ${listId.slice(0, 10)}…`;
                 return (
-                  <a
-                    href={`https://www.youtube.com/playlist?list=${listId}`}
-                    target="_blank"
-                    rel="noopener"
-                    title="Open this playlist on YouTube"
-                    className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  <span
+                    title={playlistName ? `Playlist "${playlistName}" · ${groupRows.length} video${groupRows.length === 1 ? '' : 's'}` : `YouTube playlist · ${groupRows.length} video${groupRows.length === 1 ? '' : 's'}`}
+                    className="ml-1 inline-flex max-w-[260px] items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
                   >
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
+                    <Info className="h-3 w-3 shrink-0 text-zinc-500" />
+                    <span className="truncate">{label}</span>
+                    <span className="shrink-0 text-zinc-400">· {groupRows.length}</span>
+                    <a
+                      href={`https://www.youtube.com/playlist?list=${listId}`}
+                      target="_blank"
+                      rel="noopener"
+                      title="Open this playlist on YouTube"
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </span>
                 );
               })()}
               <div className="ml-auto flex flex-wrap items-center gap-1">
@@ -618,7 +642,21 @@ export function GroupedGrid({
                               ? `Deleted ${del} · removed "${key}" from ${untag} multi-tagged item${untag === 1 ? '' : 's'}.`
                               : `Deleted ${del} items.`;
                             toast.success(msg);
-                            router.refresh();
+                            // Optimistic local removal so the group
+                            // disappears the moment the delete
+                            // request returns, no page refresh.
+                            // For multi-tagged rows that were only
+                            // untagged (not deleted), the SSE row-
+                            // updated event will re-add them with
+                            // the updated tag set, so eventual
+                            // consistency holds. router.refresh()
+                            // is the last-resort fallback for
+                            // callers that don't wire the callback.
+                            if (onBulkDeleted) {
+                              onBulkDeleted(groupRows.map((r) => r.id));
+                            } else {
+                              router.refresh();
+                            }
                           } catch (e) {
                             notify.error('Delete failed: ' + (e as Error).message);
                           }
