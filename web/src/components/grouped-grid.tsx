@@ -1100,6 +1100,7 @@ function CardActions({
   onRowUpdated?: (row: Row) => void;
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const isOffliable = (section.preset === 'youtube' || section.preset === 'papers')
     && typeof row.data.url === 'string' && !!row.data.url;
   const kind = section.preset === 'youtube' ? 'video' : 'paper';
@@ -1236,6 +1237,12 @@ function CardActions({
               >
                 <Info className="h-3.5 w-3.5" /> Info
               </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onSelect={(e) => { e.preventDefault(); setShareOpen(true); }}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <Share2 className="h-3.5 w-3.5" /> Share…
+              </DropdownMenu.Item>
               {section.preset === 'papers' && (
                 <DropdownMenu.Item asChild>
                   <Link
@@ -1289,6 +1296,13 @@ function CardActions({
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </div>
+      <ShareDialog
+        scope="row"
+        targetId={row.id}
+        targetTitle={String(row.data.title || row.data.name || row.data.url || row.id)}
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+      />
       {/* Info dialog — modal so it actually shows up regardless of
         * scroll position / overflow clipping that broke the earlier
         * Popover.Anchor version. */}
