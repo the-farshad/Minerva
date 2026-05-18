@@ -13,7 +13,7 @@
  */
 import { useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Download, Sun, Moon } from 'lucide-react';
+import { Download, Sun, Moon, Type } from 'lucide-react';
 import {
   exportPNGFromCanvas,
   exportSVGFromCanvas,
@@ -23,6 +23,7 @@ import {
   exportPDFFromSVG,
   exportGraphJSON,
   exportGraphML,
+  nodesToSVG,
   type ExportNode,
   type ExportLink,
 } from './graph-export';
@@ -45,6 +46,9 @@ export type GraphExportSource = {
   graphData?: { nodes: ExportNode[]; links: ExportLink[] };
 };
 
+export type ExportFontSize = 'S' | 'M' | 'L' | 'XL';
+const FONT_PX: Record<ExportFontSize, number> = { S: 9, M: 11, L: 14, XL: 18 };
+
 export function GraphExportMenu({
   filename,
   source,
@@ -57,6 +61,11 @@ export function GraphExportMenu({
   onBgChange: (next: ExportBg) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [fontSize, setFontSize] = useState<ExportFontSize>('M');
+  // Text colour: 'auto' leaves the chart's own colours alone;
+  // every other value forces every <text> fill to that colour
+  // at serialise time so labels read the way the user wants.
+  const [textColor, setTextColor] = useState<'auto' | 'black' | 'white' | 'invert-bg'>('auto');
 
   async function doExport(format: 'png' | 'svg' | 'pdf' | 'json' | 'graphml') {
     if (busy) return;
@@ -64,16 +73,39 @@ export function GraphExportMenu({
     try {
       const fn = `${filename}.${format}`;
       const canvas = source.canvasEl?.() ?? null;
-      const svg = source.svgEl?.() ?? null;
+      const liveSvg = source.svgEl?.() ?? null;
       const bgHex = BG_HEX[bg];
+      // Resolve text colour. 'invert-bg' produces white-on-dark
+      // and black-on-light without the user picking explicitly.
+      const resolvedTextColor =
+        textColor === 'auto' ? undefined
+        : textColor === 'invert-bg' ? (bg === 'dark' ? '#fafafa' : '#0b0d10')
+        : textColor === 'white' ? '#fafafa'
+        : '#0b0d10';
+      const styleOpts = { fontSize: FONT_PX[fontSize], textColor: resolvedTextColor };
+
+      // For vector output (SVG / PDF) on a canvas-only graph that
+      // carries node positions in graphData, build a fresh SVG
+      // from those positions and route through the vector path.
+      // That replaces the old "PNG embedded inside an <svg>"
+      // raster-wrapped output with a true scalable vector.
+      let svgForVector: SVGSVGElement | null = liveSvg;
+      if (!svgForVector && (format === 'svg' || format === 'pdf') && source.graphData) {
+        svgForVector = nodesToSVG(source.graphData.nodes, source.graphData.links, {
+          bg: bgHex,
+          fontSize: FONT_PX[fontSize],
+          textColor: resolvedTextColor,
+        });
+      }
+
       if (format === 'png') {
         if (canvas) exportPNGFromCanvas(canvas, fn, bgHex);
-        else if (svg) await exportPNGFromSVG(svg, fn, bgHex);
+        else if (liveSvg) await exportPNGFromSVG(liveSvg, fn, bgHex, styleOpts);
       } else if (format === 'svg') {
-        if (svg) exportSVGFromElement(svg, fn, bgHex);
+        if (svgForVector) exportSVGFromElement(svgForVector, fn, bgHex, styleOpts);
         else if (canvas) exportSVGFromCanvas(canvas, fn, bgHex);
       } else if (format === 'pdf') {
-        if (svg) await exportPDFFromSVG(svg, fn, bgHex);
+        if (svgForVector) await exportPDFFromSVG(svgForVector, fn, bgHex, styleOpts);
         else if (canvas) await exportPDFFromCanvas(canvas, fn, bgHex);
       } else if (format === 'json' && source.graphData) {
         exportGraphJSON(source.graphData.nodes, source.graphData.links, fn);
@@ -87,14 +119,15 @@ export function GraphExportMenu({
 
   const itemCls = 'flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800';
 
-  // canVector requires an SVG source today. canvas→vector via
-  // node-position snapshot is queued as a follow-up (raster-wrapped
-  // is the current fallback path on canvas-only graphs).
   const hasCanvas = !!source.canvasEl;
   const hasSvg = !!source.svgEl;
   const hasData = !!source.graphData;
   const canRaster = hasCanvas || hasSvg;
-  const canVector = hasSvg;
+  // True-vector output is available when a live SVG element
+  // exists OR when the source carries node positions we can
+  // rebuild an SVG from (nodesToSVG handles force-layout graphs).
+  const canVector = hasSvg || (hasData
+    && (source.graphData!.nodes.some((n) => Number.isFinite(n.x) && Number.isFinite(n.y))));
 
   const bgChip = (id: ExportBg, label: string, Icon: typeof Sun) => (
     <button
@@ -162,18 +195,64 @@ export function GraphExportMenu({
           )}
           <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
           <div
-            className="flex items-center justify-between gap-2 px-2 py-1.5"
-            // The chip row sits inside a DropdownMenu — without
+            className="space-y-1.5 px-2 py-1.5"
+            // The control rows sit inside a DropdownMenu — without
             // stopping propagation a click closes the menu before
             // the selection registers. Stops on the wrapper, not on
             // each chip, so the buttons still receive their click.
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            <span className="text-[10px] uppercase tracking-wide text-zinc-500">Background</span>
-            <div className="flex items-center gap-0.5">
-              {bgChip('light', 'light', Sun)}
-              {bgChip('dark', 'dark', Moon)}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">Background</span>
+              <div className="flex items-center gap-0.5">
+                {bgChip('light', 'light', Sun)}
+                {bgChip('dark', 'dark', Moon)}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">Text size</span>
+              <div className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                {(['S', 'M', 'L', 'XL'] as ExportFontSize[]).map((sz) => (
+                  <button
+                    key={sz}
+                    type="button"
+                    onClick={() => setFontSize(sz)}
+                    className={`rounded-full px-2 py-0.5 text-[10px] transition ${
+                      fontSize === sz
+                        ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+                        : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                    }`}
+                  >
+                    {sz}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">Text colour</span>
+              <div className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                {(['auto', 'invert-bg', 'black', 'white'] as const).map((tc) => (
+                  <button
+                    key={tc}
+                    type="button"
+                    onClick={() => setTextColor(tc)}
+                    title={
+                      tc === 'auto' ? 'Auto — keep the chart\'s colours'
+                      : tc === 'invert-bg' ? 'Auto-invert against the background'
+                      : tc === 'black' ? 'Force black'
+                      : 'Force white'
+                    }
+                    className={`rounded-full px-2 py-0.5 text-[10px] transition ${
+                      textColor === tc
+                        ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+                        : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                    }`}
+                  >
+                    {tc === 'auto' ? 'auto' : tc === 'invert-bg' ? <Type className="inline h-3 w-3" /> : tc === 'black' ? '●' : '○'}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </DropdownMenu.Content>

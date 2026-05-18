@@ -81,7 +81,11 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
     let totalSec = 0;
     let watchedSec = 0;
     let completed = 0;
+    let started = 0;
     let withDuration = 0;
+    let lastWatchedTitle = '';
+    let lastWatchedAt = 0;
+    let avgDurSec = 0;
     for (const r of rows) {
       const data = r.data;
       const url = String(data.url || '');
@@ -89,80 +93,177 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
         const m = url.match(/[?&]list=([A-Za-z0-9_-]+)/);
         if (m) listId = m[1];
       }
-      const durRaw = Number(data.duration || data.seconds || 0);
-      const dur = Number.isFinite(durRaw) && durRaw > 0 ? durRaw : 0;
+      // Be generous about field names — YouTube imports have
+      // landed under `duration`, `seconds`, `lengthSeconds`, and a
+      // formatted `length` string ("12:34" / "1:02:34") at various
+      // times. Accept any of them.
+      const dur = parseDurationLike(
+        data.duration ?? data.seconds ?? data.lengthSeconds ?? data.length ?? data.runtime,
+      );
       if (dur > 0) {
         totalSec += dur;
         withDuration++;
       }
       try {
-        const resume = typeof window !== 'undefined'
+        const resume = typeof window !== 'undefined' && url
           ? localStorage.getItem('minerva.v2.resume.' + url)
           : null;
         if (resume != null) {
           const pos = Number(resume);
           if (Number.isFinite(pos) && pos > 0) {
+            started++;
             watchedSec += dur > 0 ? Math.min(pos, dur) : pos;
             if (dur > 0 && pos >= dur * 0.9) completed++;
+            // Sniff a last-modified timestamp out of resume time
+            // metadata if the player wrote one — falls back to
+            // any title we can find on this row.
+            const title = String(data.title || data.name || '');
+            if (title) {
+              const accessed = typeof data._accessedAt === 'string' ? Date.parse(data._accessedAt) : 0;
+              if (accessed > lastWatchedAt) {
+                lastWatchedAt = accessed;
+                lastWatchedTitle = title;
+              }
+            }
           }
         }
       } catch { /* private mode / storage-disabled tolerate */ }
     }
-    const pct = totalSec > 0 ? Math.min(100, Math.round((watchedSec / totalSec) * 100)) : 0;
+    avgDurSec = withDuration > 0 ? Math.round(totalSec / withDuration) : 0;
+    const pct = totalSec > 0
+      ? Math.min(100, Math.round((watchedSec / totalSec) * 100))
+      // No duration anywhere — fall back to completion rate over
+      // count so the donut still says something useful.
+      : Math.round((started / Math.max(1, rows.length)) * 100);
+    // "At this pace" estimate — extrapolate from the per-video
+    // completion rate if we have any data. Cosmetic; rounded
+    // aggressively so a flat day doesn't show "100 years left".
+    let etaText = '';
+    if (totalSec > 0 && watchedSec > 0 && watchedSec < totalSec) {
+      const remainingSec = totalSec - watchedSec;
+      const oneHourChunks = Math.ceil(remainingSec / 3600);
+      if (oneHourChunks <= 1) etaText = '~1h left';
+      else if (oneHourChunks <= 24) etaText = `~${oneHourChunks}h left`;
+      else etaText = `~${Math.ceil(oneHourChunks / 8)} sessions left (8 h each)`;
+    }
     return {
       listId,
       totalSec,
       watchedSec,
       remainingSec: Math.max(0, totalSec - watchedSec),
       completed,
+      started,
       pct,
       withDuration,
+      avgDurSec,
+      lastWatchedTitle,
+      etaText,
     };
   }, [rows]);
 
   const hasDurations = stats.withDuration > 0;
 
   return (
-    <div className="space-y-4">
-      {hasDurations ? (
-        <div className="flex items-center gap-5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <ProgressDonut pct={stats.pct} />
-          <div className="space-y-1 text-sm">
-            <div className="flex items-center gap-2">
-              <Eye className="h-3.5 w-3.5 text-zinc-500" />
-              <span>Watched: <strong>{fmtDuration(stats.watchedSec)}</strong></span>
-            </div>
-            <div className="flex items-center gap-2">
-              <EyeOff className="h-3.5 w-3.5 text-zinc-500" />
-              <span>Remaining: <strong>{fmtDuration(stats.remainingSec)}</strong></span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Clock className="h-3.5 w-3.5 text-zinc-500" />
-              <span>Total: <strong>{fmtDuration(stats.totalSec)}</strong></span>
-            </div>
+    <div className="space-y-3">
+      <div className="flex items-center gap-5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <ProgressDonut pct={stats.pct} />
+        <div className="space-y-1 text-sm">
+          {hasDurations ? (
+            <>
+              <div className="flex items-center gap-2">
+                <Eye className="h-3.5 w-3.5 text-zinc-500" />
+                <span>Watched: <strong>{fmtDuration(stats.watchedSec)}</strong></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <EyeOff className="h-3.5 w-3.5 text-zinc-500" />
+                <span>Remaining: <strong>{fmtDuration(stats.remainingSec)}</strong></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Clock className="h-3.5 w-3.5 text-zinc-500" />
+                <span>Total: <strong>{fmtDuration(stats.totalSec)}</strong></span>
+              </div>
+            </>
+          ) : (
             <div className="text-xs text-zinc-500">
-              {stats.completed} of {rows.length} video{rows.length === 1 ? '' : 's'} completed
+              No per-video duration stored on these rows yet — the percentage falls back to videos-started ÷ total. Run Refresh metadata from the three-dots to pull durations from YouTube.
             </div>
+          )}
+          <div className="text-xs text-zinc-500">
+            {stats.completed} completed · {Math.max(0, stats.started - stats.completed)} in progress · {Math.max(0, rows.length - stats.started)} unstarted
           </div>
         </div>
-      ) : (
-        <p className="rounded-md border border-zinc-200 bg-zinc-50/60 p-3 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
-          No duration data on these videos yet — progress is tracked but the totals can't be summed.
-        </p>
-      )}
+      </div>
+
+      {/* Secondary stat row — average length, ETA, link. Only the
+       *  fields with real values show; the rest collapse. */}
+      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        {stats.avgDurSec > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2 py-0.5 dark:border-zinc-800">
+            <Clock className="h-3 w-3 text-zinc-500" />
+            avg <strong>{fmtDuration(stats.avgDurSec)}</strong> / video
+          </span>
+        )}
+        {stats.etaText && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2 py-0.5 dark:border-zinc-800">
+            <EyeOff className="h-3 w-3 text-zinc-500" />
+            {stats.etaText}
+          </span>
+        )}
+        {stats.lastWatchedTitle && (
+          <span className="inline-flex max-w-[280px] items-center gap-1 rounded-full border border-zinc-200 px-2 py-0.5 dark:border-zinc-800">
+            <Eye className="h-3 w-3 text-zinc-500" />
+            last watched: <span className="truncate">{stats.lastWatchedTitle}</span>
+          </span>
+        )}
+      </div>
+
+      {/* Original-playlist jump-link is the user's most asked-for
+       *  shortcut here, so it gets its own emphasised row when a
+       *  listId is discoverable on any row. */}
       {stats.listId && (
         <a
           href={`https://www.youtube.com/playlist?list=${stats.listId}`}
           target="_blank"
           rel="noopener"
-          className="inline-flex items-center gap-2 rounded-full border border-zinc-200 px-3 py-1 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
         >
-          <ExternalLink className="h-3 w-3" />
+          <ExternalLink className="h-3.5 w-3.5" />
           Open “{groupKey}” on YouTube
+          <span className="ml-auto text-[10px] text-zinc-500">youtube.com/playlist?list={stats.listId.slice(0, 12)}…</span>
         </a>
       )}
     </div>
   );
+}
+
+/** Coerce a duration field into seconds, accepting any of:
+ *  number, numeric string, "HH:MM:SS", "MM:SS", "12m", "1h 2m".
+ *  Returns 0 for anything unrecognisable. */
+function parseDurationLike(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === 'number') return Number.isFinite(v) && v > 0 ? v : 0;
+  if (typeof v !== 'string') return 0;
+  const s = v.trim();
+  if (!s) return 0;
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  // HH:MM:SS / MM:SS
+  if (/^\d{1,3}:\d{1,2}(:\d{1,2})?$/.test(s)) {
+    const parts = s.split(':').map(Number);
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  // "1h 2m 3s" / "12m" — pick out any h/m/s with a leading number.
+  let total = 0;
+  const m = s.match(/(\d+)\s*h/i);
+  if (m) total += Number(m[1]) * 3600;
+  const mm = s.match(/(\d+)\s*m\b/i);
+  if (mm) total += Number(mm[1]) * 60;
+  const ss = s.match(/(\d+)\s*s\b/i);
+  if (ss) total += Number(ss[1]);
+  return total;
 }
 
 function ProgressDonut({ pct, size = 88 }: { pct: number; size?: number }) {
@@ -333,7 +434,7 @@ function NotesBody({ rows }: { rows: Row[] }) {
 
 // ──────────────────────────── Common ─────────────────────────────
 
-function RecentlyAdded({ rows, preset }: { rows: Row[]; preset: string }) {
+function RecentlyAdded({ rows }: { rows: Row[]; preset?: string }) {
   const recent = useMemo(() => {
     return [...rows]
       .sort((a, b) => (b.createdAt || b.updatedAt || '').localeCompare(a.createdAt || a.updatedAt || ''))
@@ -355,7 +456,6 @@ function RecentlyAdded({ rows, preset }: { rows: Row[]; preset: string }) {
           );
         })}
       </ul>
-      <p className="mt-1 text-[10px] text-zinc-500">preset: {preset || 'generic'}</p>
     </div>
   );
 }

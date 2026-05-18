@@ -133,7 +133,16 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
           source={{
             canvasEl,
             graphData: {
-              nodes: nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers } })),
+              // Carry x/y for true-vector export via nodesToSVG.
+              nodes: nodes.map((n) => ({
+                id: n.id,
+                label: n.label,
+                x: n.x,
+                y: n.y,
+                size: nodeRadius(n),
+                color: nodeFill(n),
+                attrs: { papers: n.papers },
+              })),
               links: links.map((l) => ({
                 source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
                 target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),

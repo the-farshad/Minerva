@@ -213,7 +213,20 @@ export function AuthorGraph({
             canvasEl: () => layout === 'force' ? canvasEl() : null,
             svgEl: () => layout === 'circular' ? svgRef.current : null,
             graphData: {
-              nodes: nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers, isFocal: n.isFocal } })),
+              // Carry x/y/size so the exporter can rebuild a true-
+              // vector SVG of the force layout via nodesToSVG.
+              // react-force-graph-2d mutates x/y onto each node
+              // after the simulation runs, so reading them off the
+              // same array we passed in is correct here.
+              nodes: nodes.map((n) => ({
+                id: n.id,
+                label: n.label,
+                x: n.x,
+                y: n.y,
+                size: nodeRadius(n),
+                color: nodeFill(n),
+                attrs: { papers: n.papers, isFocal: n.isFocal },
+              })),
               links: links.map((l) => ({
                 source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
                 target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),

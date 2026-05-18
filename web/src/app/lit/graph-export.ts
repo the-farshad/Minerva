@@ -12,6 +12,16 @@
 export type ExportNode = {
   id: string;
   label?: string;
+  /** Mutated in place by force-simulation libraries (react-force-
+   *  graph-2d in particular). Carrying them here lets the exporter
+   *  rebuild a true-vector SVG of a canvas-rendered force graph
+   *  without an extra round-trip through the canvas. */
+  x?: number;
+  y?: number;
+  /** Optional radius hint for the rendered circle. */
+  size?: number;
+  /** Optional fill colour; falls back to a neutral default. */
+  color?: string;
   attrs?: Record<string, string | number | boolean | undefined>;
 };
 
@@ -19,6 +29,18 @@ export type ExportLink = {
   source: string;
   target: string;
   weight?: number;
+};
+
+/** Per-export style overrides applied at serialise time. */
+export type ExportStyle = {
+  /** Background colour for raster outputs and the SVG bg-rect.
+   *  Pass 'transparent' to skip painting one (SVG only). */
+  bg?: string;
+  /** If set, every <text> in the exported SVG is forced to this
+   *  font size. Lets the user bump up labels for slide use. */
+  fontSize?: number;
+  /** If set, every <text>'s fill is forced to this colour. */
+  textColor?: string;
 };
 
 export function downloadBlob(content: string, filename: string, mime: string) {
@@ -144,7 +166,15 @@ function inlineComputedStyles(src: SVGSVGElement): SVGSVGElement {
   return clone;
 }
 
-function serializeSVG(svg: SVGSVGElement, bg: string = '#ffffff'): string {
+function applyTextStyle(clone: SVGSVGElement, style?: Pick<ExportStyle, 'fontSize' | 'textColor'>) {
+  if (!style || (style.fontSize == null && !style.textColor)) return;
+  clone.querySelectorAll('text').forEach((t) => {
+    if (style.fontSize != null) t.setAttribute('font-size', String(style.fontSize));
+    if (style.textColor) t.setAttribute('fill', style.textColor);
+  });
+}
+
+function serializeSVG(svg: SVGSVGElement, bg: string = '#ffffff', style?: Pick<ExportStyle, 'fontSize' | 'textColor'>): string {
   const clone = inlineComputedStyles(svg);
   if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   if (!clone.getAttribute('xmlns:xlink')) clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
@@ -154,6 +184,7 @@ function serializeSVG(svg: SVGSVGElement, bg: string = '#ffffff'): string {
   // file. Cleaner than threading an "exporting" state into every
   // component and conditioning render on it.
   clone.querySelectorAll('[data-export-hide]').forEach((el) => el.remove());
+  applyTextStyle(clone, style);
   const { width, height } = getSVGSize(svg);
   clone.setAttribute('width', String(width));
   clone.setAttribute('height', String(height));
@@ -169,9 +200,9 @@ function serializeSVG(svg: SVGSVGElement, bg: string = '#ffffff'): string {
   return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
 }
 
-export function exportSVGFromElement(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff') {
+export function exportSVGFromElement(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff', style?: Pick<ExportStyle, 'fontSize' | 'textColor'>) {
   if (!svg) return;
-  downloadBlob(serializeSVG(svg, bg), filename, 'image/svg+xml;charset=utf-8');
+  downloadBlob(serializeSVG(svg, bg, style), filename, 'image/svg+xml;charset=utf-8');
 }
 
 /** Resolution multiplier for SVG→PNG rasterisation. Vector paths
@@ -186,10 +217,10 @@ const EXPORT_RASTER_SCALE = 3;
  *  with non-same-origin content — get refused by the browser).
  *  Optional `scale` overrides the default high-res multiplier when
  *  a caller wants a 1× preview-sized output. */
-function svgToRasterDataURL(svg: SVGSVGElement, bg: string = '#ffffff', scale: number = EXPORT_RASTER_SCALE): Promise<{ dataUrl: string; width: number; height: number } | null> {
+function svgToRasterDataURL(svg: SVGSVGElement, bg: string = '#ffffff', scale: number = EXPORT_RASTER_SCALE, style?: Pick<ExportStyle, 'fontSize' | 'textColor'>): Promise<{ dataUrl: string; width: number; height: number } | null> {
   return new Promise((resolve) => {
     const { width, height } = getSVGSize(svg);
-    const svgStr = serializeSVG(svg, bg);
+    const svgStr = serializeSVG(svg, bg, style);
     const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -213,9 +244,9 @@ function svgToRasterDataURL(svg: SVGSVGElement, bg: string = '#ffffff', scale: n
   });
 }
 
-export async function exportPNGFromSVG(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff') {
+export async function exportPNGFromSVG(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff', style?: Pick<ExportStyle, 'fontSize' | 'textColor'>) {
   if (!svg) return;
-  const raster = await svgToRasterDataURL(svg, bg);
+  const raster = await svgToRasterDataURL(svg, bg, EXPORT_RASTER_SCALE, style);
   if (!raster) return;
   const a = document.createElement('a');
   a.href = raster.dataUrl; a.download = filename;
@@ -224,7 +255,7 @@ export async function exportPNGFromSVG(svg: SVGSVGElement | null, filename: stri
   document.body.removeChild(a);
 }
 
-export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff') {
+export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff', style?: Pick<ExportStyle, 'fontSize' | 'textColor'>) {
   if (!svg) return;
   // Vector PDF via svg2pdf.js — converts SVG paths / text / shapes
   // into native PDF drawing operations rather than rasterising
@@ -245,6 +276,10 @@ export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: stri
     format: [width, height],
   });
   const clone = inlineComputedStyles(svg);
+  // Strip in-chart UI controls (zoom-reset etc.) before they
+  // leak into the PDF — same rule serializeSVG applies.
+  clone.querySelectorAll('[data-export-hide]').forEach((el) => el.remove());
+  applyTextStyle(clone, style);
   // svg2pdf needs the clone attached to the DOM to measure text;
   // park it off-screen during the conversion.
   clone.setAttribute('width', String(width));
@@ -252,13 +287,15 @@ export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: stri
   // Background rect — without this svg2pdf leaves the page
   // transparent, which prints as whatever the PDF viewer's
   // theme defaults to (usually black on dark mode readers).
-  const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-  bgRect.setAttribute('x', '0');
-  bgRect.setAttribute('y', '0');
-  bgRect.setAttribute('width', String(width));
-  bgRect.setAttribute('height', String(height));
-  bgRect.setAttribute('fill', bg);
-  clone.insertBefore(bgRect, clone.firstChild);
+  if (bg !== 'transparent') {
+    const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bgRect.setAttribute('x', '0');
+    bgRect.setAttribute('y', '0');
+    bgRect.setAttribute('width', String(width));
+    bgRect.setAttribute('height', String(height));
+    bgRect.setAttribute('fill', bg);
+    clone.insertBefore(bgRect, clone.firstChild);
+  }
   const host = document.createElement('div');
   host.style.position = 'fixed';
   host.style.left = '-99999px';
@@ -273,7 +310,7 @@ export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: stri
     // Fall back to the raster path if svg2pdf trips on something
     // (e.g. an exotic SVG feature it can't translate).
     console.warn('[graph-export] svg2pdf failed, falling back to raster PDF', e);
-    const raster = await svgToRasterDataURL(svg, bg);
+    const raster = await svgToRasterDataURL(svg, bg, EXPORT_RASTER_SCALE, style);
     if (raster) {
       pdf.addImage(raster.dataUrl, 'PNG', 0, 0, width, height);
       pdf.save(filename);
@@ -281,6 +318,100 @@ export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: stri
   } finally {
     document.body.removeChild(host);
   }
+}
+
+/** Build a true-vector SVG from force-graph node positions. The
+ *  positions are mutated onto the node objects by react-force-
+ *  graph-2d after the simulation runs; the caller is expected to
+ *  pass that same array. Returns null when fewer than two nodes
+ *  have positions (nothing useful to plot). */
+export function nodesToSVG(
+  nodes: ExportNode[],
+  links: ExportLink[],
+  opts: { bg?: string; fontSize?: number; textColor?: string; nodeFill?: (n: ExportNode) => string } = {},
+): SVGSVGElement | null {
+  const placed = nodes.filter((n) => Number.isFinite(n.x) && Number.isFinite(n.y));
+  if (placed.length < 2) return null;
+  const xs = placed.map((n) => n.x!) as number[];
+  const ys = placed.map((n) => n.y!) as number[];
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const PAD = 60;
+  const W = Math.max(320, Math.ceil(maxX - minX + PAD * 2));
+  const H = Math.max(240, Math.ceil(maxY - minY + PAD * 2));
+  const tx = (x: number) => x - minX + PAD;
+  const ty = (y: number) => y - minY + PAD;
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg') as SVGSVGElement;
+  svg.setAttribute('xmlns', svgNS);
+  svg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', String(W));
+  svg.setAttribute('height', String(H));
+
+  if (opts.bg && opts.bg !== 'transparent') {
+    const bg = document.createElementNS(svgNS, 'rect');
+    bg.setAttribute('x', '0'); bg.setAttribute('y', '0');
+    bg.setAttribute('width', String(W)); bg.setAttribute('height', String(H));
+    bg.setAttribute('fill', opts.bg);
+    svg.appendChild(bg);
+  }
+
+  // Quick lookup for source/target → node so we can rebuild edges
+  // even when the link records carry only string ids.
+  const byId = new Map<string, ExportNode>();
+  for (const n of placed) byId.set(n.id, n);
+
+  // Edges first so node circles sit on top.
+  for (const l of links) {
+    const s = byId.get(l.source);
+    const t = byId.get(l.target);
+    if (!s || !t) continue;
+    if (s.x == null || s.y == null || t.x == null || t.y == null) continue;
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', String(tx(s.x)));
+    line.setAttribute('y1', String(ty(s.y)));
+    line.setAttribute('x2', String(tx(t.x)));
+    line.setAttribute('y2', String(ty(t.y)));
+    line.setAttribute('stroke', opts.bg === '#0b0d10' ? '#a1a1aa' : '#52525b');
+    line.setAttribute('stroke-opacity', '0.45');
+    line.setAttribute('stroke-width', String(0.6 + Math.min(2.4, ((l.weight ?? 1)) * 0.4)));
+    svg.appendChild(line);
+  }
+
+  const textFill = opts.textColor || (opts.bg === '#0b0d10' ? '#e4e4e7' : '#27272a');
+  const fontSize = opts.fontSize ?? 11;
+
+  for (const n of placed) {
+    const r = Math.max(3, n.size ?? 6);
+    const circle = document.createElementNS(svgNS, 'circle');
+    circle.setAttribute('cx', String(tx(n.x!)));
+    circle.setAttribute('cy', String(ty(n.y!)));
+    circle.setAttribute('r', String(r));
+    circle.setAttribute('fill', opts.nodeFill?.(n) ?? n.color ?? '#3b82f6');
+    circle.setAttribute('stroke', opts.bg === '#0b0d10' ? '#18181b' : '#ffffff');
+    circle.setAttribute('stroke-width', '0.6');
+    svg.appendChild(circle);
+
+    if (n.label) {
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', String(tx(n.x!)));
+      text.setAttribute('y', String(ty(n.y!) - r - 4));
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+      text.setAttribute('font-size', String(fontSize));
+      text.setAttribute('fill', textFill);
+      // Truncate long labels — a force graph with 80+ authors
+      // makes the page unreadable if every label runs full.
+      text.textContent = n.label.length > 32 ? n.label.slice(0, 31) + '…' : n.label;
+      svg.appendChild(text);
+    }
+  }
+
+  return svg;
 }
 
 export function exportGraphJSON(nodes: ExportNode[], links: ExportLink[], filename: string) {
