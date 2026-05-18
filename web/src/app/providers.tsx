@@ -9,6 +9,7 @@ import { ConfirmHost } from '@/components/confirm';
 import { PromptHost } from '@/components/prompt';
 import { MultiPickerHost } from '@/components/multi-picker';
 import { IpadPenBridge } from '@/components/ipad-pen-bridge';
+import { RealtimeListener } from '@/components/realtime-listener';
 import { pullServerPrefs } from '@/lib/prefs';
 
 function PrefsBoot() {
@@ -31,6 +32,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <PromptHost />
       <MultiPickerHost />
       <IpadPenBridge />
+      <RealtimeListener />
     </QueryClientProvider>
   );
 }

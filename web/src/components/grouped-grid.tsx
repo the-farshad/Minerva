@@ -287,10 +287,10 @@ export function GroupedGrid({
             setUploadingTo(null);
             uploadTarget.current = null;
             if (videoFileRef.current) videoFileRef.current.value = '';
-            // The freshly-uploaded rows aren't in the parent's
-            // cache for the "new" branch (only attach has
-            // onRowUpdated path); reload to surface them.
-            router.refresh();
+            // The server emits row.created for each freshly-
+            // uploaded row; section-view's SSE handler prepends
+            // them to the local state, so the rows surface
+            // without a router.refresh().
           }}
         />
       )}
@@ -308,10 +308,9 @@ export function GroupedGrid({
           }}
           onSchemaChanged={(nextList) => setCatOptions(nextList)}
           onRowsRewritten={() => {
-            // The server rewrote rows in place — easiest sync is a
-            // full reload of the section page so the local cache
-            // picks up the deletes and the renamed values.
-            router.refresh();
+            // The server emits rows.bulkChanged after a rewrite-tag;
+            // section-view's SSE handler refetches the section's
+            // rows in one round-trip, so no router.refresh() needed.
           }}
         />
       )}
@@ -373,7 +372,8 @@ export function GroupedGrid({
                       const j = (await r.json().catch(() => ({}))) as { rewrote?: number; error?: string };
                       if (!r.ok) throw new Error(j.error || `rewrite-tag: ${r.status}`);
                       toast.success(`Renamed "${key}" → "${to}" on ${j.rewrote ?? 0} row${j.rewrote === 1 ? '' : 's'}.`);
-                      router.refresh();
+                      // SSE rows.bulkChanged triggers a refetch in
+                      // section-view; no router.refresh() needed.
                     } catch (e) {
                       notify.error((e as Error).message);
                     }
@@ -397,12 +397,13 @@ export function GroupedGrid({
                 <div className="ml-2"><ReadingTimeTotal rows={groupRows} /></div>
               )}
               {section.preset === 'youtube' && (() => {
-                /* For groups that look like a YouTube playlist
-                 * (any row carrying `list=…` in its URL), surface
-                 * a small info pill with the playlist name, the
-                 * video count, and a quick-jump link to the
-                 * canonical YouTube playlist view. Skipped when
-                 * no row in the group has `list=`.
+                /* For groups that look like a YouTube playlist —
+                 * EITHER any row carries `list=…` in its URL, OR
+                 * the group is being grouped by playlist with a
+                 * non-empty key — surface an info pill with the
+                 * playlist name, video count, and (when a listId
+                 * is discoverable) a quick-jump link to the
+                 * canonical YouTube playlist view.
                  */
                 const PL_RE = /[?&]list=([A-Za-z0-9_-]+)/;
                 let listId = '';
@@ -418,7 +419,13 @@ export function GroupedGrid({
                   }
                   if (listId && playlistName) break;
                 }
-                if (!listId) return null;
+                // Fall back to the group key when the grid is
+                // grouped on playlist — that key IS the playlist
+                // name, even when stored URLs don't carry `list=`.
+                if (!playlistName && groupCol === 'playlist' && key && key !== '(uncategorised)') {
+                  playlistName = key;
+                }
+                if (!listId && !playlistName) return null;
                 const label = playlistName || `Playlist ${listId.slice(0, 10)}…`;
                 return (
                   <span
@@ -428,16 +435,18 @@ export function GroupedGrid({
                     <Info className="h-3 w-3 shrink-0 text-zinc-500" />
                     <span className="truncate">{label}</span>
                     <span className="shrink-0 text-zinc-400">· {groupRows.length}</span>
-                    <a
-                      href={`https://www.youtube.com/playlist?list=${listId}`}
-                      target="_blank"
-                      rel="noopener"
-                      title="Open this playlist on YouTube"
-                      onClick={(e) => e.stopPropagation()}
-                      className="shrink-0 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
+                    {listId && (
+                      <a
+                        href={`https://www.youtube.com/playlist?list=${listId}`}
+                        target="_blank"
+                        rel="noopener"
+                        title="Open this playlist on YouTube"
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
                   </span>
                 );
               })()}
@@ -658,7 +667,8 @@ export function GroupedGrid({
                                   }).catch(() => undefined),
                                 ));
                                 toast.success(`Set category on ${groupRows.length} items.`);
-                                router.refresh();
+                                // Each PATCH emits row.updated; SSE
+                                // patches each row's local state.
                               }}
                               className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
                             >

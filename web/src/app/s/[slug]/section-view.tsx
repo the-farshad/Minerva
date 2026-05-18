@@ -228,7 +228,9 @@ export function SectionView({
       throw new Error(j.error || `setSelect: ${r.status}`);
     }
     toast.success(`Added column "${name}".`);
-    router.refresh();
+    // Server emits section.changed; the global RealtimeListener
+    // refreshes the RSC tree so the new column lands without a
+    // local router.refresh().
   }
   async function renameColumn(from: string, to: string) {
     const field = pickStatusField();
@@ -246,7 +248,7 @@ export function SectionView({
     }
     const j = (await r.json()) as { rewrote: number };
     toast.success(`Renamed — ${j.rewrote} card${j.rewrote === 1 ? '' : 's'} updated.`);
-    router.refresh();
+    // rows.bulkChanged + section.changed flow through SSE.
   }
   async function deleteColumn(col: string, moveTo: string | null) {
     const field = pickStatusField();
@@ -264,7 +266,7 @@ export function SectionView({
     toast.success(moveTo
       ? `Column removed — ${j.rewrote} card${j.rewrote === 1 ? '' : 's'} moved to "${moveTo}".`
       : `Column removed — ${j.rewrote} card${j.rewrote === 1 ? '' : 's'} untagged.`);
-    router.refresh();
+    // rows.bulkChanged + section.changed flow through SSE.
   }
 
   async function deleteRow(rowId: string) {
@@ -486,7 +488,7 @@ export function SectionView({
     setUploading(0);
     toast.success(`Uploaded ${done}${failed ? ` · ${failed} failed` : ''}.`);
     qc.invalidateQueries({ queryKey: ['rows', section.slug] });
-    router.refresh();
+    // Each upload emits row.created; the SSE handler prepends.
   }
 
   return (
@@ -672,7 +674,7 @@ export function SectionView({
                 if (!r.ok) throw new Error(j.error || String(r.status));
                 toast.success(`Imported · ${j.inserted} new, ${j.updated} updated.`);
                 qc.invalidateQueries({ queryKey: ['rows', section.slug] });
-                router.refresh();
+                // Import emits rows.bulkChanged → SSE refetch.
               } catch (e) {
                 notify.error((e as Error).message);
               }

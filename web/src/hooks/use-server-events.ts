@@ -115,13 +115,26 @@ export function useServerEvents(onEvent?: Handler) {
       // reconciles. Each branch is intentionally narrow — broader
       // invalidations cause unnecessary refetch storms when the
       // user has many sections open.
+      // Helper — true when the current path is /s/<slug> AND the slug
+      // matches the event's sectionSlug. Used to skip router.refresh
+      // on row events when section-view is mounted on this tab and
+      // already patches its rows state locally via its own callback.
+      // Without the skip, every row mutation would trigger a full
+      // RSC re-fetch on top of the optimistic update.
+      const onAffectedSectionPage = (slug: string) => {
+        const p = pathRef.current || '';
+        if (!p.startsWith('/s/')) return false;
+        const seg = p.split(/[?#]/)[0].split('/');
+        return seg[1] === 's' && decodeURIComponent(seg[2] || '') === slug;
+      };
+
       switch (event.kind) {
         case 'row.created':
         case 'row.updated':
         case 'row.deleted':
         case 'rows.bulkChanged':
           qc.invalidateQueries({ queryKey: ['rows', event.sectionSlug] });
-          router.refresh();
+          if (!onAffectedSectionPage(event.sectionSlug)) router.refresh();
           break;
         case 'section.changed':
           qc.invalidateQueries({ queryKey: ['section', event.sectionSlug] });
