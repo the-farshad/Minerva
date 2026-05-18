@@ -53,9 +53,9 @@ function canvasOnBackground(canvas: HTMLCanvasElement, bg: string = '#ffffff'): 
   return { dataUrl: tmp.toDataURL('image/png'), width: tmp.width, height: tmp.height };
 }
 
-export function exportPNGFromCanvas(canvas: HTMLCanvasElement | null, filename: string) {
+export function exportPNGFromCanvas(canvas: HTMLCanvasElement | null, filename: string, bg: string = '#ffffff') {
   if (!canvas) return;
-  const { dataUrl } = canvasOnBackground(canvas);
+  const { dataUrl } = canvasOnBackground(canvas, bg);
   const a = document.createElement('a');
   a.href = dataUrl; a.download = filename;
   document.body.appendChild(a);
@@ -67,9 +67,9 @@ export function exportPNGFromCanvas(canvas: HTMLCanvasElement | null, filename: 
  *  feasible — the force-directed layout is canvas-only — so we
  *  embed the PNG in a minimal SVG envelope. Editable in Inkscape /
  *  Illustrator, scales without quality loss as a single image. */
-export function exportSVGFromCanvas(canvas: HTMLCanvasElement | null, filename: string) {
+export function exportSVGFromCanvas(canvas: HTMLCanvasElement | null, filename: string, bg: string = '#ffffff') {
   if (!canvas) return;
-  const { dataUrl, width, height } = canvasOnBackground(canvas);
+  const { dataUrl, width, height } = canvasOnBackground(canvas, bg);
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <image xlink:href="${dataUrl}" width="${width}" height="${height}"/>
@@ -80,9 +80,9 @@ export function exportSVGFromCanvas(canvas: HTMLCanvasElement | null, filename: 
 /** PDF export via jsPDF. One page sized to the canvas; lazy-import
  *  so the ~250 KB jsPDF bundle stays out of the initial /lit
  *  payload. */
-export async function exportPDFFromCanvas(canvas: HTMLCanvasElement | null, filename: string) {
+export async function exportPDFFromCanvas(canvas: HTMLCanvasElement | null, filename: string, bg: string = '#ffffff') {
   if (!canvas) return;
-  const { dataUrl, width, height } = canvasOnBackground(canvas);
+  const { dataUrl, width, height } = canvasOnBackground(canvas, bg);
   const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF({
     orientation: width >= height ? 'landscape' : 'portrait',
@@ -151,9 +151,9 @@ function serializeSVG(svg: SVGSVGElement, bg: string = '#ffffff'): string {
   return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
 }
 
-export function exportSVGFromElement(svg: SVGSVGElement | null, filename: string) {
+export function exportSVGFromElement(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff') {
   if (!svg) return;
-  downloadBlob(serializeSVG(svg), filename, 'image/svg+xml;charset=utf-8');
+  downloadBlob(serializeSVG(svg, bg), filename, 'image/svg+xml;charset=utf-8');
 }
 
 /** Rasterise an SVG to a data URL via an off-screen <img>. Returns
@@ -182,9 +182,9 @@ function svgToRasterDataURL(svg: SVGSVGElement, bg: string = '#ffffff'): Promise
   });
 }
 
-export async function exportPNGFromSVG(svg: SVGSVGElement | null, filename: string) {
+export async function exportPNGFromSVG(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff') {
   if (!svg) return;
-  const raster = await svgToRasterDataURL(svg);
+  const raster = await svgToRasterDataURL(svg, bg);
   if (!raster) return;
   const a = document.createElement('a');
   a.href = raster.dataUrl; a.download = filename;
@@ -193,7 +193,7 @@ export async function exportPNGFromSVG(svg: SVGSVGElement | null, filename: stri
   document.body.removeChild(a);
 }
 
-export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: string) {
+export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: string, bg: string = '#ffffff') {
   if (!svg) return;
   // Vector PDF via svg2pdf.js — converts SVG paths / text / shapes
   // into native PDF drawing operations rather than rasterising
@@ -218,6 +218,16 @@ export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: stri
   // park it off-screen during the conversion.
   clone.setAttribute('width', String(width));
   clone.setAttribute('height', String(height));
+  // Background rect — without this svg2pdf leaves the page
+  // transparent, which prints as whatever the PDF viewer's
+  // theme defaults to (usually black on dark mode readers).
+  const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bgRect.setAttribute('x', '0');
+  bgRect.setAttribute('y', '0');
+  bgRect.setAttribute('width', String(width));
+  bgRect.setAttribute('height', String(height));
+  bgRect.setAttribute('fill', bg);
+  clone.insertBefore(bgRect, clone.firstChild);
   const host = document.createElement('div');
   host.style.position = 'fixed';
   host.style.left = '-99999px';
@@ -232,7 +242,7 @@ export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: stri
     // Fall back to the raster path if svg2pdf trips on something
     // (e.g. an exotic SVG feature it can't translate).
     console.warn('[graph-export] svg2pdf failed, falling back to raster PDF', e);
-    const raster = await svgToRasterDataURL(svg);
+    const raster = await svgToRasterDataURL(svg, bg);
     if (raster) {
       pdf.addImage(raster.dataUrl, 'PNG', 0, 0, width, height);
       pdf.save(filename);

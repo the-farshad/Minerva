@@ -19,11 +19,7 @@ import { useMemo, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import {
-  exportPNGFromCanvas, exportSVGFromCanvas, exportPDFFromCanvas,
-  exportPNGFromSVG, exportSVGFromElement, exportPDFFromSVG,
-  exportGraphJSON, exportGraphML,
-} from './graph-export';
+import { GraphExportMenu } from './graph-export-menu';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -193,57 +189,34 @@ export function AuthorGraph({
     return (containerRef.current?.querySelector('canvas') as HTMLCanvasElement | null) ?? null;
   }
   // Exports branch on the active layout. Force renders to a canvas
-  // (react-force-graph-2d); circular renders to inline SVG. Each
-  // path needs its own rasterisation/serialisation, and the
-  // canvas-only helpers used to silently no-op on the circular
-  // layout because there was no canvas to grab.
-  function doExportPNG() {
-    if (layout === 'force') exportPNGFromCanvas(canvasEl(), 'lit-coauthors.png');
-    else void exportPNGFromSVG(svgRef.current, 'lit-coauthors.png');
-  }
-  function doExportSVG() {
-    if (layout === 'force') exportSVGFromCanvas(canvasEl(), 'lit-coauthors.svg');
-    else exportSVGFromElement(svgRef.current, 'lit-coauthors.svg');
-  }
-  function doExportPDF() {
-    if (layout === 'force') void exportPDFFromCanvas(canvasEl(), 'lit-coauthors.pdf');
-    else void exportPDFFromSVG(svgRef.current, 'lit-coauthors.pdf');
-  }
-  function doExportJSON() {
-    exportGraphJSON(
-      nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers, isFocal: n.isFocal } })),
-      links,
-      'lit-coauthors.json',
-    );
-  }
-  function doExportGraphML() {
-    exportGraphML(
-      nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers, isFocal: n.isFocal } })),
-      links,
-      'lit-coauthors.graphml',
-    );
-  }
+  // Export negotiation moved into <GraphExportMenu />. The menu
+  // reads the active layout each click via the source factories,
+  // picks the right canvas / svg path, and passes the current
+  // bgMode through to the file so the BG choice actually lands in
+  // the saved output.
 
   return (
     <div ref={containerRef} className="relative">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span>Co-author network — {nodes.length} authors, {links.length} edges</span>
         <span className="text-zinc-300 dark:text-zinc-700">|</span>
-        <button type="button" onClick={doExportPNG}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >PNG</button>
-        <button type="button" onClick={doExportSVG}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >SVG</button>
-        <button type="button" onClick={doExportPDF}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >PDF</button>
-        <button type="button" onClick={doExportJSON}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >JSON</button>
-        <button type="button" onClick={doExportGraphML}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >GraphML</button>
+        <GraphExportMenu
+          filename="lit-coauthors"
+          source={{
+            canvasEl: () => layout === 'force' ? canvasEl() : null,
+            svgEl: () => layout === 'circular' ? svgRef.current : null,
+            graphData: {
+              nodes: nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers, isFocal: n.isFocal } })),
+              links: links.map((l) => ({
+                source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
+                target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
+                weight: l.weight,
+              })),
+            },
+          }}
+          bg={bgMode}
+          onBgChange={setBgMode}
+        />
         <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
           <button
             type="button"

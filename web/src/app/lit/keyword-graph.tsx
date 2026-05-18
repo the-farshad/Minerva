@@ -17,7 +17,7 @@ import { useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import { exportPNGFromCanvas, exportSVGFromCanvas, exportPDFFromCanvas, exportGraphJSON, exportGraphML } from './graph-export';
+import { GraphExportMenu } from './graph-export-menu';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -122,44 +122,28 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
   function canvasEl(): HTMLCanvasElement | null {
     return (containerRef.current?.querySelector('canvas') as HTMLCanvasElement | null) ?? null;
   }
-  function doExportPNG() { exportPNGFromCanvas(canvasEl(), 'lit-keywords.png'); }
-  function doExportSVG() { exportSVGFromCanvas(canvasEl(), 'lit-keywords.svg'); }
-  function doExportPDF() { void exportPDFFromCanvas(canvasEl(), 'lit-keywords.pdf'); }
-  function doExportJSON() {
-    exportGraphJSON(
-      nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers } })),
-      links,
-      'lit-keywords.json',
-    );
-  }
-  function doExportGraphML() {
-    exportGraphML(
-      nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers } })),
-      links,
-      'lit-keywords.graphml',
-    );
-  }
 
   return (
     <div ref={containerRef} className="relative">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span>Title-keyword co-occurrence — {nodes.length} keywords, {links.length} edges</span>
         <span className="text-zinc-300 dark:text-zinc-700">|</span>
-        <button type="button" onClick={doExportPNG}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >PNG</button>
-        <button type="button" onClick={doExportSVG}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >SVG</button>
-        <button type="button" onClick={doExportPDF}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >PDF</button>
-        <button type="button" onClick={doExportJSON}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >JSON</button>
-        <button type="button" onClick={doExportGraphML}
-          className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >GraphML</button>
+        <GraphExportMenu
+          filename="lit-keywords"
+          source={{
+            canvasEl,
+            graphData: {
+              nodes: nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers } })),
+              links: links.map((l) => ({
+                source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
+                target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
+                weight: l.weight,
+              })),
+            },
+          }}
+          bg={bgMode}
+          onBgChange={setBgMode}
+        />
         <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
           <button
             type="button"
