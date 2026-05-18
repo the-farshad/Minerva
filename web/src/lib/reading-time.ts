@@ -18,9 +18,19 @@
 export const MINUTES_PER_PAGE = 6;
 export const WORDS_PER_MINUTE = 180;
 
+/** Sanity ceiling for a paper's page count. PDF metadata often
+ *  reports 200+ pages for stitched lecture-notes booklets, theses,
+ *  or full-issue dumps the user mis-tagged as a paper. Those
+ *  inflate the per-card "~20 h to read" badge to a number that
+ *  reads as garbage. Clamp at MAX_PAGES so a wildly over-large
+ *  reading time gets bounded instead of leaking into every group
+ *  total it touches. */
+const MAX_PAGES = 60;
+
 export function readingMinutesFromPages(pages: number | undefined | null): number | null {
   if (!pages || pages <= 0) return null;
-  return Math.max(1, Math.round(pages * MINUTES_PER_PAGE));
+  const clamped = Math.min(pages, MAX_PAGES);
+  return Math.max(1, Math.round(clamped * MINUTES_PER_PAGE));
 }
 
 export function readingMinutesFromWords(words: number | undefined | null): number | null {

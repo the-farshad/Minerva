@@ -261,6 +261,18 @@ async function crossrefLookup(doi: string) {
   ).join(', ');
   const issued = ((m.issued as { 'date-parts'?: number[][] }) || {})['date-parts']?.[0];
   const stats = await fetchPaperStatsFromSS({ kind: 'DOI', id: doi });
+  // CrossRef returns a `page` string like "123-145" or "e0234".
+  // Parse out the start/end pair and store the integer span so the
+  // reading-time badge has something to estimate from — without
+  // this every DOI-imported paper goes through life with no
+  // per-card "~12 min" pill, even when CrossRef knows the length.
+  let pages: number | undefined;
+  const pageStr = typeof m.page === 'string' ? m.page : '';
+  const pm = pageStr.match(/(\d{1,4})\s*[-–—]\s*(\d{1,4})/);
+  if (pm) {
+    const span = Math.abs(parseInt(pm[2], 10) - parseInt(pm[1], 10)) + 1;
+    if (span > 0 && span <= 200) pages = span;
+  }
   return {
     kind: 'paper',
     provider: 'crossref',
@@ -270,6 +282,7 @@ async function crossrefLookup(doi: string) {
     venue: (m['container-title'] as string[])?.[0] || '',
     doi: m.DOI as string,
     url: (m.URL as string) || `https://doi.org/${doi}`,
+    ...(pages ? { pages } : {}),
     ...(stats || {}),
   };
 }

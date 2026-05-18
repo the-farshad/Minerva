@@ -268,6 +268,23 @@ export function GroupedGrid({
             if (!files.length) return;
             const target = uploadTarget.current;
             const playlist = target && target !== '(uncategorised)' && groupCol === 'playlist' ? target : '';
+            // The reverse proxy in front of the droplet rejects
+            // request bodies past ~100 MB with a 413 that surfaces
+            // in the browser as a bare "NetworkError when
+            // attempting to fetch resource" — useless for the user
+            // to debug. Pre-check each file's size and bail with a
+            // clear message before we even open the request.
+            const MAX_BYTES = 100 * 1024 * 1024;
+            const tooBig = files.find((f) => f.size > MAX_BYTES);
+            if (tooBig) {
+              notify.error(
+                `${tooBig.name} is ${Math.round(tooBig.size / 1024 / 1024)} MB — server limit is ${Math.round(MAX_BYTES / 1024 / 1024)} MB. Split the file or upload elsewhere.`,
+              );
+              setUploadingTo(null);
+              uploadTarget.current = null;
+              if (videoFileRef.current) videoFileRef.current.value = '';
+              return;
+            }
             setUploadingTo(target);
             toast.info(`Uploading ${files.length} video${files.length === 1 ? '' : 's'}${playlist ? ` to "${playlist}"` : ''}…`);
             let done = 0, failed = 0;
@@ -277,7 +294,15 @@ export function GroupedGrid({
                 fd.append('file', file, file.name);
                 if (playlist) fd.append('playlist', playlist);
                 const r = await fetch(`/api/sections/${section.slug}/upload-video`, { method: 'POST', body: fd });
+                // Differentiate a network-level failure from an
+                // HTTP error — fetch only rejects on transport
+                // problems (DNS, connection drop, CORS) which the
+                // generic 'NetworkError' message masks. Surface
+                // a guess at body-size when the response is 413.
                 const j = (await r.json().catch(() => ({}))) as { error?: string; id?: string; data?: Record<string, unknown>; updatedAt?: string };
+                if (r.status === 413) {
+                  throw new Error(`${file.name} is too large for the server's upload limit. Try splitting the file.`);
+                }
                 if (!r.ok) throw new Error(j.error || `upload-video: ${r.status}`);
                 if (j.id && j.data && j.updatedAt && onRowUpdated) {
                   onRowUpdated({ id: j.id, data: j.data, updatedAt: j.updatedAt });

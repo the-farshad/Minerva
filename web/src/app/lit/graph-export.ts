@@ -168,9 +168,16 @@ function inlineComputedStyles(src: SVGSVGElement): SVGSVGElement {
 
 function applyTextStyle(clone: SVGSVGElement, style?: Pick<ExportStyle, 'fontSize' | 'textColor'>) {
   if (!style || (style.fontSize == null && !style.textColor)) return;
-  clone.querySelectorAll('text').forEach((t) => {
-    if (style.fontSize != null) t.setAttribute('font-size', String(style.fontSize));
-    if (style.textColor) t.setAttribute('fill', style.textColor);
+  clone.querySelectorAll<SVGTextElement>('text').forEach((t) => {
+    // Inline style — not the SVG attribute — because the chart's
+    // text elements wear Tailwind utility classes (fill-zinc-500,
+    // text-[10px], …) and a CSS class beats a same-name attribute.
+    // inlineComputedStyles also wrote inline styles on this clone,
+    // so we need style.fill / style.fontSize to overwrite those,
+    // not setAttribute calls that would silently lose. This is the
+    // bug the user hit: "text color seems does not work".
+    if (style.fontSize != null) t.style.fontSize = `${style.fontSize}px`;
+    if (style.textColor) t.style.fill = style.textColor;
   });
 }
 

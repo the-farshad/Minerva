@@ -220,7 +220,14 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
       {/* Original-playlist jump-link is the user's most asked-for
        *  shortcut here, so it gets its own emphasised row when a
        *  listId is discoverable on any row. */}
-      {stats.listId && (
+      {/* Always provide a way to jump to the playlist on YouTube.
+       *  When a listId is parseable out of any row's URL we link
+       *  to the canonical /playlist?list=… page; otherwise (the
+       *  common case for playlists imported video-by-video where
+       *  the list= param wasn't preserved) we link to YouTube's
+       *  search results for the playlist name so the user can
+       *  still navigate to it in one hop. */}
+      {stats.listId ? (
         <a
           href={`https://www.youtube.com/playlist?list=${stats.listId}`}
           target="_blank"
@@ -230,6 +237,17 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
           <ExternalLink className="h-3.5 w-3.5" />
           Open “{groupKey}” on YouTube
           <span className="ml-auto text-[10px] text-zinc-500">youtube.com/playlist?list={stats.listId.slice(0, 12)}…</span>
+        </a>
+      ) : (
+        <a
+          href={`https://www.youtube.com/results?search_query=${encodeURIComponent(groupKey + ' playlist')}`}
+          target="_blank"
+          rel="noopener"
+          className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          Search YouTube for “{groupKey}”
+          <span className="ml-auto text-[10px] text-zinc-500">no list= id stored on these rows</span>
         </a>
       )}
     </div>

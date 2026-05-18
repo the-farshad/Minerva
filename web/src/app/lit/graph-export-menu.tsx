@@ -230,7 +230,7 @@ export function GraphExportMenu({
               </div>
             </div>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] uppercase tracking-wide text-zinc-500">Text colour</span>
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">Text color</span>
               <div className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
                 {(['auto', 'invert-bg', 'black', 'white'] as const).map((tc) => (
                   <button
@@ -238,7 +238,7 @@ export function GraphExportMenu({
                     type="button"
                     onClick={() => setTextColor(tc)}
                     title={
-                      tc === 'auto' ? 'Auto — keep the chart\'s colours'
+                      tc === 'auto' ? 'Auto — keep the chart\'s colors'
                       : tc === 'invert-bg' ? 'Auto-invert against the background'
                       : tc === 'black' ? 'Force black'
                       : 'Force white'
