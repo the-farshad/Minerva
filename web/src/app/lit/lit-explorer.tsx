@@ -1011,9 +1011,8 @@ export function LitExplorer() {
         <FontPicker />
         <p className="text-center">
           <a href="/lit/sources" className="text-zinc-500 hover:text-zinc-700 hover:underline dark:text-zinc-400 dark:hover:text-zinc-200">
-            7 free sources
-          </a>{' '}
-          — arXiv · CrossRef · DBLP · Europe PMC · OpenAlex · OpenCitations · Semantic Scholar
+            Sources
+          </a>
         </p>
         <VersionTag />
       </footer>
