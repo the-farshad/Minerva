@@ -35,6 +35,46 @@ const BG_HEX: Record<ExportBg, string> = {
   dark: '#0b0d10',
 };
 
+/** Trigger a file download for an arbitrary text blob. Shared by
+ *  the CSV + JSON-rows paths (so they don't have to roll the
+ *  anchor-click dance themselves). */
+function downloadText(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Convert a row-array into CSV. Stable column order from the
+ *  union of every row's keys (so a row missing a field still gets
+ *  an empty cell in the right column). RFC-4180-ish: quote any
+ *  field containing comma / quote / newline, double internal
+ *  quotes, separate rows with CRLF. */
+function rowsToCSV(rows: Record<string, unknown>[]): string {
+  if (rows.length === 0) return '';
+  const cols: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    for (const k of Object.keys(r)) {
+      if (!seen.has(k)) { seen.add(k); cols.push(k); }
+    }
+  }
+  const cell = (v: unknown): string => {
+    if (v == null) return '';
+    const s = typeof v === 'string' ? v : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [cols.join(',')];
+  for (const r of rows) {
+    lines.push(cols.map((c) => cell(r[c])).join(','));
+  }
+  return lines.join('\r\n');
+}
+
 export type GraphExportSource = {
   /** Returns the live canvas for raster export (PNG / SVG-wrapped /
    *  PDF-as-image). Return null when the active layout doesn't
@@ -42,8 +82,13 @@ export type GraphExportSource = {
   canvasEl?: () => HTMLCanvasElement | null;
   /** Returns the live SVG element for vector export (SVG / PDF). */
   svgEl?: () => SVGSVGElement | null;
-  /** Structural data — used for JSON / GraphML. */
+  /** Structural data — used for JSON / GraphML on graph-shaped
+   *  charts (nodes + edges). */
   graphData?: { nodes: ExportNode[]; links: ExportLink[] };
+  /** Tabular data for non-graph charts (timelines, sankeys, etc.).
+   *  When present the menu also surfaces JSON / CSV options for
+   *  the raw rows alongside the rendered image. */
+  tableData?: { rows: Record<string, unknown>[] };
 };
 
 export type ExportFontSize = 'S' | 'M' | 'L' | 'XL';
@@ -67,7 +112,7 @@ export function GraphExportMenu({
   // at serialise time so labels read the way the user wants.
   const [textColor, setTextColor] = useState<'auto' | 'black' | 'white' | 'invert-bg'>('auto');
 
-  async function doExport(format: 'png' | 'svg' | 'pdf' | 'json' | 'graphml') {
+  async function doExport(format: 'png' | 'svg' | 'pdf' | 'json' | 'graphml' | 'json-rows' | 'csv') {
     if (busy) return;
     setBusy(true);
     try {
@@ -111,6 +156,10 @@ export function GraphExportMenu({
         exportGraphJSON(source.graphData.nodes, source.graphData.links, fn);
       } else if (format === 'graphml' && source.graphData) {
         exportGraphML(source.graphData.nodes, source.graphData.links, fn);
+      } else if (format === 'json-rows' && source.tableData) {
+        downloadText(JSON.stringify(source.tableData.rows, null, 2), `${filename}.json`, 'application/json;charset=utf-8');
+      } else if (format === 'csv' && source.tableData) {
+        downloadText(rowsToCSV(source.tableData.rows), `${filename}.csv`, 'text/csv;charset=utf-8');
       }
     } finally {
       setBusy(false);
@@ -122,6 +171,7 @@ export function GraphExportMenu({
   const hasCanvas = !!source.canvasEl;
   const hasSvg = !!source.svgEl;
   const hasData = !!source.graphData;
+  const hasTable = !!source.tableData && source.tableData.rows.length > 0;
   const canRaster = hasCanvas || hasSvg;
   // True-vector output is available when a live SVG element
   // exists OR when the source carries node positions we can
@@ -185,11 +235,24 @@ export function GraphExportMenu({
               <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
               <DropdownMenu.Item onSelect={() => void doExport('json')} className={itemCls}>
                 <span className="flex-1">JSON</span>
-                <span className="text-[10px] text-zinc-500">data</span>
+                <span className="text-[10px] text-zinc-500">graph</span>
               </DropdownMenu.Item>
               <DropdownMenu.Item onSelect={() => void doExport('graphml')} className={itemCls}>
                 <span className="flex-1">GraphML</span>
-                <span className="text-[10px] text-zinc-500">data</span>
+                <span className="text-[10px] text-zinc-500">graph</span>
+              </DropdownMenu.Item>
+            </>
+          )}
+          {hasTable && (
+            <>
+              <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+              <DropdownMenu.Item onSelect={() => void doExport('json-rows')} className={itemCls}>
+                <span className="flex-1">JSON</span>
+                <span className="text-[10px] text-zinc-500">rows</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item onSelect={() => void doExport('csv')} className={itemCls}>
+                <span className="flex-1">CSV</span>
+                <span className="text-[10px] text-zinc-500">rows</span>
               </DropdownMenu.Item>
             </>
           )}

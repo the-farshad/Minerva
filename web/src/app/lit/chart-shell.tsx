@@ -15,7 +15,7 @@
  *   </ChartShell>
  */
 import { useRef, useState, type ReactNode, type RefObject } from 'react';
-import { GraphExportMenu, type ExportBg } from './graph-export-menu';
+import { GraphExportMenu, type ExportBg, type GraphExportSource } from './graph-export-menu';
 
 function detectInitialBg(): ExportBg {
   if (typeof document === 'undefined') return 'light';
@@ -31,10 +31,16 @@ export function ChartShell({
   summary,
   children,
   className,
+  tableData,
 }: {
   filename: string;
   summary?: ReactNode;
   className?: string;
+  /** Optional tabular data for the chart — papers / points / rows
+   *  the SVG is plotting. When provided, the Export dropdown also
+   *  surfaces JSON and CSV options for the raw data, in addition
+   *  to PNG / SVG / PDF for the rendered image. */
+  tableData?: GraphExportSource['tableData'];
   children: (svgRef: RefObject<SVGSVGElement | null>) => ReactNode;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -47,7 +53,7 @@ export function ChartShell({
         </div>
         <GraphExportMenu
           filename={filename}
-          source={{ svgEl: () => svgRef.current }}
+          source={{ svgEl: () => svgRef.current, tableData }}
           bg={bg}
           onBgChange={setBg}
         />

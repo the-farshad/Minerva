@@ -68,9 +68,16 @@ export function TimelineChart({
   const cites = datable.map((d) => d.c).concat([seedCites]).filter((n) => n > 0);
   const cMax = cites.length > 0 ? Math.max(...cites) : 1;
 
-  const W = 720;
-  const H = 320;
-  const PAD = { t: 16, r: 14, b: 28, l: 44 };
+  const W = 760;
+  const H = 360;
+  // Padding has to leave room for the largest bubble (radius cap
+  // R_MAX) plus the small text label some bubbles wear above them
+  // (~10 px). The previous PAD.t=16 / PAD.r=14 cropped a max-cited
+  // paper at the top-right corner — bubble centre at PAD.t with
+  // r=28 puts the top edge at y=-12, outside the viewBox, which
+  // SVG overflow:hidden clipped in exports too. With R_MAX=20 and
+  // PAD.t/PAD.r at 40 we have enough headroom for label + ring.
+  const PAD = { t: 40, r: 36, b: 32, l: 50 };
   const innerW = W - PAD.l - PAD.r;
   const innerH = H - PAD.t - PAD.b;
 
@@ -85,8 +92,12 @@ export function TimelineChart({
     if (logMax <= 0) return PAD.t + innerH / 2;
     return PAD.t + innerH - (Math.log10(Math.max(0, c) + 1) / logMax) * innerH;
   }
+  // Capped at R_MAX so the bubble + its top-label + the seed ring
+  // (which adds +4 on top) stay inside the viewBox after PAD.
+  // R_MAX must satisfy R_MAX + 4 + label_height (~12) ≤ PAD.t.
+  const R_MAX = 20;
   function rFor(c: number): number {
-    return Math.max(2.5, Math.min(28, Math.sqrt(Math.max(0, c)) * 0.7));
+    return Math.max(2.5, Math.min(R_MAX, Math.sqrt(Math.max(0, c)) * 0.7));
   }
   // Fill opacity scales with log(cites): 0-cite papers render as
   // pale dots, the top-cited paper fills almost solid. The visual
@@ -124,7 +135,25 @@ export function TimelineChart({
   for (let pow = 1; Math.pow(10, pow - 1) <= cMax; pow++) yTicks.push(Math.pow(10, pow));
 
   return (
-    <ChartShell filename="lit-timeline" summary="Citation timeline · publication year × citation count">
+    <ChartShell
+      filename="lit-timeline"
+      summary="Citation timeline · publication year × citation count"
+      tableData={{
+        rows: [
+          ...(seed && seedYear !== null
+            ? [{ title: seed.title ?? '', year: seedYear, citations: seedCites, role: 'seed', doi: seed.externalIds?.DOI ?? '', arxiv: seed.externalIds?.ArXiv ?? '' }]
+            : []),
+          ...datable.map(({ p, y, c }) => ({
+            title: p.title ?? '',
+            year: y,
+            citations: c,
+            role: 'neighbour',
+            doi: p.externalIds?.DOI ?? '',
+            arxiv: p.externalIds?.ArXiv ?? '',
+          })),
+        ],
+      }}
+    >
       {(svgRef) => (
     <div className="relative w-full">
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Citation timeline">
