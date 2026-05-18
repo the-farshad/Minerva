@@ -10,6 +10,7 @@ import { AuthorGraph } from './author-graph';
 import { KeywordGraph } from './keyword-graph';
 import { ConceptTimeline, type ConceptTimelinePoint } from './concept-timeline';
 import { AuthorProfile, type AuthorProfileData } from './author-profile';
+import { CitationFlow } from './citation-flow';
 import { isPinned, togglePin, getPinned } from './pinned';
 import { applyTheme, applyFont } from '@/components/theme-card';
 import { readPref, writePref } from '@/lib/prefs';
@@ -1043,6 +1044,34 @@ export function LitExplorer() {
                   </ul>
                 </details>
               )}
+              {tab === 'related' && (() => {
+                // Citation-flow sankey lives between Foundations
+                // and Descendants. Hidden when neither wing has
+                // year data the bucket-builder can use.
+                const refsCache = edgeCache[`${ref}:refs`] || [];
+                const citesCache = edgeCache[`${ref}:cites`] || [];
+                if (refsCache.length === 0 && citesCache.length === 0) return null;
+                const seedYear = paper?.year ? Number(paper.year) || undefined : undefined;
+                return (
+                  <details className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/60 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <summary className="cursor-pointer select-none text-zinc-700 dark:text-zinc-300">
+                      <span className="font-medium">Citation flow</span>
+                      <span className="ml-2 text-zinc-500">
+                        references {refsCache.length} · citers {citesCache.length}
+                      </span>
+                    </summary>
+                    <div className="mt-2">
+                      <CitationFlow
+                        flow={{
+                          seedYear: seedYear ?? null,
+                          refs: refsCache,
+                          citers: citesCache,
+                        }}
+                      />
+                    </div>
+                  </details>
+                );
+              })()}
               {tab === 'related' && derivatives && derivatives.length > 0 && (
                 <details className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/60 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900/40">
                   <summary className="cursor-pointer select-none text-zinc-700 dark:text-zinc-300">
