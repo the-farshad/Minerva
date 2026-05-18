@@ -37,7 +37,15 @@ function Stat({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-export function AuthorProfile({ profile }: { profile: AuthorProfileData }) {
+export function AuthorProfile({
+  profile,
+  onAffiliationClick,
+  onConceptClick,
+}: {
+  profile: AuthorProfileData;
+  onAffiliationClick?: (name: string) => void;
+  onConceptClick?: (name: string) => void;
+}) {
   return (
     <div className="mb-3 rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -63,12 +71,30 @@ export function AuthorProfile({ profile }: { profile: AuthorProfileData }) {
         <div className="mt-3">
           <div className="text-[10px] uppercase tracking-wide text-zinc-500">Last known affiliations</div>
           <div className="mt-1 flex flex-wrap gap-1">
-            {profile.institutions.map((i) => (
-              <span key={i.name} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
-                {i.name}
-                {i.country ? <span className="text-zinc-400"> · {i.country}</span> : null}
-              </span>
-            ))}
+            {profile.institutions.map((i) => {
+              const inner = (
+                <>
+                  {i.name}
+                  {i.country ? <span className="text-zinc-400"> · {i.country}</span> : null}
+                </>
+              );
+              if (!onAffiliationClick) {
+                return (
+                  <span key={i.name} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">{inner}</span>
+                );
+              }
+              return (
+                <button
+                  key={i.name}
+                  type="button"
+                  onClick={() => onAffiliationClick(i.name)}
+                  title={`Find papers from ${i.name}`}
+                  className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] transition hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                >
+                  {inner}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -76,12 +102,30 @@ export function AuthorProfile({ profile }: { profile: AuthorProfileData }) {
         <div className="mt-3">
           <div className="text-[10px] uppercase tracking-wide text-zinc-500">Top fields</div>
           <div className="mt-1 flex flex-wrap gap-1">
-            {profile.topConcepts.map((c) => (
-              <span key={c.name} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
-                {c.name}
-                <span className="text-zinc-400"> {Math.round(c.score * 100)}%</span>
-              </span>
-            ))}
+            {profile.topConcepts.map((c) => {
+              const inner = (
+                <>
+                  {c.name}
+                  <span className="text-zinc-400"> {Math.round(c.score * 100)}%</span>
+                </>
+              );
+              if (!onConceptClick) {
+                return (
+                  <span key={c.name} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] dark:bg-zinc-800">{inner}</span>
+                );
+              }
+              return (
+                <button
+                  key={c.name}
+                  type="button"
+                  onClick={() => onConceptClick(c.name)}
+                  title={`Search papers about ${c.name}`}
+                  className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] transition hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                >
+                  {inner}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

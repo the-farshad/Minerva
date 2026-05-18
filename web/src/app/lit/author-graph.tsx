@@ -19,7 +19,11 @@ import { useMemo, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import { exportPNGFromCanvas, exportSVGFromCanvas, exportPDFFromCanvas, exportGraphJSON, exportGraphML } from './graph-export';
+import {
+  exportPNGFromCanvas, exportSVGFromCanvas, exportPDFFromCanvas,
+  exportPNGFromSVG, exportSVGFromElement, exportPDFFromSVG,
+  exportGraphJSON, exportGraphML,
+} from './graph-export';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -59,6 +63,49 @@ export function AuthorGraph({
   const [layout, setLayout] = useState<'force' | 'circular'>('force');
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
+  const svgRef = useRef<SVGSVGElement>(null);
+  // Zoom + pan state for the circular SVG. Force layout already
+  // has react-force-graph-2d's built-in wheel zoom; SVG needs its
+  // own. tx/ty are in viewBox units, scale is multiplicative.
+  const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
+  const dragRef = useRef<{ startClientX: number; startClientY: number; startTx: number; startTy: number } | null>(null);
+  function resetView() { setView({ scale: 1, tx: 0, ty: 0 }); }
+  function onSvgWheel(e: React.WheelEvent<SVGSVGElement>) {
+    e.preventDefault();
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    // Convert pointer pixel coords to viewBox coords.
+    const vb = svg.viewBox.baseVal;
+    const px = ((e.clientX - rect.left) / rect.width) * vb.width;
+    const py = ((e.clientY - rect.top) / rect.height) * vb.height;
+    setView((v) => {
+      const factor = e.deltaY > 0 ? 1 / 1.15 : 1.15;
+      const nextScale = Math.max(0.5, Math.min(6, v.scale * factor));
+      // Keep the point under the cursor invariant during zoom.
+      const k = nextScale / v.scale;
+      const tx = px - (px - v.tx) * k;
+      const ty = py - (py - v.ty) * k;
+      return { scale: nextScale, tx, ty };
+    });
+  }
+  function onSvgMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    if (e.button !== 0) return;
+    dragRef.current = {
+      startClientX: e.clientX, startClientY: e.clientY,
+      startTx: view.tx, startTy: view.ty,
+    };
+  }
+  function onSvgMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    const d = dragRef.current;
+    if (!d) return;
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const vb = svg.viewBox.baseVal;
+    const dx = ((e.clientX - d.startClientX) / rect.width) * vb.width;
+    const dy = ((e.clientY - d.startClientY) / rect.height) * vb.height;
+    setView((v) => ({ scale: v.scale, tx: d.startTx + dx, ty: d.startTy + dy }));
+  }
+  function onSvgMouseUp() { dragRef.current = null; }
 
   const { nodes, links } = useMemo(() => {
     // Tally paper counts per author + pairwise co-paper counts.
@@ -136,9 +183,23 @@ export function AuthorGraph({
   function canvasEl(): HTMLCanvasElement | null {
     return (containerRef.current?.querySelector('canvas') as HTMLCanvasElement | null) ?? null;
   }
-  function doExportPNG() { exportPNGFromCanvas(canvasEl(), 'lit-coauthors.png'); }
-  function doExportSVG() { exportSVGFromCanvas(canvasEl(), 'lit-coauthors.svg'); }
-  function doExportPDF() { void exportPDFFromCanvas(canvasEl(), 'lit-coauthors.pdf'); }
+  // Exports branch on the active layout. Force renders to a canvas
+  // (react-force-graph-2d); circular renders to inline SVG. Each
+  // path needs its own rasterisation/serialisation, and the
+  // canvas-only helpers used to silently no-op on the circular
+  // layout because there was no canvas to grab.
+  function doExportPNG() {
+    if (layout === 'force') exportPNGFromCanvas(canvasEl(), 'lit-coauthors.png');
+    else void exportPNGFromSVG(svgRef.current, 'lit-coauthors.png');
+  }
+  function doExportSVG() {
+    if (layout === 'force') exportSVGFromCanvas(canvasEl(), 'lit-coauthors.svg');
+    else exportSVGFromElement(svgRef.current, 'lit-coauthors.svg');
+  }
+  function doExportPDF() {
+    if (layout === 'force') void exportPDFFromCanvas(canvasEl(), 'lit-coauthors.pdf');
+    else void exportPDFFromSVG(svgRef.current, 'lit-coauthors.pdf');
+  }
   function doExportJSON() {
     exportGraphJSON(
       nodes.map((n) => ({ id: n.id, label: n.label, attrs: { papers: n.papers, isFocal: n.isFocal } })),
@@ -253,29 +314,50 @@ export function AuthorGraph({
           {() => (
             <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
               <svg
+                ref={svgRef}
                 viewBox={`0 0 ${circular.W} ${circular.H}`}
                 preserveAspectRatio="xMidYMid meet"
-                className="block h-full w-full"
+                className={`block h-full w-full ${dragRef.current ? 'cursor-grabbing' : 'cursor-grab'}`}
+                onWheel={onSvgWheel}
+                onMouseDown={onSvgMouseDown}
+                onMouseMove={onSvgMouseMove}
+                onMouseUp={onSvgMouseUp}
+                onMouseLeave={onSvgMouseUp}
               >
+                <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
                 {/* Edges first so nodes sit on top. Explicit colour
                   *  (no currentColor) so the edges remain visible
                   *  regardless of which Tailwind text-* class might
-                  *  cascade down from a fullscreen wrapper. */}
+                  *  cascade down from a fullscreen wrapper.
+                  *  Stroke + opacity tuned so a single co-paper
+                  *  edge is still legible against the panel bg; in
+                  *  practice the user couldn't see the previous
+                  *  zinc-500/0.55 setup. */}
                 {links.map((l, i) => {
                   const a = circular.positions.get(l.source);
                   const b = circular.positions.get(l.target);
                   if (!a || !b) return null;
-                  const widthScale = Math.min(3, 0.6 + Math.log2(1 + l.weight));
+                  const widthScale = Math.min(3.2, 0.8 + Math.log2(1 + l.weight));
                   return (
                     <line
                       key={`e-${i}`}
                       x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                      stroke={isDark ? '#a1a1aa' : '#52525b'}
-                      strokeOpacity={0.55}
+                      stroke={isDark ? '#d4d4d8' : '#3f3f46'}
+                      strokeOpacity={Math.min(0.85, 0.4 + Math.log2(1 + l.weight) * 0.15)}
                       strokeWidth={widthScale}
                     />
                   );
                 })}
+                {links.length === 0 && (
+                  <text
+                    x={circular.W / 2} y={circular.H / 2}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fill={isDark ? '#a1a1aa' : '#52525b'}
+                    className="text-[12px]"
+                  >
+                    No co-authorship edges in this set.
+                  </text>
+                )}
             {circular.ordered.map((n) => {
               const pos = circular.positions.get(n.id)!;
               const r = nodeRadius(n);
@@ -310,6 +392,19 @@ export function AuthorGraph({
                 </g>
               );
             })}
+                </g>
+                {(view.scale !== 1 || view.tx !== 0 || view.ty !== 0) && (
+                  <g
+                    transform={`translate(${circular.W - 18} 18)`}
+                    onClick={resetView}
+                    className="cursor-pointer"
+                  >
+                    <circle r="12" fill={isDark ? '#27272a' : '#ffffff'} stroke={isDark ? '#52525b' : '#d4d4d8'} strokeWidth="1" />
+                    <text textAnchor="middle" dominantBaseline="central" fill={isDark ? '#d4d4d8' : '#52525b'} className="text-[10px]">
+                      ⤺
+                    </text>
+                  </g>
+                )}
               </svg>
             </div>
           )}

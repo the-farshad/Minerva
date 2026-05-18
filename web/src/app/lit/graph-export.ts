@@ -93,6 +93,120 @@ export async function exportPDFFromCanvas(canvas: HTMLCanvasElement | null, file
   pdf.save(filename);
 }
 
+// ---------------------------------------------------------------
+// SVG-source exports — for charts (circular AuthorGraph) where the
+// rendered output is already SVG. The canvas-source helpers above
+// fail silently on SVG charts (no canvas to grab), so we mirror
+// the API with SVG variants. Direct SVG export is a one-line
+// serialise; raster (PNG / PDF) goes through an off-screen
+// <img> + canvas because browsers don't let you toDataURL an SVG
+// element directly.
+// ---------------------------------------------------------------
+
+function getSVGSize(svg: SVGSVGElement): { width: number; height: number } {
+  const vb = svg.viewBox?.baseVal;
+  if (vb && vb.width > 0 && vb.height > 0) return { width: vb.width, height: vb.height };
+  const r = svg.getBoundingClientRect();
+  return { width: Math.max(1, r.width), height: Math.max(1, r.height) };
+}
+
+/** Inline the computed text/fill/stroke colors onto a clone of
+ *  the SVG so the exported file renders the same outside the
+ *  page's CSS context. Without this, every Tailwind class-driven
+ *  color resolves to the document's default. */
+function inlineComputedStyles(src: SVGSVGElement): SVGSVGElement {
+  const clone = src.cloneNode(true) as SVGSVGElement;
+  const srcEls = src.querySelectorAll<SVGElement>('*');
+  const cloneEls = clone.querySelectorAll<SVGElement>('*');
+  for (let i = 0; i < srcEls.length; i++) {
+    const cs = window.getComputedStyle(srcEls[i]);
+    const target = cloneEls[i];
+    if (!target) continue;
+    // Only the colour-ish properties matter for export fidelity;
+    // copying everything bloats the file.
+    target.style.color = cs.color;
+    target.style.fill = cs.fill;
+    target.style.stroke = cs.stroke;
+    target.style.fontFamily = cs.fontFamily;
+    target.style.fontSize = cs.fontSize;
+    target.style.opacity = cs.opacity;
+  }
+  return clone;
+}
+
+function serializeSVG(svg: SVGSVGElement, bg: string = '#ffffff'): string {
+  const clone = inlineComputedStyles(svg);
+  if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  if (!clone.getAttribute('xmlns:xlink')) clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+  const { width, height } = getSVGSize(svg);
+  clone.setAttribute('width', String(width));
+  clone.setAttribute('height', String(height));
+  // Prepend a white-background rect so the export reads on light
+  // viewers regardless of where it lands.
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', '0'); rect.setAttribute('y', '0');
+  rect.setAttribute('width', String(width)); rect.setAttribute('height', String(height));
+  rect.setAttribute('fill', bg);
+  clone.insertBefore(rect, clone.firstChild);
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
+}
+
+export function exportSVGFromElement(svg: SVGSVGElement | null, filename: string) {
+  if (!svg) return;
+  downloadBlob(serializeSVG(svg), filename, 'image/svg+xml;charset=utf-8');
+}
+
+/** Rasterise an SVG to a data URL via an off-screen <img>. Returns
+ *  null when the load fails (some SVG features — foreignObject
+ *  with non-same-origin content — get refused by the browser). */
+function svgToRasterDataURL(svg: SVGSVGElement, bg: string = '#ffffff'): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const { width, height } = getSVGSize(svg);
+    const svgStr = serializeSVG(svg, bg);
+    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { URL.revokeObjectURL(url); resolve(null); return; }
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+      resolve({ dataUrl: canvas.toDataURL('image/png'), width, height });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+export async function exportPNGFromSVG(svg: SVGSVGElement | null, filename: string) {
+  if (!svg) return;
+  const raster = await svgToRasterDataURL(svg);
+  if (!raster) return;
+  const a = document.createElement('a');
+  a.href = raster.dataUrl; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: string) {
+  if (!svg) return;
+  const raster = await svgToRasterDataURL(svg);
+  if (!raster) return;
+  const { jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({
+    orientation: raster.width >= raster.height ? 'landscape' : 'portrait',
+    unit: 'px',
+    format: [raster.width, raster.height],
+  });
+  pdf.addImage(raster.dataUrl, 'PNG', 0, 0, raster.width, raster.height);
+  pdf.save(filename);
+}
+
 export function exportGraphJSON(nodes: ExportNode[], links: ExportLink[], filename: string) {
   const out = {
     nodes: nodes.map((n) => ({ id: n.id, label: n.label ?? n.id, ...(n.attrs || {}) })),

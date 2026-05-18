@@ -914,7 +914,21 @@ export function LitExplorer() {
               />
             )}
             {authorProfile && candidatesKind === 'author' && (
-              <AuthorProfile profile={authorProfile} />
+              <AuthorProfile
+                profile={authorProfile}
+                onAffiliationClick={(name) => {
+                  // Use the affiliation: field prefix so the
+                  // search restricts to papers from that institution
+                  // rather than just papers that mention its name.
+                  const q = `affiliation:${name}`;
+                  setQuery(q);
+                  void runKeywordSearch(q);
+                }}
+                onConceptClick={(name) => {
+                  setQuery(name);
+                  void runKeywordSearch(name);
+                }}
+              />
             )}
             {renderToolbar(filteredCandidates, candidates, 'search', true, candidatesKind === 'author')}
             {filteredCandidates && <ResultSummary papers={filteredCandidates} />}
