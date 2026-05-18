@@ -35,6 +35,54 @@ export const users = pgTable('users', {
   usernameUniq: uniqueIndex('users_username_lower_uniq').on(t.username),
 }));
 
+// --- sharing (Phase 2) -------------------------------------------
+//
+// A `shares` row is "owner X has made some content available to
+// other users". Each `shares` row fans out to N `share_recipients`,
+// one per recipient. Recipients can be a logged-in Minerva user
+// (recipientUserId set) or an anonymous public link (publicToken
+// set). Owner can revoke either the whole share or individual
+// recipients.
+//
+// scope:    'section'  — every row in section <targetId>
+//           'row'      — single row id (rare; usually you share a
+//                        section). Hooked here for future use.
+// mode:     'view'     — read-only
+//           'edit'     — recipient can PATCH rows / add new ones
+//
+// acceptedAt: null means pending; setting it grants visibility.
+// declinedAt: set instead means the recipient said no — the share
+// still exists for the owner's audit but doesn't show in the
+// recipient's inbox after that.
+
+export const shares = pgTable('shares', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  ownerUserId: text('ownerUserId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  scope: text('scope').notNull(),
+  targetId: text('targetId').notNull(),
+  defaultMode: text('defaultMode').notNull().default('view'),
+  createdAt: timestamp('createdAt').defaultNow().notNull(),
+  revokedAt: timestamp('revokedAt'),
+}, (t) => ({
+  byOwner: index('shares_owner_idx').on(t.ownerUserId),
+  byTarget: index('shares_target_idx').on(t.scope, t.targetId),
+}));
+
+export const shareRecipients = pgTable('share_recipients', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  shareId: text('shareId').notNull().references(() => shares.id, { onDelete: 'cascade' }),
+  recipientUserId: text('recipientUserId').references(() => users.id, { onDelete: 'cascade' }),
+  publicToken: text('publicToken'),
+  mode: text('mode').notNull().default('view'),
+  acceptedAt: timestamp('acceptedAt'),
+  declinedAt: timestamp('declinedAt'),
+  createdAt: timestamp('createdAt').defaultNow().notNull(),
+}, (t) => ({
+  byShare: index('share_recipients_share_idx').on(t.shareId),
+  byRecipient: index('share_recipients_recipient_idx').on(t.recipientUserId),
+  tokenUniq: uniqueIndex('share_recipients_token_uniq').on(t.publicToken),
+}));
+
 export const accounts = pgTable('accounts', {
   userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
   type: text('type').notNull(),

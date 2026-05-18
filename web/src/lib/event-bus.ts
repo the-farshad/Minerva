@@ -33,7 +33,11 @@ export type MinervaEvent =
   | { kind: 'sections.listChanged' }
   | { kind: 'bookmark.changed'; url: string; op: 'created' | 'updated' | 'deleted' }
   | { kind: 'poll.changed'; token: string }
-  | { kind: 'userprefs.changed' };
+  | { kind: 'userprefs.changed' }
+  /** Sharing: a share targeting this user changed state — new
+   *  incoming, accept/decline, or owner revocation. The recipient
+   *  inbox refetches; the owner's outgoing list refetches. */
+  | { kind: 'share.received'; shareId: string };
 
 // Node EventEmitter is hot-reload friendly under the App Router's
 // in-place module evaluation; storing on globalThis keeps a single

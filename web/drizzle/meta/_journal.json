@@ -85,6 +85,13 @@
       "when": 1779148800000,
       "tag": "0011_users_public_profile",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779235200000,
+      "tag": "0012_shares",
+      "breakpoints": true
     }
   ]
 }

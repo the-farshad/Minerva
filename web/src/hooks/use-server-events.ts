@@ -16,7 +16,8 @@ export type ServerEvent =
   | { kind: 'sections.listChanged' }
   | { kind: 'bookmark.changed'; url: string; op: 'created' | 'updated' | 'deleted' }
   | { kind: 'poll.changed'; token: string }
-  | { kind: 'userprefs.changed' };
+  | { kind: 'userprefs.changed' }
+  | { kind: 'share.received'; shareId: string };
 
 /** Every event kind we know how to dispatch — kept in one array so
  *  adding a new event variant only requires extending this list and
@@ -26,6 +27,7 @@ const EVENT_KINDS: ServerEvent['kind'][] = [
   'rows.bulkChanged',
   'section.changed', 'section.renamed', 'sections.listChanged',
   'bookmark.changed', 'poll.changed', 'userprefs.changed',
+  'share.received',
 ];
 
 type Handler = (e: ServerEvent) => void;
@@ -169,6 +171,14 @@ export function useServerEvents(onEvent?: Handler) {
           break;
         case 'userprefs.changed':
           qc.invalidateQueries({ queryKey: ['userprefs'] });
+          break;
+        case 'share.received':
+          // Inbox / outgoing list refetch on either side of a
+          // share lifecycle event (new incoming, accept / decline,
+          // owner revoke). React Query takes the brunt; pages
+          // that don't subscribe to those keys quietly ignore.
+          qc.invalidateQueries({ queryKey: ['shares', 'incoming'] });
+          qc.invalidateQueries({ queryKey: ['shares', 'outgoing'] });
           break;
       }
     };
