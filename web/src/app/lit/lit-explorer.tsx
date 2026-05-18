@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3, Users } from 'lucide-react';
+import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3, Users, Hash } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 import { TimelineChart } from './timeline-chart';
 import { DensityChart } from './density-chart';
 import { AuthorGraph } from './author-graph';
+import { KeywordGraph } from './keyword-graph';
 import { applyTheme, applyFont } from '@/components/theme-card';
 import { readPref, writePref } from '@/lib/prefs';
 
@@ -200,7 +201,7 @@ function downloadText(content: string, filename: string, mime = 'text/plain;char
 }
 
 type Tab = 'overview' | 'refs' | 'cites' | 'related';
-type ListView = 'list' | 'graph' | 'timeline' | 'density' | 'coauthors';
+type ListView = 'list' | 'graph' | 'timeline' | 'density' | 'coauthors' | 'keywords';
 type SearchMode = 'id' | 'keyword';
 
 export function LitExplorer() {
@@ -626,6 +627,13 @@ export function LitExplorer() {
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'}`}>
             <Grid3x3 className="h-3 w-3" /> Density
           </button>
+          <button type="button" onClick={() => setListView('keywords')}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
+              listView === 'keywords'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'}`}>
+            <Hash className="h-3 w-3" /> Keywords
+          </button>
           {withCoauthors && (
             <button type="button" onClick={() => setListView('coauthors')}
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${
@@ -650,6 +658,9 @@ export function LitExplorer() {
     }
     if (listView === 'density') {
       return <DensityChart papers={filtered} />;
+    }
+    if (listView === 'keywords') {
+      return <KeywordGraph papers={filtered} />;
     }
     if (withGraph && listView === 'graph' && seed) {
       return (
@@ -816,7 +827,7 @@ export function LitExplorer() {
                 {candidates.length} loaded, none match the current filters.
               </p>
             )}
-            {candidatesHasMore && listView !== 'graph' && listView !== 'density' && listView !== 'coauthors' && (
+            {candidatesHasMore && listView !== 'graph' && listView !== 'density' && listView !== 'coauthors' && listView !== 'keywords' && (
               <div className="mt-3 flex justify-center">
                 <button
                   type="button"
