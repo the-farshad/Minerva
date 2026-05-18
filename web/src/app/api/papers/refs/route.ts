@@ -110,15 +110,21 @@ export async function GET(req: NextRequest) {
   const result = await fetchPaperEdgesFromSS(ref, { direction, limit });
 
   // Fallback chain when Semantic Scholar fails or returns empty:
-  //   1. OpenCitations — DOI-only, but free and reliable for cited-DOI
-  //      papers Crossref indexes.
-  //   2. OpenAlex — works for both arXiv and DOI seeds; the only
-  //      fallback that can rescue an arXiv-only ref when SS is
-  //      rate-limiting this IP.
-  // We try both when applicable; whichever returns first non-empty
-  // is what the caller sees.
+  //   1. OpenCitations — DOI-only, but free and reliable for any
+  //      DOI Crossref indexes.
+  //   2. OpenAlex — works for both arXiv and DOI seeds; resolves
+  //      older arXiv papers by title when the arxiv-doi shape
+  //      lookup fails.
+  //
+  // The 404-from-SS case is included in the fallback condition
+  // now: a 404 doesn't mean "this paper has no references", it
+  // means "Semantic Scholar doesn't have this paper indexed" —
+  // which is exactly the case the OA fallback exists to cover.
+  // Title is forwarded so the OA edges path can title-search
+  // when the seed's DOI shape isn't in OpenAlex.
+  const titleParam = req.nextUrl.searchParams.get('title') || undefined;
   const shouldFallback = (result.ok && result.papers.length === 0)
-    || (!result.ok && result.status !== 404);
+    || !result.ok;
   if (shouldFallback) {
     if (ref.kind === 'DOI') {
       const oc = await fetchPaperEdgesFromOpenCitations(ref, { direction, limit });
@@ -132,7 +138,7 @@ export async function GET(req: NextRequest) {
         });
       }
     }
-    const oa = await fetchPaperEdgesFromOpenAlex(ref, { direction, limit });
+    const oa = await fetchPaperEdgesFromOpenAlex(ref, { direction, limit, title: titleParam });
     if (oa.ok && oa.papers.length > 0) {
       const body = { papers: oa.papers, provider: 'openalex' };
       await setCachedLookup(cacheKey, body);

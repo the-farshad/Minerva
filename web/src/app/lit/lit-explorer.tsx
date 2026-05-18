@@ -521,9 +521,13 @@ export function LitExplorer() {
     if (!cacheKey || edgePapers !== undefined || edgeLoading || !ref) return;
     setEdgeLoading(true);
     setEdgeError('');
+    // Pass the seed title alongside the ref. Older arXiv papers
+    // and 404-from-SS DOIs both fall through to OpenAlex, which
+    // can use the title to resolve when the DOI shape can't.
+    const titleParam = paper?.title ? `&title=${encodeURIComponent(paper.title)}` : '';
     const url = tab === 'related'
-      ? `/api/related-papers?ref=${encodeURIComponent(ref)}&limit=50`
-      : `/api/papers/refs?ref=${encodeURIComponent(ref)}&direction=${tab === 'refs' ? 'references' : 'citations'}&limit=100`;
+      ? `/api/related-papers?ref=${encodeURIComponent(ref)}&limit=50${titleParam}`
+      : `/api/papers/refs?ref=${encodeURIComponent(ref)}&direction=${tab === 'refs' ? 'references' : 'citations'}&limit=100${titleParam}`;
     void fetch(url)
       .then(async (r) => {
         const j = (await r.json().catch(() => ({}))) as { papers?: Paper[]; error?: string };

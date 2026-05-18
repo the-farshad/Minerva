@@ -253,26 +253,39 @@ export async function fetchRelatedFromOpenAlex(opts: {
  */
 export async function fetchPaperEdgesFromOpenAlex(
   ref: { kind: 'ARXIV' | 'DOI'; id: string },
-  opts: { direction: 'references' | 'citations'; limit?: number },
+  opts: { direction: 'references' | 'citations'; limit?: number; title?: string },
 ): Promise<
   | { ok: true; papers: RelatedPaper[] }
   | { ok: false; status: number; error: string }
 > {
   const limit = Math.min(100, Math.max(1, opts.limit ?? 50));
   try {
-    // Resolve seed to an OpenAlex Work id (W…). DOI is direct;
-    // arXiv maps to the 10.48550/arXiv.<id> shape that OpenAlex
-    // mints for every modern preprint.
-    const seedKey = ref.kind === 'DOI'
-      ? `doi:${ref.id}`
-      : `doi:${encodeURIComponent('10.48550/arXiv.' + ref.id)}`;
-    const seedR = await fetch(politeUrl(`/works/${seedKey}?select=id,referenced_works`));
-    if (!seedR.ok) {
-      return { ok: false, status: seedR.status, error: `OpenAlex: ${seedR.status}` };
+    // Resolve seed to an OpenAlex Work id (W…). Strategy chain:
+    //   1. DOI direct lookup (`/works/doi:<doi>`).
+    //   2. arXiv mapped to the `10.48550/arXiv.<id>` shape OpenAlex
+    //      mints for modern preprints (works ~2022+).
+    //   3. Title fallback (`/works?search=<title>&per_page=1`) —
+    //      catches older arXiv submissions that don't have an
+    //      arXiv-shaped DOI in OpenAlex, plus DOIs that 404 in the
+    //      direct lookup for indexing-lag reasons.
+    let seedId = '';
+    const tryDoi = ref.kind === 'DOI' ? ref.id : `10.48550/arXiv.${ref.id}`;
+    const seedR = await fetch(politeUrl(`/works/doi:${encodeURIComponent(tryDoi)}?select=id,referenced_works`));
+    if (seedR.ok) {
+      const seed = (await seedR.json()) as OAWork;
+      seedId = (seed.id || '').replace(/^https:\/\/openalex\.org\//, '');
     }
-    const seed = (await seedR.json()) as OAWork;
-    const seedId = (seed.id || '').replace(/^https:\/\/openalex\.org\//, '');
-    if (!seedId) return { ok: false, status: 404, error: 'OpenAlex returned no seed id.' };
+    if (!seedId && opts.title) {
+      const titleR = await fetch(politeUrl(`/works?search=${encodeURIComponent(opts.title)}&per_page=1&select=id`));
+      if (titleR.ok) {
+        const tj = (await titleR.json()) as { results?: { id?: string }[] };
+        const hit = tj.results?.[0];
+        seedId = (hit?.id || '').replace(/^https:\/\/openalex\.org\//, '');
+      }
+    }
+    if (!seedId) {
+      return { ok: false, status: 404, error: 'OpenAlex could not resolve the seed paper.' };
+    }
 
     const fields = 'id,doi,title,authorships,publication_year,abstract_inverted_index,open_access,primary_location,referenced_works';
 
@@ -293,8 +306,15 @@ export async function fetchPaperEdgesFromOpenAlex(
       return { ok: true, papers };
     }
 
-    // direction === 'references' — fan out lookups for each cited work.
-    const refIds = (seed.referenced_works || [])
+    // direction === 'references' — fan out lookups for each cited
+    // work. The title-search path doesn't fetch referenced_works
+    // (the search response only carries `id`), so refetch the
+    // seed work here to get its ref list. One extra request is
+    // cheap compared to the N follow-ups for the refs themselves.
+    const refsR = await fetch(politeUrl(`/works/${encodeURIComponent(seedId)}?select=referenced_works`));
+    if (!refsR.ok) return { ok: false, status: refsR.status, error: `OpenAlex: ${refsR.status}` };
+    const refsSeed = (await refsR.json()) as OAWork;
+    const refIds = (refsSeed.referenced_works || [])
       .map((u) => u.replace(/^https:\/\/openalex\.org\//, ''))
       .filter(Boolean)
       .slice(0, limit);
