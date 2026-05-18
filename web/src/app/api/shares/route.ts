@@ -18,10 +18,14 @@ import { bus } from '@/lib/event-bus';
 export const dynamic = 'force-dynamic';
 
 type CreateBody = {
-  scope?: 'section' | 'row';
+  scope?: 'section' | 'group' | 'row';
   targetId?: string;
   mode?: 'view' | 'edit';
   usernames?: string[];
+  /** When true, emit a publicToken recipient instead of (or in
+   *  addition to) usernames. Public-link recipients are always
+   *  view-only regardless of `mode`. */
+  publicLink?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -30,41 +34,58 @@ export async function POST(req: NextRequest) {
   const ownerUserId = (session.user as { id: string }).id;
   const body = (await req.json().catch(() => ({}))) as CreateBody;
   if (!body.targetId || !body.scope) return NextResponse.json({ error: 'Missing targetId or scope.' }, { status: 400 });
-  if (body.scope !== 'section' && body.scope !== 'row') return NextResponse.json({ error: 'Invalid scope.' }, { status: 400 });
+  if (body.scope !== 'section' && body.scope !== 'row' && body.scope !== 'group') {
+    return NextResponse.json({ error: 'Invalid scope.' }, { status: 400 });
+  }
   const mode: 'view' | 'edit' = body.mode === 'edit' ? 'edit' : 'view';
   const usernames = (body.usernames || []).map((u) => u.trim().toLowerCase()).filter(Boolean);
-  if (usernames.length === 0) return NextResponse.json({ error: 'No recipients.' }, { status: 400 });
+  if (usernames.length === 0 && !body.publicLink) {
+    return NextResponse.json({ error: 'No recipients — add a username or enable Public link.' }, { status: 400 });
+  }
 
   // Ownership check: the owner must actually own the target.
-  // Sections only for now — rows live inside sections which already
-  // belong to the user, so a section ownership check covers both
-  // scopes when we eventually wire row-level sharing.
+  // For scope='group' the targetId is sectionId:groupKey — we
+  // verify the section. Rows live inside sections which already
+  // belong to the user, so a section ownership check covers all
+  // three scopes.
   if (body.scope === 'section') {
     const sec = await db.query.sections.findFirst({
       where: and(eq(schema.sections.id, body.targetId), eq(schema.sections.userId, ownerUserId)),
     });
     if (!sec) return NextResponse.json({ error: 'Section not found or not yours.' }, { status: 404 });
+  } else if (body.scope === 'group') {
+    const sectionId = body.targetId.split(':')[0];
+    const sec = await db.query.sections.findFirst({
+      where: and(eq(schema.sections.id, sectionId), eq(schema.sections.userId, ownerUserId)),
+    });
+    if (!sec) return NextResponse.json({ error: 'Section not found or not yours.' }, { status: 404 });
   }
 
   // Resolve usernames → user ids. Missing usernames are returned in
-  // the response so the caller can flag them in the UI.
-  const recipients = await db
-    .select({ id: schema.users.id, username: schema.users.username })
-    .from(schema.users)
-    .where(and(
-      eq(schema.users.discoverable, true),
-      sql`lower(${schema.users.username}) IN (${sql.join(usernames.map((u) => sql`${u}`), sql`, `)})`,
-    ));
-  const found = new Set(recipients.map((r) => r.username!.toLowerCase()));
-  const missing = usernames.filter((u) => !found.has(u));
-  const selfHandle = (await db
-    .select({ username: schema.users.username })
-    .from(schema.users)
-    .where(eq(schema.users.id, ownerUserId))
-    .limit(1))[0]?.username?.toLowerCase();
-  const usable = recipients.filter((r) => r.username?.toLowerCase() !== selfHandle);
+  // the response so the caller can flag them in the UI. When the
+  // request is public-link-only (no usernames), this path is
+  // skipped and `usable` stays empty.
+  let usable: { id: string; username: string | null }[] = [];
+  let missing: string[] = [];
+  if (usernames.length > 0) {
+    const recipients = await db
+      .select({ id: schema.users.id, username: schema.users.username })
+      .from(schema.users)
+      .where(and(
+        eq(schema.users.discoverable, true),
+        sql`lower(${schema.users.username}) IN (${sql.join(usernames.map((u) => sql`${u}`), sql`, `)})`,
+      ));
+    const found = new Set(recipients.map((r) => r.username!.toLowerCase()));
+    missing = usernames.filter((u) => !found.has(u));
+    const selfHandle = (await db
+      .select({ username: schema.users.username })
+      .from(schema.users)
+      .where(eq(schema.users.id, ownerUserId))
+      .limit(1))[0]?.username?.toLowerCase();
+    usable = recipients.filter((r) => r.username?.toLowerCase() !== selfHandle);
+  }
 
-  if (usable.length === 0) {
+  if (usable.length === 0 && !body.publicLink) {
     return NextResponse.json({
       error: 'No valid recipients.',
       missing,
@@ -79,13 +100,33 @@ export async function POST(req: NextRequest) {
     defaultMode: mode,
   }).returning();
 
-  await db.insert(schema.shareRecipients).values(
-    usable.map((r) => ({
+  if (usable.length > 0) {
+    await db.insert(schema.shareRecipients).values(
+      usable.map((r) => ({
+        shareId: share.id,
+        recipientUserId: r.id,
+        mode,
+      })),
+    );
+  }
+
+  // Public-link recipient: one row carrying a URL-safe random
+  // token. Recipients with publicToken set are auto-accepted
+  // (no acceptance flow makes sense for an anonymous link). View-
+  // only regardless of the share's defaultMode — an edit-capable
+  // public link is a footgun.
+  let publicUrl: string | null = null;
+  if (body.publicLink) {
+    const token = randomToken();
+    await db.insert(schema.shareRecipients).values({
       shareId: share.id,
-      recipientUserId: r.id,
-      mode,
-    })),
-  );
+      publicToken: token,
+      mode: 'view',
+      acceptedAt: new Date(),
+    });
+    const origin = req.nextUrl.origin;
+    publicUrl = `${origin}/share/${token}`;
+  }
 
   // Notify recipients via SSE so their inbox badge lights up live.
   for (const r of usable) {
@@ -96,7 +137,19 @@ export async function POST(req: NextRequest) {
     id: share.id,
     recipients: usable.map((r) => ({ id: r.id, username: r.username })),
     missing,
+    publicUrl,
   });
+}
+
+/** Cryptographically-random URL-safe id for public-link recipients.
+ *  22 chars from a 132-bit pool — collision probability is negligible
+ *  for the lifetime of any one Minerva install. */
+function randomToken(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  // Base64url without padding.
+  return Buffer.from(bytes).toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 export async function GET(req: NextRequest) {

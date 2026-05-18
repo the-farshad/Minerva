@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Share2, X, Check, Loader2, AtSign } from 'lucide-react';
+import { Share2, X, Check, Loader2, AtSign, Link2, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 
@@ -17,19 +17,35 @@ export function ShareDialog({
   targetId,
   targetTitle,
   trigger,
+  open: openProp,
+  onOpenChange,
 }: {
-  scope: 'section' | 'row';
+  scope: 'section' | 'group' | 'row';
   targetId: string;
   targetTitle: string;
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  /** Controlled-mode props. When omitted, the dialog manages its
+   *  own state via the trigger node. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openLocal, setOpenLocal] = useState(false);
+  const open = openProp ?? openLocal;
+  const setOpen = (next: boolean) => {
+    if (onOpenChange) onOpenChange(next);
+    else setOpenLocal(next);
+  };
+  const [tab, setTab] = useState<'people' | 'link'>('people');
   const [q, setQ] = useState('');
   const [results, setResults] = useState<Found[]>([]);
   const [picked, setPicked] = useState<Found[]>([]);
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
+  /** Once a public link is generated for this scope+target this
+   *  open lifetime, remember it so the user can copy it again
+   *  without re-creating a fresh token. */
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
 
   // Debounced username search.
   useEffect(() => {
@@ -91,9 +107,38 @@ export function ShareDialog({
     }
   }
 
+  async function generatePublicLink() {
+    setBusy(true);
+    try {
+      const r = await fetch('/api/shares', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope, targetId, mode: 'view', publicLink: true }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { error?: string; publicUrl?: string };
+      if (!r.ok || !j.publicUrl) throw new Error(j.error || `link: ${r.status}`);
+      setPublicUrl(j.publicUrl);
+      toast.success('Public link created.');
+    } catch (e) {
+      notify.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyPublicLink() {
+    if (!publicUrl) return;
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      toast.success('Link copied.');
+    } catch {
+      notify.error('Clipboard blocked — long-press the field to copy manually.');
+    }
+  }
+
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>
+      {trigger && <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>}
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(520px,94vw)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
@@ -109,6 +154,77 @@ export function ShareDialog({
             </Dialog.Close>
           </div>
 
+          {/* People / Public link tabs */}
+          <div className="mb-3 flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900 w-fit">
+            <button
+              type="button"
+              onClick={() => setTab('people')}
+              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs transition ${
+                tab === 'people'
+                  ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+              }`}
+            >
+              <AtSign className="h-3 w-3" /> People
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('link')}
+              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs transition ${
+                tab === 'link'
+                  ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+              }`}
+            >
+              <Link2 className="h-3 w-3" /> Public link
+            </button>
+          </div>
+
+          {tab === 'link' ? (
+            <div className="space-y-3">
+              <p className="text-xs text-zinc-500">
+                Anyone with the link can view this {scope} — read-only, no sign-in required. You can revoke it any time from the Shares page.
+              </p>
+              {publicUrl ? (
+                <div className="flex items-stretch gap-2">
+                  <input
+                    type="text"
+                    value={publicUrl}
+                    readOnly
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    className="flex-1 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void copyPublicLink()}
+                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Copy
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void generatePublicLink()}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-1.5 text-xs font-medium text-white transition disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+                >
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                  Generate public link
+                </button>
+              )}
+              <div className="mt-5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
           {/* Picked chips */}
           {picked.length > 0 && (
             <ul className="mb-2 flex flex-wrap gap-1.5">
@@ -205,6 +321,8 @@ export function ShareDialog({
               Share
             </button>
           </div>
+            </>
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

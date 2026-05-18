@@ -22,6 +22,8 @@ import { naturalCompare, cn } from '@/lib/utils';
 import { readPref, writePref, type GroupSort, type SectionGroupSort } from '@/lib/prefs';
 import { GroupNotes } from './group-notes';
 import { GroupAboutDialog } from './group-about';
+import { ShareDialog } from './share-dialog';
+import { Share2 } from 'lucide-react';
 
 export type { Row } from '@/lib/row';
 
@@ -131,6 +133,7 @@ export function GroupedGrid({
   // Single piece of state instead of one-per-group so useState hook
   // order stays stable across the .map() below.
   const [aboutOpenFor, setAboutOpenFor] = useState<string | null>(null);
+  const [shareOpenFor, setShareOpenFor] = useState<string | null>(null);
   // The schema's `multiselect(...)` options for this column — updated
   // in-place when the user clicks Add/Remove in the CategoryBar.
   const [catOptions, setCatOptions] = useState<string[]>(() => {
@@ -541,6 +544,12 @@ export function GroupedGrid({
                             >
                               <Info className="h-3.5 w-3.5" /> About this {section.preset === 'youtube' ? 'playlist' : 'category'}
                             </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              onSelect={() => setShareOpenFor(key)}
+                              className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            >
+                              <Share2 className="h-3.5 w-3.5" /> Share this {section.preset === 'youtube' ? 'playlist' : 'category'}…
+                            </DropdownMenu.Item>
                             <DropdownMenu.Separator className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
                             <DropdownMenu.Item
                               onSelect={async () => {
@@ -800,6 +809,16 @@ export function GroupedGrid({
               preset={section.preset}
               groupKey={key}
               rows={groupRows}
+            />
+            {/* Group-level share. targetId is sectionId:groupKey so
+              * the server can scope a recipient view to the rows
+              * matching that group, instead of the whole section. */}
+            <ShareDialog
+              scope="group"
+              targetId={`${section.id}:${key}`}
+              targetTitle={`${key} · ${section.title}`}
+              open={shareOpenFor === key}
+              onOpenChange={(o) => { if (!o) setShareOpenFor(null); }}
             />
           </section>
         );
