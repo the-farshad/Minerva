@@ -195,16 +195,51 @@ export async function exportPNGFromSVG(svg: SVGSVGElement | null, filename: stri
 
 export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: string) {
   if (!svg) return;
-  const raster = await svgToRasterDataURL(svg);
-  if (!raster) return;
-  const { jsPDF } = await import('jspdf');
+  // Vector PDF via svg2pdf.js — converts SVG paths / text / shapes
+  // into native PDF drawing operations rather than rasterising
+  // through a canvas. The output is a true vector document that
+  // scales cleanly in print + page-zoom.
+  //
+  // svg2pdf.js needs a clone with inlined computed styles for the
+  // same reason direct SVG export does — Tailwind class-driven
+  // colours don't resolve outside the page's CSS context.
+  const { width, height } = getSVGSize(svg);
+  const [{ jsPDF }, { svg2pdf }] = await Promise.all([
+    import('jspdf'),
+    import('svg2pdf.js'),
+  ]);
   const pdf = new jsPDF({
-    orientation: raster.width >= raster.height ? 'landscape' : 'portrait',
-    unit: 'px',
-    format: [raster.width, raster.height],
+    orientation: width >= height ? 'landscape' : 'portrait',
+    unit: 'pt',
+    format: [width, height],
   });
-  pdf.addImage(raster.dataUrl, 'PNG', 0, 0, raster.width, raster.height);
-  pdf.save(filename);
+  const clone = inlineComputedStyles(svg);
+  // svg2pdf needs the clone attached to the DOM to measure text;
+  // park it off-screen during the conversion.
+  clone.setAttribute('width', String(width));
+  clone.setAttribute('height', String(height));
+  const host = document.createElement('div');
+  host.style.position = 'fixed';
+  host.style.left = '-99999px';
+  host.style.top = '0';
+  host.style.pointerEvents = 'none';
+  host.appendChild(clone);
+  document.body.appendChild(host);
+  try {
+    await svg2pdf(clone, pdf, { width, height });
+    pdf.save(filename);
+  } catch (e) {
+    // Fall back to the raster path if svg2pdf trips on something
+    // (e.g. an exotic SVG feature it can't translate).
+    console.warn('[graph-export] svg2pdf failed, falling back to raster PDF', e);
+    const raster = await svgToRasterDataURL(svg);
+    if (raster) {
+      pdf.addImage(raster.dataUrl, 'PNG', 0, 0, width, height);
+      pdf.save(filename);
+    }
+  } finally {
+    document.body.removeChild(host);
+  }
 }
 
 export function exportGraphJSON(nodes: ExportNode[], links: ExportLink[], filename: string) {
