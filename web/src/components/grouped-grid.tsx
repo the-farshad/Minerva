@@ -396,60 +396,11 @@ export function GroupedGrid({
               {section.preset === 'papers' && (
                 <div className="ml-2"><ReadingTimeTotal rows={groupRows} /></div>
               )}
-              {section.preset === 'youtube' && (() => {
-                /* For groups that look like a YouTube playlist —
-                 * EITHER any row carries `list=…` in its URL, OR
-                 * the group is being grouped by playlist with a
-                 * non-empty key — surface an info pill with the
-                 * playlist name, video count, and (when a listId
-                 * is discoverable) a quick-jump link to the
-                 * canonical YouTube playlist view.
-                 */
-                const PL_RE = /[?&]list=([A-Za-z0-9_-]+)/;
-                let listId = '';
-                let playlistName = '';
-                for (const gr of groupRows) {
-                  const data = gr.data as Record<string, unknown>;
-                  if (!listId) {
-                    const m = String(data.url || '').match(PL_RE);
-                    if (m) listId = m[1];
-                  }
-                  if (!playlistName && typeof data.playlist === 'string' && data.playlist) {
-                    playlistName = data.playlist;
-                  }
-                  if (listId && playlistName) break;
-                }
-                // Fall back to the group key when the grid is
-                // grouped on playlist — that key IS the playlist
-                // name, even when stored URLs don't carry `list=`.
-                if (!playlistName && groupCol === 'playlist' && key && key !== '(uncategorised)') {
-                  playlistName = key;
-                }
-                if (!listId && !playlistName) return null;
-                const label = playlistName || `Playlist ${listId.slice(0, 10)}…`;
-                return (
-                  <span
-                    title={playlistName ? `Playlist "${playlistName}" · ${groupRows.length} video${groupRows.length === 1 ? '' : 's'}` : `YouTube playlist · ${groupRows.length} video${groupRows.length === 1 ? '' : 's'}`}
-                    className="ml-1 inline-flex max-w-[260px] items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
-                  >
-                    <Info className="h-3 w-3 shrink-0 text-zinc-500" />
-                    <span className="truncate">{label}</span>
-                    <span className="shrink-0 text-zinc-400">· {groupRows.length}</span>
-                    {listId && (
-                      <a
-                        href={`https://www.youtube.com/playlist?list=${listId}`}
-                        target="_blank"
-                        rel="noopener"
-                        title="Open this playlist on YouTube"
-                        onClick={(e) => e.stopPropagation()}
-                        className="shrink-0 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    )}
-                  </span>
-                );
-              })()}
+              {/* The playlist info pill used to live here. Removed
+                * because it duplicated the group title (which IS
+                * the playlist name). A richer "About this playlist"
+                * dialog — link, progress chart, time totals — will
+                * land in the three-dots overflow as a follow-up. */}
               <div className="ml-auto flex flex-wrap items-center gap-1">
               {groupCol && (
                 <>
