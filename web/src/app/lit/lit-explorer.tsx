@@ -7,6 +7,7 @@ import { TimelineChart } from './timeline-chart';
 import { DensityChart } from './density-chart';
 import { AuthorGraph } from './author-graph';
 import { KeywordGraph } from './keyword-graph';
+import { ConceptTimeline, type ConceptTimelinePoint } from './concept-timeline';
 import { applyTheme, applyFont } from '@/components/theme-card';
 import { readPref, writePref } from '@/lib/prefs';
 
@@ -220,6 +221,14 @@ export function LitExplorer() {
   const [candidatesHasMore, setCandidatesHasMore] = useState<boolean>(false);
   const [candidatesLoadingMore, setCandidatesLoadingMore] = useState<boolean>(false);
   const [concepts, setConcepts] = useState<{ id: string; name: string; level: number }[]>([]);
+  /** OpenAlex concept-activity-over-time data, fetched whenever a
+   *  keyword search resolves to a real concept. Null = not fetched
+   *  or no concept matched the query. */
+  const [conceptActivity, setConceptActivity] = useState<null | {
+    name: string;
+    worksCount: number;
+    counts: ConceptTimelinePoint[];
+  }>(null);
 
   const [tab, setTab] = useState<Tab>('overview');
   const [listView, setListView] = useState<ListView>('list');
@@ -254,6 +263,7 @@ export function LitExplorer() {
     setCandidatesQuery('');
     setCandidatesHasMore(false);
     setConcepts([]);
+    setConceptActivity(null);
     setEdgeCache({});
     setTab('overview');
     // Reset list filters whenever the seed changes — a year range
@@ -299,6 +309,7 @@ export function LitExplorer() {
     setCandidatesQuery(q.trim());
     setCandidatesHasMore(false);
     setConcepts([]);
+    setConceptActivity(null);
     setEdgeCache({});
     setTab('overview');
     try {
@@ -315,6 +326,20 @@ export function LitExplorer() {
         if (got.length === 0) {
           setErr('No matches. Try different wording or a more specific phrase.');
         }
+        // Side-fire the concept-activity lookup. Best-effort: if no
+        // OpenAlex concept matches the query we just skip the
+        // sparkline. Doesn't block the candidates render.
+        void fetch(`/api/concepts/timeline?q=${encodeURIComponent(q.trim())}`)
+          .then((cr) => cr.ok ? cr.json() : null)
+          .then((cj) => {
+            if (!cj || !cj.concept || !Array.isArray(cj.counts) || cj.counts.length === 0) return;
+            setConceptActivity({
+              name: cj.concept.name,
+              worksCount: cj.concept.worksCount ?? 0,
+              counts: cj.counts,
+            });
+          })
+          .catch(() => { /* tolerate */ });
       }
     } catch (e) {
       setErr((e as Error).message);
@@ -339,6 +364,7 @@ export function LitExplorer() {
     setCandidatesQuery(name.trim());
     setCandidatesHasMore(false);
     setConcepts([]);
+    setConceptActivity(null);
     setEdgeCache({});
     setTab('overview');
     try {
@@ -435,6 +461,7 @@ export function LitExplorer() {
     setCandidatesQuery('');
     setCandidatesHasMore(false);
     setConcepts([]);
+    setConceptActivity(null);
     setEdgeCache({});
     setTab('overview');
     setYearFrom(''); setYearTo(''); setMinCites(''); setTextFilter('');
@@ -807,6 +834,13 @@ export function LitExplorer() {
               {candidatesLabel || `${candidates.length} result${candidates.length === 1 ? '' : 's'}`}
               <span className="ml-1 text-zinc-400">— click a title to explore.</span>
             </p>
+            {conceptActivity && candidatesKind === 'keyword' && (
+              <ConceptTimeline
+                conceptName={conceptActivity.name}
+                worksCount={conceptActivity.worksCount}
+                counts={conceptActivity.counts}
+              />
+            )}
             {renderToolbar(filteredCandidates, candidates, 'search', true, candidatesKind === 'author')}
             {filteredCandidates && <ResultSummary papers={filteredCandidates} />}
             {listView === 'coauthors' && candidatesKind === 'author' && filteredCandidates && filteredCandidates.length > 0 ? (
