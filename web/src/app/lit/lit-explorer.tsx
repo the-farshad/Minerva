@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3, Users, Hash, Library, Route } from 'lucide-react';
+import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3, Users, Hash, Library, Route, Star, Pin } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 import { TimelineChart } from './timeline-chart';
 import { DensityChart } from './density-chart';
@@ -9,6 +9,7 @@ import { AuthorGraph } from './author-graph';
 import { KeywordGraph } from './keyword-graph';
 import { ConceptTimeline, type ConceptTimelinePoint } from './concept-timeline';
 import { AuthorProfile, type AuthorProfileData } from './author-profile';
+import { isPinned, togglePin, getPinned } from './pinned';
 import { applyTheme, applyFont } from '@/components/theme-card';
 import { readPref, writePref } from '@/lib/prefs';
 
@@ -1052,6 +1053,7 @@ export function LitExplorer() {
       <footer className="mt-auto flex flex-col items-center gap-3 pt-12 text-xs text-zinc-400">
         <FontPicker />
         <div className="flex flex-wrap items-center justify-center gap-4">
+          <PinnedLink />
           <a
             href="/lit/path"
             title="Find the shortest citation path between two papers"
@@ -1223,6 +1225,17 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
   const authors = authorsStr(paper);
   const cc = typeof paper.citationCount === 'number' ? paper.citationCount : null;
   const explorable = onExplore && (paper.doi || paper.externalIds?.DOI || paper.arxiv || paper.externalIds?.ArXiv || paper.title);
+  // Pin button state. Reads localStorage on mount + on `storage`
+  // events so other rows / pages flipping the same paper stay in
+  // sync. Falls back to false during SSR (no window) so the
+  // server-rendered HTML and the first client paint match.
+  const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    setPinned(isPinned(paper));
+    function onStorage() { setPinned(isPinned(paper)); }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [paper]);
   // When a paper comes back without a title (Semantic Scholar
   // sometimes omits it for old / preprint records), fall back to
   // the strongest identifier we have rather than the bare
@@ -1270,18 +1283,37 @@ function PaperRow({ paper, onExplore }: { paper: Paper; onExplore?: () => void }
             </div>
           )}
         </div>
-        {link && (
-          <a
-            href={link}
-            target="_blank"
-            rel="noopener"
-            title="Open original"
-            className="shrink-0 rounded-full p-1.5 text-zinc-400 opacity-0 transition hover:bg-zinc-100 hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-            onClick={(e) => e.stopPropagation()}
+        <div className="flex shrink-0 items-start gap-0.5">
+          <button
+            type="button"
+            title={pinned ? 'Unpin from comparison' : 'Pin for comparison'}
+            aria-pressed={pinned}
+            onClick={(e) => {
+              e.stopPropagation();
+              const now = togglePin(paper);
+              setPinned(now);
+            }}
+            className={`rounded-full p-1.5 transition ${
+              pinned
+                ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+                : 'text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300'
+            }`}
           >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        )}
+            <Star className="h-3.5 w-3.5" fill={pinned ? 'currentColor' : 'none'} />
+          </button>
+          {link && (
+            <a
+              href={link}
+              target="_blank"
+              rel="noopener"
+              title="Open original"
+              className="rounded-full p-1.5 text-zinc-400 opacity-0 transition hover:bg-zinc-100 hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
+        </div>
       </div>
     </li>
   );
@@ -1530,6 +1562,33 @@ function FontPicker() {
         </button>
       ))}
     </div>
+  );
+}
+
+function PinnedLink() {
+  // Footer affordance to jump to /lit/compare. Subscribes to the
+  // `storage` event so its count stays in sync with star-clicks
+  // elsewhere on the page.
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    setCount(getPinned().length);
+    function onStorage() { setCount(getPinned().length); }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  return (
+    <a
+      href="/lit/compare"
+      title={count > 0 ? `Compare your ${count} pinned paper${count === 1 ? '' : 's'}` : 'Pin papers from any list to compare them side-by-side'}
+      className={`inline-flex items-center gap-1 ${
+        count > 0
+          ? 'text-amber-600 hover:text-amber-700 dark:text-amber-500 dark:hover:text-amber-400'
+          : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'
+      }`}
+    >
+      <Pin className="h-4 w-4" />
+      <span className="hover:underline">Compare{count > 0 ? ` (${count})` : ''}</span>
+    </a>
   );
 }
 
