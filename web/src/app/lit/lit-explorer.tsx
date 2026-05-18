@@ -241,7 +241,7 @@ export function LitExplorer() {
   const cacheKey = ref && tab !== 'overview' ? `${ref}:${tab}` : '';
   const edgePapers = cacheKey ? edgeCache[cacheKey] : null;
 
-  async function resolveAndSetSeed(q: string) {
+  async function resolveAndSetSeed(q: string, opts: { preserveInput?: boolean } = {}) {
     if (!q.trim()) return;
     setLoading(true);
     setErr('');
@@ -271,9 +271,12 @@ export function LitExplorer() {
         setErr('No paper match. Try a DOI, arXiv ID, paper URL, or a more specific title.');
       } else {
         setPaper(j);
-        // Keep the query bar in sync with the active seed so the
-        // user can see what's being explored and edit / re-search.
-        setQuery(q.trim());
+        // Mirror the resolved query into the input so a direct
+        // paste lands cleanly. Callers that explicitly want the
+        // input preserved (click-to-explore on a card) pass
+        // `preserveInput` so the user's keyword/author query isn't
+        // clobbered by a DOI from the clicked card.
+        if (!opts.preserveInput) setQuery(q.trim());
         if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     } catch (e) {
@@ -396,17 +399,46 @@ export function LitExplorer() {
     }
   }
 
-  /** Click-to-explore: take a paper from the refs / cited / related
-   *  list (or the keyword-search candidates) and re-resolve it as
-   *  the new seed. The list cards pass through whichever identifier
-   *  they have (DOI > arXiv > title) and the lookup chain handles
-   *  all three. Flips back to id-mode so the input reflects the
-   *  resolved seed. */
+  /** Click-to-explore: make a paper from a result list the new
+   *  seed. Two paths, picked by what we know about the paper:
+   *
+   *  - Strong identifier (DOI or arXiv id) → call /api/import/lookup
+   *    with that exact id. Lookup enriches with abstract, citation
+   *    stats, OA PDF link, etc.
+   *  - Title only → seed the paper directly from the card we
+   *    already have. Title-based lookup is unsafe: Europe PMC's
+   *    title search returns its own top hit for that string, which
+   *    can be a different paper when titles collide (the bug that
+   *    used to make clicking some cards open a different paper).
+   *
+   *  The search mode (Identifier vs Keyword) and the input value
+   *  are deliberately preserved, so a keyword search stays a
+   *  keyword search after a click and the user can iterate. */
   function exploreFromPaper(p: Paper) {
-    const q = lookupQueryOf(p);
-    if (!q) return;
-    setMode('id');
-    void resolveAndSetSeed(q);
+    const doi = p.doi || p.externalIds?.DOI;
+    const arxiv = p.arxiv || p.externalIds?.ArXiv;
+    if (doi || arxiv) {
+      void resolveAndSetSeed(doi || arxiv!, { preserveInput: true });
+      return;
+    }
+    if (!p.title) return;
+    // Seed-from-card path. Mirror resolveAndSetSeed's reset block
+    // so the same state-clearing happens, then drop the paper in
+    // directly instead of going through the lookup endpoint.
+    setLoading(false);
+    setErr('');
+    setCandidates(null);
+    setCandidatesLabel('');
+    setCandidatesKind(null);
+    setCandidatesQuery('');
+    setCandidatesHasMore(false);
+    setConcepts([]);
+    setEdgeCache({});
+    setTab('overview');
+    setYearFrom(''); setYearTo(''); setMinCites(''); setTextFilter('');
+    setOaOnly(false); setInfluentialOnly(false); setSortBy('relevance');
+    setPaper(p);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   // Concept enrichment: once a seed resolves with a usable ref,
