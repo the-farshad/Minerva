@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3, Users, Hash } from 'lucide-react';
+import { Search, Loader2, ExternalLink, FileText, Quote, GitBranch, List, Network, Download, LineChart, Sun, Moon, BookOpen, Monitor, Grid3x3, Users, Hash, Library } from 'lucide-react';
 import { RelatedGraph } from '@/app/papers/related/[rowId]/related-graph';
 import { TimelineChart } from './timeline-chart';
 import { DensityChart } from './density-chart';
@@ -1039,11 +1039,15 @@ export function LitExplorer() {
 
       <footer className="mt-auto flex flex-col items-center gap-3 pt-12 text-xs text-zinc-400">
         <FontPicker />
-        <p className="text-center">
-          <a href="/lit/sources" className="text-zinc-500 hover:text-zinc-700 hover:underline dark:text-zinc-400 dark:hover:text-zinc-200">
-            Sources
-          </a>
-        </p>
+        <a
+          href="/lit/sources"
+          title="Data sources"
+          aria-label="Data sources"
+          className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+        >
+          <Library className="h-4 w-4" />
+          <span className="hover:underline">Sources</span>
+        </a>
         <VersionTag />
       </footer>
     </main>
