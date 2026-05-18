@@ -7,7 +7,7 @@
  * the candidates list doesn't show: h-index, total citations, top
  * fields, current affiliations, active years.
  */
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 export type AuthorProfileData = {
   id: string;
@@ -46,9 +46,39 @@ export function AuthorProfile({
   onAffiliationClick?: (name: string) => void;
   onConceptClick?: (name: string) => void;
 }) {
+  // Best-effort author portrait via Wikidata. Most working
+  // researchers don't have a Wikidata entry so the common case
+  // is no image and we simply don't render the avatar slot.
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setImageUrl(null);
+    void fetch(`/api/authors/image?q=${encodeURIComponent(profile.name)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        if (!cancelled && j && typeof j.url === 'string') setImageUrl(j.url);
+      })
+      .catch(() => { /* tolerate */ });
+    return () => { cancelled = true; };
+  }, [profile.name]);
+
   return (
     <div className="mb-3 rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+        {imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={imageUrl}
+            alt={profile.name}
+            className="h-14 w-14 shrink-0 rounded-md border border-zinc-200 object-cover dark:border-zinc-800"
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              // Hide broken-image icons silently when the
+              // commons file moved / was deleted.
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        )}
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{profile.name}</h2>
         {profile.yearMin && profile.yearMax && (
           <span className="text-xs text-zinc-500">{profile.yearMin}–{profile.yearMax}</span>
