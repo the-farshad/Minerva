@@ -208,6 +208,8 @@ export async function GET(req: NextRequest) {
         mode: schema.shareRecipients.mode,
         acceptedAt: schema.shareRecipients.acceptedAt,
         declinedAt: schema.shareRecipients.declinedAt,
+        shareProgress: schema.shareRecipients.shareProgress,
+        recipientShareProgress: schema.shareRecipients.recipientShareProgress,
       })
       .from(schema.shareRecipients)
       .leftJoin(schema.users, eq(schema.users.id, schema.shareRecipients.recipientUserId))

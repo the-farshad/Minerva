@@ -43,6 +43,8 @@ type OutgoingShare = {
     mode: 'view' | 'edit';
     acceptedAt: string | null;
     declinedAt: string | null;
+    shareProgress: boolean;
+    recipientShareProgress: boolean;
   }[];
 };
 
@@ -265,6 +267,12 @@ export function SharesView() {
                     }`}
                   >
                     {r.username ? `@${r.username}` : '(link)'}
+                    {r.recipientShareProgress && (
+                      <span title="This recipient is sharing their progress back to you" className="ml-0.5 text-blue-600 dark:text-blue-400">↕</span>
+                    )}
+                    {r.shareProgress && (
+                      <span title="You are sharing your progress with this recipient" className="ml-0.5 text-zinc-500 dark:text-zinc-400">→</span>
+                    )}
                     {/* Per-recipient revoke — drops just this user
                       *  without tearing down the whole share. */}
                     <button
