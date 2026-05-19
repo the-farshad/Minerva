@@ -18,6 +18,8 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
+import { chord as d3chord, ribbon as d3ribbon, type Chord } from 'd3-chord';
+import { arc as d3arc } from 'd3-shape';
 import { FullscreenShell } from './fullscreen-shell';
 import { GraphExportMenu, type ExportFontSize, type ExportTextColor, type ExportFontFamily } from './graph-export-menu';
 import { useCropRegion } from './use-crop-region';
@@ -253,25 +255,62 @@ export function AuthorGraph({
     return isDark ? '#a1a1aa' : '#52525b';
   }
 
-  // Circular layout: deterministic, hand-positioned. Sorted by
-  // paper count desc so the heaviest contributor sits at the top of
-  // the ring; the focal author is always pinned there if present.
+  // Proper chord-diagram layout (d3-chord). Per data-to-viz.com:
+  // each author becomes an arc segment on the outer ring with
+  // angular width proportional to their total collaboration weight
+  // (sum of co-paper counts with every other author in the set).
+  // Ribbons inside connect two arcs; ribbon width at each endpoint
+  // is the weight of that specific link. Focal author is ordered
+  // first so its arc sits at the canonical top-of-ring position.
   const circular = useMemo(() => {
     const W = 760, H = 520;
     const cx = W / 2, cy = H / 2;
-    const radius = Math.min(W, H) / 2 - 80;
+    const outerRadius = Math.min(W, H) / 2 - 100;
+    const innerRadius = outerRadius - 14;
     const ordered = [...nodes].sort((a, b) => {
       if (a.isFocal) return -1;
       if (b.isFocal) return 1;
       return b.papers - a.papers;
     });
+    const idIndex = new Map<string, number>();
+    ordered.forEach((n, i) => idIndex.set(n.id, i));
+    const N = ordered.length;
+    const matrix: number[][] = Array.from({ length: N }, () => new Array(N).fill(0));
+    for (const l of links) {
+      const sId = typeof l.source === 'object' && l.source !== null
+        ? (l.source as { id: string }).id
+        : (l.source as string);
+      const tId = typeof l.target === 'object' && l.target !== null
+        ? (l.target as { id: string }).id
+        : (l.target as string);
+      const i = idIndex.get(sId);
+      const j = idIndex.get(tId);
+      if (i == null || j == null || i === j) continue;
+      // Symmetric — d3-chord interprets matrix[i][j] as flow from
+      // i to j. For undirected collaboration we want the same
+      // weight visible at both endpoints.
+      matrix[i][j] += l.weight;
+      matrix[j][i] += l.weight;
+    }
+    const layout = d3chord()
+      .padAngle(0.018)
+      .sortSubgroups((a, b) => b - a);
+    const chords = layout(matrix);
+    const arcGen = d3arc<{ startAngle: number; endAngle: number }>()
+      .innerRadius(innerRadius)
+      .outerRadius(outerRadius);
+    const ribbonGen = d3ribbon().radius(innerRadius);
+    // Centroid positions for legacy callers that still walk
+    // `circular.positions` (none after this refactor; left in case
+    // a future fall-back wants to render bare circles).
     const positions = new Map<string, { x: number; y: number }>();
-    ordered.forEach((n, i) => {
-      const angle = (i / ordered.length) * 2 * Math.PI - Math.PI / 2;
-      positions.set(n.id, { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
-    });
-    return { W, H, positions, ordered };
-  }, [nodes]);
+    for (const g of chords.groups) {
+      const mid = (g.startAngle + g.endAngle) / 2 - Math.PI / 2;
+      const r = (innerRadius + outerRadius) / 2;
+      positions.set(ordered[g.index].id, { x: cx + r * Math.cos(mid), y: cy + r * Math.sin(mid) });
+    }
+    return { W, H, cx, cy, innerRadius, outerRadius, ordered, idIndex, chords, arcGen, ribbonGen, positions };
+  }, [nodes, links]);
 
   function canvasEl(): HTMLCanvasElement | null {
     return (containerRef.current?.querySelector('canvas') as HTMLCanvasElement | null) ?? null;
@@ -648,133 +687,128 @@ export function AuthorGraph({
                 }}
               >
                 <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
-                {/* Edges first so nodes sit on top. Explicit colour
-                  *  (no currentColor) so the edges remain visible
-                  *  regardless of which Tailwind text-* class might
-                  *  cascade down from a fullscreen wrapper.
-                  *  Stroke + opacity tuned so a single co-paper
-                  *  edge is still legible against the panel bg; in
-                  *  practice the user couldn't see the previous
-                  *  zinc-500/0.55 setup. */}
-                {links.map((l, i) => {
-                  // react-force-graph-2d mutates link.source /
-                  // link.target into resolved node objects after
-                  // the force simulation runs; resolve to id
-                  // either way for the Map lookup.
-                  const sId = typeof l.source === 'object' && l.source !== null
-                    ? (l.source as { id: string }).id : l.source;
-                  const tId = typeof l.target === 'object' && l.target !== null
-                    ? (l.target as { id: string }).id : l.target;
-                  const a = circular.positions.get(sId);
-                  const b = circular.positions.get(tId);
-                  if (!a || !b) return null;
-                  // Chord-style: a quadratic Bezier whose control
-                  // point sits at the centre of the ring pulls every
-                  // arc through the middle, producing the bundled
-                  // look of D3's chord layout. Width scales linearly
-                  // with the co-authorship count so a 5-paper chord
-                  // is visibly ~5× a 1-paper chord. Capped at 12
-                  // px so a single very heavy collaborator pair
-                  // doesn't crowd the rest off the canvas.
-                  const widthScale = Math.max(1.2, Math.min(12, 1.4 + l.weight * 0.8));
-                  const baseOpacity = Math.min(0.95, 0.65 + Math.log2(1 + l.weight) * 0.1);
-                  const cx = circular.W / 2;
-                  const cy = circular.H / 2;
-                  const path = `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`;
-                  const isSelected = chordSel?.kind === 'link' && chordSel.sId === sId && chordSel.tId === tId;
-                  const touchesSelectedNode = chordSel?.kind === 'node' && (chordSel.id === sId || chordSel.id === tId);
-                  const dim = chordSel != null && !isSelected && !touchesSelectedNode;
-                  const opacity = isSelected ? 1 : dim ? baseOpacity * 0.18 : baseOpacity;
-                  const stroke = isSelected
-                    ? '#2563eb'
-                    : isDark ? '#e4e4e7' : '#27272a';
-                  return (
-                    <path
-                      key={`e-${i}`}
-                      d={path}
-                      fill="none"
-                      stroke={stroke}
-                      strokeOpacity={opacity}
-                      strokeWidth={isSelected ? widthScale + 1.5 : widthScale}
-                      strokeLinecap="round"
-                      className="cursor-pointer transition-[stroke-opacity,stroke-width] duration-150"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setChordSel((prev) =>
-                          prev?.kind === 'link' && prev.sId === sId && prev.tId === tId
-                            ? null
-                            : { kind: 'link', sId, tId, weight: l.weight },
-                        );
-                      }}
-                    >
-                      <title>{`${sId} ↔ ${tId} · ${l.weight} shared paper${l.weight === 1 ? '' : 's'}`}</title>
-                    </path>
-                  );
-                })}
-                {links.length === 0 && (
-                  <text
-                    x={circular.W / 2} y={circular.H / 2}
-                    textAnchor="middle" dominantBaseline="middle"
-                    fill={isDark ? '#a1a1aa' : '#52525b'}
-                    className="text-[12px]"
-                  >
-                    No co-authorship edges in this set.
-                  </text>
-                )}
-            {circular.ordered.map((n) => {
-              const pos = circular.positions.get(n.id)!;
-              const r = nodeRadius(n);
-              const angle = Math.atan2(pos.y - circular.H / 2, pos.x - circular.W / 2);
-              // Label sits outward from the node, rotated tangentially
-              // so it reads horizontally along the ring. Offset
-              // beyond the node radius is the spacing-driven gap.
-              const labelGap = labelOffsetFor(spacing);
-              const lx = pos.x + (r + labelGap) * Math.cos(angle);
-              const ly = pos.y + (r + labelGap) * Math.sin(angle);
-              const rotate = (angle * 180) / Math.PI;
-              const flip = rotate > 90 || rotate < -90;
-              const nodeSelected = chordSel?.kind === 'node' && chordSel.id === n.id;
-              const linkTouches = chordSel?.kind === 'link' && (chordSel.sId === n.id || chordSel.tId === n.id);
-              const focused = nodeSelected || linkTouches || n.isFocal;
-              const dim = chordSel != null && !nodeSelected && !linkTouches && !n.isFocal;
-              return (
-                <g key={`n-${n.id}`} opacity={dim ? 0.35 : 1}>
-                  <circle
-                    cx={pos.x} cy={pos.y} r={nodeSelected ? r + 2 : r}
-                    fill={nodeSelected ? '#2563eb' : nodeFill(n)}
-                    stroke={focused ? (isDark ? '#fafafa' : '#18181b') : 'none'}
-                    strokeWidth={focused ? 2 : 0}
-                    className="cursor-pointer transition-[r,fill] duration-150"
-                    // Single-tap toggles chord-selection so the user
-                    // can drill into one author's connections. The
-                    // navigate-to-profile action stays on the label
-                    // text below so a quick click doesn't whisk the
-                    // user off the page.
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setChordSel((prev) =>
-                        prev?.kind === 'node' && prev.id === n.id
-                          ? null
-                          : { kind: 'node', id: n.id },
+                  <g transform={`translate(${circular.cx} ${circular.cy})`}>
+                    {/* Ribbons first so arcs sit on top. d3.ribbon
+                      *  emits a path that meets the inner radius at
+                      *  each endpoint with width proportional to
+                      *  that endpoint's weight — exactly the chord-
+                      *  diagram shape from data-to-viz. */}
+                    {circular.chords.map((c: Chord, i) => {
+                      const sId = circular.ordered[c.source.index].id;
+                      const tId = circular.ordered[c.target.index].id;
+                      const weight = c.source.value;
+                      const isSelected = chordSel?.kind === 'link' && chordSel.sId === sId && chordSel.tId === tId;
+                      const touchesSelectedNode = chordSel?.kind === 'node' && (chordSel.id === sId || chordSel.id === tId);
+                      const dim = chordSel != null && !isSelected && !touchesSelectedNode;
+                      const baseOpacity = Math.min(0.85, 0.45 + Math.log2(1 + weight) * 0.08);
+                      const opacity = isSelected ? 0.95 : dim ? baseOpacity * 0.15 : baseOpacity;
+                      const fill = isSelected
+                        ? '#2563eb'
+                        : isDark ? '#a1a1aa' : '#52525b';
+                      const d = circular.ribbonGen(c as unknown as Parameters<typeof circular.ribbonGen>[0]) as unknown as string;
+                      return (
+                        <path
+                          key={`r-${i}`}
+                          d={d}
+                          fill={fill}
+                          fillOpacity={opacity}
+                          stroke="none"
+                          className="cursor-pointer transition-[fill-opacity,fill] duration-150"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setChordSel((prev) =>
+                              prev?.kind === 'link' && prev.sId === sId && prev.tId === tId
+                                ? null
+                                : { kind: 'link', sId, tId, weight },
+                            );
+                          }}
+                        >
+                          <title>{`${sId} ↔ ${tId} · ${weight} shared paper${weight === 1 ? '' : 's'}`}</title>
+                        </path>
                       );
-                    }}
-                  >
-                    <title>{`${n.label} · ${n.papers} paper${n.papers === 1 ? '' : 's'} — click to highlight`}</title>
-                  </circle>
-                  <text
-                    x={lx} y={ly}
-                    transform={`rotate(${flip ? rotate + 180 : rotate} ${lx} ${ly})`}
-                    textAnchor={flip ? 'end' : 'start'}
-                    dominantBaseline="middle"
-                    className="cursor-pointer fill-zinc-700 text-[10px] hover:underline dark:fill-zinc-300"
-                    onClick={(e) => { e.stopPropagation(); onAuthorClick?.(n.id); }}
-                  >
-                    <title>Open author profile</title>
-                    {n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}
-                  </text>
-                </g>
-              );
-            })}
+                    })}
+                    {circular.chords.length === 0 && (
+                      <text
+                        x={0} y={0}
+                        textAnchor="middle" dominantBaseline="middle"
+                        fill={isDark ? '#a1a1aa' : '#52525b'}
+                        className="text-[12px]"
+                      >
+                        No co-authorship edges in this set.
+                      </text>
+                    )}
+                    {/* Outer arc per node — angular width is the
+                      *  sum of that node's incoming + outgoing
+                      *  weights so a 10-collab author gets a
+                      *  visibly larger arc than a 1-collab one. */}
+                    {circular.chords.groups.map((g) => {
+                      const n = circular.ordered[g.index];
+                      const nodeSelected = chordSel?.kind === 'node' && chordSel.id === n.id;
+                      const linkTouches = chordSel?.kind === 'link' && (chordSel.sId === n.id || chordSel.tId === n.id);
+                      const focused = nodeSelected || linkTouches || n.isFocal;
+                      const dim = chordSel != null && !nodeSelected && !linkTouches && !n.isFocal;
+                      const fill = nodeSelected
+                        ? '#2563eb'
+                        : n.isFocal
+                          ? '#1e40af'
+                          : isDark ? '#d4d4d8' : '#3f3f46';
+                      const d = circular.arcGen({ startAngle: g.startAngle, endAngle: g.endAngle });
+                      return (
+                        <path
+                          key={`a-${n.id}`}
+                          d={d as string}
+                          fill={fill}
+                          fillOpacity={dim ? 0.35 : 1}
+                          stroke={focused ? (isDark ? '#fafafa' : '#18181b') : 'none'}
+                          strokeWidth={focused ? 1.5 : 0}
+                          className="cursor-pointer transition-[fill-opacity,fill] duration-150"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setChordSel((prev) =>
+                              prev?.kind === 'node' && prev.id === n.id
+                                ? null
+                                : { kind: 'node', id: n.id },
+                            );
+                          }}
+                        >
+                          <title>{`${n.label} · ${n.papers} paper${n.papers === 1 ? '' : 's'} — click to highlight`}</title>
+                        </path>
+                      );
+                    })}
+                    {/* Author labels — radial line just outside the
+                      *  arc, rotated tangentially so they read
+                      *  horizontally along the ring. The chord-
+                      *  layout's `padAngle` ensures the arcs (and
+                      *  therefore labels) don't crowd each other. */}
+                    {circular.chords.groups.map((g) => {
+                      const n = circular.ordered[g.index];
+                      const mid = (g.startAngle + g.endAngle) / 2 - Math.PI / 2;
+                      const labelGap = labelOffsetFor(spacing);
+                      const r = circular.outerRadius + labelGap;
+                      const lx = r * Math.cos(mid);
+                      const ly = r * Math.sin(mid);
+                      const rotate = (mid * 180) / Math.PI;
+                      const flip = rotate > 90 || rotate < -90;
+                      const nodeSelected = chordSel?.kind === 'node' && chordSel.id === n.id;
+                      const linkTouches = chordSel?.kind === 'link' && (chordSel.sId === n.id || chordSel.tId === n.id);
+                      const dim = chordSel != null && !nodeSelected && !linkTouches && !n.isFocal;
+                      return (
+                        <text
+                          key={`l-${n.id}`}
+                          x={lx} y={ly}
+                          transform={`rotate(${flip ? rotate + 180 : rotate} ${lx} ${ly})`}
+                          textAnchor={flip ? 'end' : 'start'}
+                          dominantBaseline="middle"
+                          opacity={dim ? 0.35 : 1}
+                          className="cursor-pointer fill-zinc-700 text-[10px] hover:underline dark:fill-zinc-300"
+                          onClick={(e) => { e.stopPropagation(); onAuthorClick?.(n.id); }}
+                        >
+                          <title>Open author profile</title>
+                          {n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}
+                        </text>
+                      );
+                    })}
+                  </g>
                 </g>
                 {(view.scale !== 1 || view.tx !== 0 || view.ty !== 0) && (
                   <g
