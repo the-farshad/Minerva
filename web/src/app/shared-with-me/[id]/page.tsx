@@ -9,7 +9,7 @@
  */
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { CloneButton } from './clone-button';
@@ -99,31 +99,74 @@ export default async function SharedWithMePage({ params }: { params: Promise<{ i
           Nothing to show — the share is empty.
         </p>
       ) : (
-        <ul className="space-y-2">
-          {rows.map((r) => {
-            const data = r.data as Record<string, unknown>;
-            const t = String(data.title || data.name || data.url || '(untitled)');
-            const url = typeof data.url === 'string' ? data.url : '';
-            const authors = typeof data.authors === 'string' ? data.authors : '';
-            const year = data.year;
-            const venue = typeof data.venue === 'string' ? data.venue : '';
-            return (
-              <li key={r.id} className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  {url ? (
-                    <a href={url} target="_blank" rel="noopener" className="text-sm font-medium hover:underline">{t}</a>
-                  ) : (
-                    <span className="text-sm font-medium">{t}</span>
-                  )}
-                  {year != null && <span className="text-xs text-zinc-500">{String(year)}</span>}
-                </div>
-                {authors && <p className="mt-0.5 truncate text-xs text-zinc-500">{authors}</p>}
-                {venue && <p className="text-[11px] text-zinc-400">{venue}</p>}
-              </li>
-            );
-          })}
-        </ul>
+        <SharedRowList rows={rows} shareProgress={rec.shareProgress} ownerUserId={share.ownerUserId} />
       )}
     </main>
+  );
+}
+
+async function SharedRowList({
+  rows,
+  shareProgress,
+  ownerUserId,
+}: {
+  rows: RawRow[];
+  shareProgress: boolean;
+  ownerUserId: string;
+}) {
+  // When the owner opted to share their watch progress, fetch
+  // their per-row positions so the recipient can see how far the
+  // owner has watched each item. Skipped entirely when
+  // shareProgress=false so we don't leak progress without opt-in.
+  let ownerProgress = new Map<string, { position: number; duration: number | null }>();
+  if (shareProgress && rows.length > 0) {
+    const wp = await db
+      .select({
+        rowId: schema.watchProgress.rowId,
+        positionSec: schema.watchProgress.positionSec,
+        durationSec: schema.watchProgress.durationSec,
+      })
+      .from(schema.watchProgress)
+      .where(and(
+        eq(schema.watchProgress.userId, ownerUserId),
+        inArray(schema.watchProgress.rowId, rows.map((r) => r.id)),
+      ));
+    ownerProgress = new Map(wp.map((p) => [p.rowId, { position: p.positionSec, duration: p.durationSec }]));
+  }
+  return (
+    <ul className="space-y-2">
+      {rows.map((r) => (
+        <SharedRow key={r.id} row={r} ownerWatched={ownerProgress.get(r.id) || null} />
+      ))}
+    </ul>
+  );
+}
+
+function SharedRow({ row, ownerWatched }: { row: RawRow; ownerWatched: { position: number; duration: number | null } | null }) {
+  const data = row.data as Record<string, unknown>;
+  const title = String(data.title || data.name || data.url || '(untitled)');
+  const url = typeof data.url === 'string' ? data.url : '';
+  const authors = typeof data.authors === 'string' ? data.authors : '';
+  const year = data.year;
+  const venue = typeof data.venue === 'string' ? data.venue : '';
+  return (
+    <li className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        {url ? (
+          <a href={url} target="_blank" rel="noopener" className="text-sm font-medium hover:underline">{title}</a>
+        ) : (
+          <span className="text-sm font-medium">{title}</span>
+        )}
+        {year != null && <span className="text-xs text-zinc-500">{String(year)}</span>}
+      </div>
+      {authors && <p className="mt-0.5 truncate text-xs text-zinc-500">{authors}</p>}
+      {venue && <p className="text-[11px] text-zinc-400">{venue}</p>}
+      {ownerWatched && ownerWatched.position > 0 && (
+        <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700 dark:bg-blue-950/40 dark:text-blue-200">
+          Owner watched · {Math.floor(ownerWatched.position / 60)}m
+          {ownerWatched.duration ? ` / ${Math.floor(ownerWatched.duration / 60)}m (${Math.round((ownerWatched.position / ownerWatched.duration) * 100)}%)` : ''}
+        </p>
+      )}
+    </li>
   );
 }
