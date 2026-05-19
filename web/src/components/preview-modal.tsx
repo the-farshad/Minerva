@@ -243,19 +243,34 @@ export function PreviewModal({
   // can track current time + persist a resume position. The iframe
   // is mounted with `enablejsapi=1` below; postMessage handshake is
   // documented at https://developers.google.com/youtube/iframe_api_reference
+  // The same listener catches the onStateChange ENDED event (info=0)
+  // so YouTube embeds auto-advance to the next playlist video, on
+  // parity with the offline / host <video onEnded> path.
+  const endedFiredRef = useRef(false);
   useEffect(() => {
     function onMsg(ev: MessageEvent) {
       if (typeof ev.data !== 'string') return;
       try {
-        const m = JSON.parse(ev.data) as { event?: string; info?: { currentTime?: number } };
-        if (m?.info && typeof m.info.currentTime === 'number') {
+        const m = JSON.parse(ev.data) as { event?: string; info?: { currentTime?: number } | number };
+        // infoDelivery: periodic { currentTime, duration }
+        if (m?.info && typeof m.info === 'object' && typeof m.info.currentTime === 'number') {
           ytTimeRef.current = m.info.currentTime;
+        }
+        // onStateChange: info is a number — 0=ended.
+        if (m?.event === 'onStateChange' && m.info === 0) {
+          if (endedFiredRef.current) return;
+          endedFiredRef.current = true;
+          const rowId = view?.rowId;
+          if (rowId && onAdvance) onAdvance(rowId);
         }
       } catch { /* not our message */ }
     }
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
-  }, []);
+  }, [view?.rowId, onAdvance]);
+  // Reset the once-per-video guard whenever a new YT video mounts
+  // so the next 'ended' event fires for the new video.
+  useEffect(() => { endedFiredRef.current = false; }, [view?.url]);
 
   // Persist resume position when leaving a YT video. Effect re-runs
   // whenever the active video URL changes, so the cleanup fires both
