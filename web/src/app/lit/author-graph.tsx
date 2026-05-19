@@ -437,12 +437,10 @@ export function AuthorGraph({
               {/* preserveDrawingBuffer:true so canvas.toDataURL()
                 * (the path GraphExportMenu's PNG export uses) gets
                 * back actual pixels instead of black on WebGL.
-                * `react-force-graph-3d`'s ref typing is strict and
-                * conflicts with the unknown-shaped accessor we
-                * actually need; the cast through `any` lets the
-                * callback-ref idiom past TS without dragging the
-                * three-d-only z/vz/fz coords into the project's
-                * CoAuthorNode shape. */}
+                * Always-visible name labels via three-spritetext —
+                * react-force-graph-3d's built-in nodeLabel is
+                * hover-only, which made the 3D layout effectively
+                * unidentifiable without a tooltip pass. */}
               {(() => {
                 const FG = ForceGraph3D as unknown as React.ComponentType<Record<string, unknown>>;
                 return (
@@ -456,6 +454,20 @@ export function AuthorGraph({
                     nodeColor={(n: unknown) => (n as CoAuthorNode).isFocal ? '#1e40af' : (isDark ? '#a1a1aa' : '#52525b')}
                     nodeVal={(n: unknown) => Math.max(1, (n as CoAuthorNode).papers)}
                     nodeLabel={(n: unknown) => `${(n as CoAuthorNode).label} · ${(n as CoAuthorNode).papers} paper${(n as CoAuthorNode).papers === 1 ? '' : 's'}`}
+                    // Always-visible sprite labels next to each node.
+                    nodeThreeObjectExtend
+                    nodeThreeObject={(node: unknown) => {
+                      const n = node as CoAuthorNode;
+                      // eslint-disable-next-line @typescript-eslint/no-require-imports
+                      const SpriteText = require('three-spritetext').default;
+                      const sprite = new SpriteText(n.label.length > 24 ? n.label.slice(0, 23) + '…' : n.label);
+                      sprite.color = isDark ? '#e4e4e7' : '#27272a';
+                      sprite.textHeight = 4;
+                      // Offset above the node so the sphere stays
+                      // clear of the text glyph.
+                      sprite.position.set(0, 6 + Math.log2(1 + n.papers) * 1.5, 0);
+                      return sprite;
+                    }}
                     linkColor={() => isDark ? 'rgba(161,161,170,0.5)' : 'rgba(82,82,91,0.55)'}
                     linkWidth={(l: unknown) => {
                       const w = (l as CoAuthorLink).weight || 1;
@@ -869,11 +881,21 @@ function BundledDiagram({
           </text>
         );
       })}
-      {/* nodes */}
+      {/* nodes + outward-radiating labels */}
       {nodes.map((n) => {
         const p = positions.get(n.id);
         if (!p) return null;
         const r = 3 + Math.min(8, Math.log2(1 + n.papers) * 1.5);
+        // Label sits just outside the node along the radial
+        // direction so dense clusters don't pile their text on
+        // top of each other.
+        const dx = p.x - cx;
+        const dy = p.y - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const lx = p.x + (dx / dist) * (r + 4);
+        const ly = p.y + (dy / dist) * (r + 4);
+        const angDeg = (p.ang * 180) / Math.PI;
+        const flip = angDeg > 90 || angDeg < -90;
         return (
           <g key={`bn-${n.id}`} className="cursor-pointer" onClick={() => onAuthorClick?.(n.id)}>
             <circle
@@ -884,6 +906,15 @@ function BundledDiagram({
             >
               <title>{`${n.label} · ${n.papers} paper${n.papers === 1 ? '' : 's'}`}</title>
             </circle>
+            <text
+              x={lx} y={ly}
+              transform={`rotate(${flip ? angDeg + 180 : angDeg} ${lx} ${ly})`}
+              textAnchor={flip ? 'end' : 'start'}
+              dominantBaseline="middle"
+              className="pointer-events-none fill-zinc-700 text-[9px] dark:fill-zinc-300"
+            >
+              {n.label.length > 18 ? n.label.slice(0, 17) + '…' : n.label}
+            </text>
           </g>
         );
       })}
