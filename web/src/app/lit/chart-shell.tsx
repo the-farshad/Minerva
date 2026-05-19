@@ -15,7 +15,7 @@
  *   </ChartShell>
  */
 import { useRef, useState, type ReactNode, type RefObject } from 'react';
-import { GraphExportMenu, type ExportBg, type ExportFontSize, type ExportTextColor, type GraphExportSource } from './graph-export-menu';
+import { GraphExportMenu, type ExportBg, type ExportFontSize, type ExportTextColor, type ExportFontFamily, type GraphExportSource } from './graph-export-menu';
 import { FullscreenShell } from './fullscreen-shell';
 import { useCropRegion } from './use-crop-region';
 
@@ -59,6 +59,7 @@ export function ChartShell({
   const [bg, setBg] = useState<ExportBg>(() => detectInitialBg());
   const [fontSize, setFontSize] = useState<ExportFontSize>('M');
   const [textColor, setTextColor] = useState<ExportTextColor>('auto');
+  const [fontFamily, setFontFamily] = useState<ExportFontFamily>('sans');
 
   const crop = useCropRegion(svgRef);
 
@@ -72,6 +73,8 @@ export function ChartShell({
       onFontSizeChange={setFontSize}
       textColor={textColor}
       onTextColorChange={setTextColor}
+      fontFamily={fontFamily}
+      onFontFamilyChange={setFontFamily}
     />
   );
   const body = (
