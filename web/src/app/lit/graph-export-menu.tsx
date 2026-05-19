@@ -95,6 +95,12 @@ export type ExportFontSize = 'S' | 'M' | 'L' | 'XL';
 const FONT_PX: Record<ExportFontSize, number> = { S: 9, M: 11, L: 14, XL: 18 };
 
 export type ExportTextColor = 'auto' | 'black' | 'white' | 'invert-bg';
+export type ExportFontFamily = 'sans' | 'serif' | 'mono';
+const FONT_STACK: Record<ExportFontFamily, string> = {
+  sans: 'system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif',
+  serif: 'Georgia, "Times New Roman", Times, serif',
+  mono: 'ui-monospace, "SF Mono", Consolas, Menlo, monospace',
+};
 
 export function GraphExportMenu({
   filename,
@@ -105,6 +111,8 @@ export function GraphExportMenu({
   onFontSizeChange,
   textColor: textColorProp,
   onTextColorChange,
+  fontFamily: fontFamilyProp,
+  onFontFamilyChange,
 }: {
   filename: string;
   source: GraphExportSource;
@@ -117,6 +125,8 @@ export function GraphExportMenu({
   onFontSizeChange?: (next: ExportFontSize) => void;
   textColor?: ExportTextColor;
   onTextColorChange?: (next: ExportTextColor) => void;
+  fontFamily?: ExportFontFamily;
+  onFontFamilyChange?: (next: ExportFontFamily) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [fontSizeLocal, setFontSizeLocal] = useState<ExportFontSize>('M');
@@ -134,6 +144,12 @@ export function GraphExportMenu({
     if (onTextColorChange) onTextColorChange(n);
     else setTextColorLocal(n);
   };
+  const [fontFamilyLocal, setFontFamilyLocal] = useState<ExportFontFamily>('sans');
+  const fontFamily = fontFamilyProp ?? fontFamilyLocal;
+  const setFontFamily = (n: ExportFontFamily) => {
+    if (onFontFamilyChange) onFontFamilyChange(n);
+    else setFontFamilyLocal(n);
+  };
 
   async function doExport(format: 'png' | 'svg' | 'pdf' | 'json' | 'graphml' | 'json-rows' | 'csv') {
     if (busy) return;
@@ -150,7 +166,7 @@ export function GraphExportMenu({
         : textColor === 'invert-bg' ? (bg === 'dark' ? '#fafafa' : '#0b0d10')
         : textColor === 'white' ? '#fafafa'
         : '#0b0d10';
-      const styleOpts = { fontSize: FONT_PX[fontSize], textColor: resolvedTextColor };
+      const styleOpts = { fontSize: FONT_PX[fontSize], textColor: resolvedTextColor, fontFamily: FONT_STACK[fontFamily] };
 
       // For vector output (SVG / PDF) on a canvas-only graph that
       // carries node positions in graphData, build a fresh SVG
@@ -311,6 +327,26 @@ export function GraphExportMenu({
                     }`}
                   >
                     {sz}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">Font</span>
+              <div className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                {(['sans', 'serif', 'mono'] as ExportFontFamily[]).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setFontFamily(f)}
+                    className={`rounded-full px-2 py-0.5 text-[10px] transition ${
+                      fontFamily === f
+                        ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+                        : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                    }`}
+                    style={{ fontFamily: FONT_STACK[f] }}
+                  >
+                    {f === 'sans' ? 'Sans' : f === 'serif' ? 'Serif' : 'Mono'}
                   </button>
                 ))}
               </div>

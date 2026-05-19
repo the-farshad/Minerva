@@ -41,6 +41,10 @@ export type ExportStyle = {
   fontSize?: number;
   /** If set, every <text>'s fill is forced to this colour. */
   textColor?: string;
+  /** If set, every <text>'s font-family is forced to this stack —
+   *  lets the user retarget exports for a print font without
+   *  changing the live render. */
+  fontFamily?: string;
 };
 
 export function downloadBlob(content: string, filename: string, mime: string) {
@@ -176,8 +180,8 @@ function inlineComputedStyles(src: SVGSVGElement): SVGSVGElement {
   return clone;
 }
 
-function applyTextStyle(clone: SVGSVGElement, style?: Pick<ExportStyle, 'fontSize' | 'textColor'>) {
-  if (!style || (style.fontSize == null && !style.textColor)) return;
+function applyTextStyle(clone: SVGSVGElement, style?: Pick<ExportStyle, 'fontSize' | 'textColor' | 'fontFamily'>) {
+  if (!style || (style.fontSize == null && !style.textColor && !style.fontFamily)) return;
   clone.querySelectorAll<SVGTextElement>('text').forEach((t) => {
     // Belt + suspenders: write the override to every signal a
     // downstream consumer might read.
@@ -205,6 +209,10 @@ function applyTextStyle(clone: SVGSVGElement, style?: Pick<ExportStyle, 'fontSiz
       const cls = (t.getAttribute('class') || '').split(/\s+/).filter((c) => c && !/^fill-/.test(c));
       if (cls.length > 0) t.setAttribute('class', cls.join(' '));
       else t.removeAttribute('class');
+    }
+    if (style.fontFamily) {
+      t.style.fontFamily = style.fontFamily;
+      t.setAttribute('font-family', style.fontFamily);
     }
   });
 }
