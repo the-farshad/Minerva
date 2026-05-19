@@ -19,7 +19,7 @@ import { useMemo, useState, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import { GraphExportMenu, type ExportFontSize, type ExportTextColor } from './graph-export-menu';
+import { GraphExportMenu, type ExportFontSize, type ExportTextColor, type ExportFontFamily } from './graph-export-menu';
 import { useCropRegion } from './use-crop-region';
 
 /** Three.js / react-force-graph-3d for the 3D layout. Loaded
@@ -129,6 +129,7 @@ export function AuthorGraph({
   // its own selection.
   const [exportFontSize, setExportFontSize] = useState<ExportFontSize>('M');
   const [exportTextColor, setExportTextColor] = useState<ExportTextColor>('auto');
+  const [exportFontFamily, setExportFontFamily] = useState<ExportFontFamily>('sans');
   const isDarkBg = bgMode === 'dark';
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
@@ -324,6 +325,8 @@ export function AuthorGraph({
       onFontSizeChange={setExportFontSize}
       textColor={exportTextColor}
       onTextColorChange={setExportTextColor}
+      fontFamily={exportFontFamily}
+      onFontFamilyChange={setExportFontFamily}
     />
   );
 

@@ -17,7 +17,7 @@ import { useMemo, useRef, useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import { GraphExportMenu, type ExportFontSize, type ExportTextColor } from './graph-export-menu';
+import { GraphExportMenu, type ExportFontSize, type ExportTextColor, type ExportFontFamily } from './graph-export-menu';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -80,6 +80,7 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
   // source of truth.
   const [exportFontSize, setExportFontSize] = useState<ExportFontSize>('M');
   const [exportTextColor, setExportTextColor] = useState<ExportTextColor>('auto');
+  const [exportFontFamily, setExportFontFamily] = useState<ExportFontFamily>('sans');
   // Node spacing — same pattern as author-graph: push into d3
   // force's link distance on change + reheat the sim.
   const [spacing, setSpacing] = useState<'tight' | 'normal' | 'loose'>('normal');
@@ -183,6 +184,8 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
       onFontSizeChange={setExportFontSize}
       textColor={exportTextColor}
       onTextColorChange={setExportTextColor}
+      fontFamily={exportFontFamily}
+      onFontFamilyChange={setExportFontFamily}
     />
   );
 
