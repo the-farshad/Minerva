@@ -132,7 +132,14 @@ export function MultiPickerHost() {
               <Plus className="h-3 w-3" />
             </button>
           </div>
-          <div className="mt-3 flex max-h-72 flex-wrap gap-1.5 overflow-y-auto">
+          {/* Fixed height window for the chip list so the dialog
+            *  stays the same size while the user types. Filtering
+            *  used to shrink the box from "lots of chips" to "one
+            *  match", which made the modal pop / jump under the
+            *  cursor — disorienting even though the filter worked.
+            *  `h-64 overflow-y-auto` always reserves 16rem and
+            *  scrolls inside when the chip list is longer. */}
+          <div className="mt-3 flex h-64 flex-wrap content-start gap-1.5 overflow-y-auto rounded-md border border-zinc-100 p-2 dark:border-zinc-800">
             {allOptions.length === 0 ? (
               <span className="text-xs text-zinc-500">No options yet — type above to add one.</span>
             ) : filtered.length === 0 ? (
