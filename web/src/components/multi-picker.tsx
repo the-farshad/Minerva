@@ -54,17 +54,42 @@ export function MultiPickerHost() {
   function toggle(o: string) {
     setPicked((p) => p.includes(o) ? p.filter((x) => x !== o) : [...p, o]);
   }
-  function addCustom() {
+
+  // Sorted union of all known options + every currently-picked
+  // value, so picks made via the draft input stay visible as
+  // selected chips even when they don't match the filter below.
+  const allOptions = pending
+    ? Array.from(new Set([...pending.options, ...(pending.initial || []), ...picked]))
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    : [];
+
+  // Live-filter the option chip list by the input draft so the
+  // user can search "alg" and see "Algorithms" highlighted. Empty
+  // draft → show everything. Substring match, case-insensitive.
+  const draftLower = draft.trim().toLowerCase();
+  const filtered = draftLower
+    ? allOptions.filter((o) => o.toLowerCase().includes(draftLower))
+    : allOptions;
+  const exactMatchExists = draftLower
+    ? allOptions.some((o) => o.toLowerCase() === draftLower)
+    : true;
+
+  function commitDraft() {
     const v = draft.trim();
     if (!v) return;
-    if (!picked.includes(v)) setPicked((p) => [...p, v]);
+    // If the input matches exactly an existing option, treat
+    // Enter as "toggle that one"; otherwise add it as a new
+    // custom value. This is the common "click suggestion vs.
+    // press Enter to add new" pattern.
+    const exact = allOptions.find((o) => o.toLowerCase() === v.toLowerCase());
+    if (exact) {
+      if (!picked.includes(exact)) setPicked((p) => [...p, exact]);
+    } else if (!picked.includes(v)) {
+      setPicked((p) => [...p, v]);
+    }
     setDraft('');
     inputRef.current?.focus();
   }
-
-  const allOptions = pending
-    ? Array.from(new Set([...pending.options, ...(pending.initial || []), ...picked]))
-    : [];
 
   return (
     <Dialog.Root open={!!pending} onOpenChange={(o) => { if (!o) answer(null); }}>
@@ -77,11 +102,45 @@ export function MultiPickerHost() {
               {pending.body}
             </Dialog.Description>
           )}
-          <div className="mt-3 flex flex-wrap gap-1.5">
+          {/* Search / add input first so typing immediately
+            *  filters the chip list below (and Enter adds the
+            *  draft as a new option when no match exists). */}
+          <div className="mt-3 flex items-center gap-1">
+            <input
+              ref={inputRef}
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitDraft(); }
+                else if (e.key === 'Escape') {
+                  // Clear filter first; second Escape cancels.
+                  if (draft) { e.preventDefault(); setDraft(''); }
+                  else { e.preventDefault(); answer(null); }
+                }
+              }}
+              placeholder={allOptions.length > 0 ? 'Search or add…' : 'Type to add…'}
+              className="flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+            />
+            <button
+              type="button"
+              onClick={commitDraft}
+              disabled={!draft.trim()}
+              className="rounded-full bg-zinc-200 p-1 hover:bg-zinc-300 disabled:opacity-40 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+              title={draft.trim() && !exactMatchExists ? `Add "${draft.trim()}"` : 'Add'}
+            >
+              <Plus className="h-3 w-3" />
+            </button>
+          </div>
+          <div className="mt-3 flex max-h-72 flex-wrap gap-1.5 overflow-y-auto">
             {allOptions.length === 0 ? (
-              <span className="text-xs text-zinc-500">No options yet — type below to add one.</span>
+              <span className="text-xs text-zinc-500">No options yet — type above to add one.</span>
+            ) : filtered.length === 0 ? (
+              <span className="text-xs text-zinc-500">
+                No matches. Press Enter to add &ldquo;{draft.trim()}&rdquo;.
+              </span>
             ) : (
-              allOptions.map((o) => (
+              filtered.map((o) => (
                 <button
                   key={o}
                   type="button"
@@ -97,28 +156,6 @@ export function MultiPickerHost() {
                 </button>
               ))
             )}
-          </div>
-          <div className="mt-3 flex items-center gap-1">
-            <input
-              ref={inputRef}
-              type="text"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); addCustom(); }
-                else if (e.key === 'Escape') { e.preventDefault(); answer(null); }
-              }}
-              placeholder="Add custom…"
-              className="flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
-            />
-            <button
-              type="button"
-              onClick={addCustom}
-              className="rounded-full bg-zinc-200 p-1 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-              title="Add"
-            >
-              <Plus className="h-3 w-3" />
-            </button>
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <button

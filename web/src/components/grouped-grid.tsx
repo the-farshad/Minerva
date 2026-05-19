@@ -174,6 +174,28 @@ export function GroupedGrid({
     return Array.from(set);
   }, [rows, groupCol]);
 
+  /** Full picker vocabulary for the `category` column: union of
+   *  the section's schema `multiselect(...)` options AND every
+   *  distinct value currently in use on rows. Always populated
+   *  (independent of `groupCol`) so the per-card + group-level
+   *  pickers can show the complete list regardless of how the
+   *  user is currently grouping the section. Sorted case-
+   *  insensitive for stable picker order. */
+  const allCats = useMemo(() => {
+    const set = new Set<string>();
+    const idx = section.schema.headers.indexOf('category');
+    if (idx >= 0) {
+      const raw = String(section.schema.types?.[idx] || '');
+      const m = raw.match(/^multiselect\(([^)]*)\)/) || raw.match(/^select\(([^)]*)\)/);
+      if (m) for (const v of m[1].split(',').map((s) => s.trim()).filter(Boolean)) set.add(v);
+    }
+    for (const r of rows) {
+      const raw = String(r.data.category || '');
+      for (const v of raw.split(',').map((s) => s.trim()).filter(Boolean)) set.add(v);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [section, rows]);
+
   // Only `multiselect(...)` columns get the comma-split-into-N-
   // groups treatment. Single-valued columns like `playlist`
   // (where a YouTube playlist literally named "Workout, Cardio"
@@ -795,12 +817,13 @@ export function GroupedGrid({
                             )}
                             <DropdownMenu.Item
                               onSelect={async () => {
-                                const headers = section.schema.headers;
-                                const catIdx = headers.indexOf('category');
-                                const raw = catIdx >= 0 ? String(section.schema.types?.[catIdx] || '') : '';
-                                const m = raw.match(/^multiselect\(([^)]*)\)/);
-                                const options = m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
-                                const next = await appPickMany(`Categories for "${key}"`, options, {
+                                // Use the full union (schema + every
+                                // value in use on rows) rather than
+                                // just the schema, so the picker
+                                // shows every category the user has
+                                // ever added — even from rows whose
+                                // schema entries got dropped.
+                                const next = await appPickMany(`Categories for "${key}"`, allCats, {
                                   body: 'Pick one or more — applies to every item in this group.',
                                 });
                                 if (next === null) return;
@@ -808,13 +831,20 @@ export function GroupedGrid({
                                 // the section's multiselect option list
                                 // so the picker shows it next time
                                 // instead of making the user retype.
-                                const newCats = next.filter((c) => !options.includes(c));
+                                const newCats = next.filter((c) => !allCats.includes(c));
                                 if (newCats.length > 0) {
                                   await fetch(`/api/sections/${section.slug}`, {
                                     method: 'PATCH',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({
-                                      setSelect: { column: 'category', options: [...options, ...newCats] },
+                                      // setMultiselect (NOT setSelect):
+                                      // the category column is a
+                                      // multiselect — using setSelect
+                                      // would rewrite the column type
+                                      // to single-value `select(...)`,
+                                      // breaking comma-split grouping
+                                      // and the category picker entirely.
+                                      setMultiselect: { column: 'category', options: [...allCats, ...newCats] },
                                     }),
                                   }).catch(() => undefined);
                                 }
@@ -978,6 +1008,7 @@ export function GroupedGrid({
                     <CardActions
                       row={r}
                       section={section}
+                      allCats={allCats}
                       onDelete={onDelete}
                       onRowUpdated={onRowUpdated}
                     />
@@ -1301,10 +1332,15 @@ function NotesTypeBadge({ type }: { type: string }) {
 }
 
 function CardActions({
-  row, section, onDelete, onRowUpdated,
+  row, section, allCats, onDelete, onRowUpdated,
 }: {
   row: Row;
   section: Section;
+  /** Full category vocabulary (schema multiselect options ∪ every
+   *  value currently used on a row). Threaded from GroupedGrid so
+   *  the per-card picker shows every category the user has ever
+   *  added, not just the subset still listed in the schema. */
+  allCats: string[];
   onDelete: (rowId: string) => Promise<void>;
   /** Forward a successful PATCH back to the parent so the row's
    * category chips, group placement, etc. refresh without a full
@@ -1340,18 +1376,17 @@ function CardActions({
     && typeof row.data.url === 'string' && !!row.data.url;
   const kind = section.preset === 'youtube' ? 'video' : 'paper';
   // Categorisable when the section schema declares a `category`
-  // column with a multiselect type. Pulls the picker vocabulary
-  // from the same place the bulk-set group action uses.
+  // column. Accept either `multiselect(...)` or `select(...)`
+  // shapes — the picker handles both the same way and the
+  // backing data is always a comma-joined string.
   const catIdx = section.schema.headers.indexOf('category');
   const catTypeRaw = catIdx >= 0 ? String(section.schema.types?.[catIdx] || '') : '';
-  const catMatch = catTypeRaw.match(/^multiselect\(([^)]*)\)/);
-  const isCategorisable = !!catMatch;
-  const catOptions = catMatch ? catMatch[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+  const isCategorisable = /^(multiselect|select)\(/.test(catTypeRaw);
 
   async function setCategory() {
     const currentRaw = String(row.data.category || '');
     const initial = currentRaw.split(',').map((s) => s.trim()).filter(Boolean);
-    const next = await appPickMany('Category', catOptions, {
+    const next = await appPickMany('Category', allCats, {
       body: `Pick one or more for "${String(row.data.title || row.data.name || row.id).slice(0, 60)}".`,
       initial,
     });
@@ -1360,13 +1395,17 @@ function CardActions({
     // Persist any newly-typed category back to the section schema's
     // multiselect option list so future picker invocations show it
     // instead of asking the user to retype.
-    const newCats = next.filter((c) => !catOptions.includes(c));
+    const newCats = next.filter((c) => !allCats.includes(c));
     if (newCats.length > 0) {
       await fetch(`/api/sections/${section.slug}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          setSelect: { column: 'category', options: [...catOptions, ...newCats] },
+          // setMultiselect (NOT setSelect): see the matching note
+          // on the group-level Set-category handler. Picking
+          // setSelect here would silently demote the column from
+          // multiselect → select and break grouping forever.
+          setMultiselect: { column: 'category', options: [...allCats, ...newCats] },
         }),
       }).catch(() => undefined);
     }
