@@ -29,7 +29,16 @@ import { useCropRegion } from './use-crop-region';
  *  out of the initial /lit bundle for users who never open this
  *  view. */
 const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), { ssr: false });
-type ForceGraph3DMethodsLike = { scene: () => unknown; renderer: () => { domElement: HTMLCanvasElement } };
+type ThreeCameraLike = {
+  matrixWorldInverse: { elements: number[] };
+  projectionMatrix: { elements: number[] };
+  updateMatrixWorld?: () => void;
+};
+type ForceGraph3DMethodsLike = {
+  scene: () => unknown;
+  renderer: () => { domElement: HTMLCanvasElement };
+  camera: () => ThreeCameraLike;
+};
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -327,9 +336,10 @@ export function AuthorGraph({
     <GraphExportMenu
       filename="lit-coauthors"
       source={{
-        // 3D shares the canvas path (PNG only — WebGL has no
-        // vector equivalent, so SVG / PDF fall back to PNG-
-        // wrapped via the canvas helpers).
+        // PNG-from-canvas path. 3D and force layouts both render
+        // to a canvas (WebGL / 2D); SVG/PDF take the vector path
+        // below via the graphData getter so the saved file is
+        // true vector, not raster wrapped in an <svg>.
         canvasEl: () => {
           if (layout === 'force') return canvasEl();
           if (layout === '3d') return fg3dRef.current?.renderer().domElement ?? null;
@@ -339,23 +349,85 @@ export function AuthorGraph({
         // applies at export time. When no region is selected this
         // returns the live SVG unchanged.
         svgEl: () => isSvgLayout ? crop.getSvgForExport() : null,
-        graphData: {
-          // Carry x/y/size so the exporter can rebuild a true-
-          // vector SVG of the force layout via nodesToSVG.
-          nodes: nodes.map((n) => ({
-            id: n.id,
-            label: n.label,
-            x: n.x,
-            y: n.y,
-            size: nodeRadius(n),
-            color: nodeFill(n),
-            attrs: { papers: n.papers, isFocal: n.isFocal },
-          })),
-          links: links.map((l) => ({
+        // Getter form so 3D exports can re-project node positions
+        // through the current camera matrix at the moment the
+        // user clicks Export PDF / SVG — without the getter the
+        // exporter would see stale projections from whenever the
+        // component last rendered, and rotating the camera would
+        // silently desync the saved vector from what's on screen.
+        graphData: () => {
+          const baseLinks = links.map((l) => ({
             source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
             target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
             weight: l.weight,
-          })),
+          }));
+          if (layout === '3d') {
+            const fg = fg3dRef.current;
+            const canvas = fg?.renderer().domElement;
+            const cam = fg?.camera();
+            if (fg && canvas && cam) {
+              cam.updateMatrixWorld?.();
+              const W = canvas.clientWidth || canvas.width;
+              const H = canvas.clientHeight || canvas.height;
+              const mw = cam.matrixWorldInverse.elements;
+              const mp = cam.projectionMatrix.elements;
+              // Manual column-major 4x4 multiplication so we
+              // don't have to import THREE just for this helper.
+              const project = (x: number, y: number, z: number) => {
+                const vx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
+                const vy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
+                const vz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
+                const vw = mw[3] * x + mw[7] * y + mw[11] * z + mw[15];
+                const cx = mp[0] * vx + mp[4] * vy + mp[8] * vz + mp[12] * vw;
+                const cy = mp[1] * vx + mp[5] * vy + mp[9] * vz + mp[13] * vw;
+                const cz = mp[2] * vx + mp[6] * vy + mp[10] * vz + mp[14] * vw;
+                const cw = mp[3] * vx + mp[7] * vy + mp[11] * vz + mp[15] * vw;
+                if (cw === 0) return { x: NaN, y: NaN, behind: true };
+                const ndcX = cx / cw;
+                const ndcY = cy / cw;
+                const ndcZ = cz / cw;
+                return {
+                  x: (ndcX * 0.5 + 0.5) * W,
+                  y: (-ndcY * 0.5 + 0.5) * H,
+                  behind: ndcZ > 1 || ndcZ < -1,
+                };
+              };
+              return {
+                nodes: nodes.map((n) => {
+                  const n3 = n as CoAuthorNode & { z?: number };
+                  const p = project(n.x ?? 0, n.y ?? 0, n3.z ?? 0);
+                  // Skip nodes whose projection lands behind the
+                  // near/far plane — emitting them would scatter
+                  // mirror-image points across the exported SVG.
+                  const visible = !p.behind && Number.isFinite(p.x) && Number.isFinite(p.y);
+                  return {
+                    id: n.id,
+                    label: n.label,
+                    x: visible ? p.x : undefined,
+                    y: visible ? p.y : undefined,
+                    size: nodeRadius(n),
+                    color: nodeFill(n),
+                    attrs: { papers: n.papers, isFocal: n.isFocal },
+                  };
+                }),
+                links: baseLinks,
+              };
+            }
+          }
+          return {
+            // 2D layouts: x/y is already screen-space (force) or
+            // pre-computed (circular / arc / bundled).
+            nodes: nodes.map((n) => ({
+              id: n.id,
+              label: n.label,
+              x: n.x,
+              y: n.y,
+              size: nodeRadius(n),
+              color: nodeFill(n),
+              attrs: { papers: n.papers, isFocal: n.isFocal },
+            })),
+            links: baseLinks,
+          };
         },
       }}
       bg={bgMode}

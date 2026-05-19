@@ -83,8 +83,11 @@ export type GraphExportSource = {
   /** Returns the live SVG element for vector export (SVG / PDF). */
   svgEl?: () => SVGSVGElement | null;
   /** Structural data — used for JSON / GraphML on graph-shaped
-   *  charts (nodes + edges). */
-  graphData?: { nodes: ExportNode[]; links: ExportLink[] };
+   *  charts (nodes + edges). May be a getter so callers (e.g. 3D
+   *  layouts) can re-project node positions at export time, after
+   *  the user has rotated the camera. */
+  graphData?: { nodes: ExportNode[]; links: ExportLink[] }
+    | (() => { nodes: ExportNode[]; links: ExportLink[] });
   /** Tabular data for non-graph charts (timelines, sankeys, etc.).
    *  When present the menu also surfaces JSON / CSV options for
    *  the raw rows alongside the rendered image. */
@@ -168,14 +171,21 @@ export function GraphExportMenu({
         : '#0b0d10';
       const styleOpts = { fontSize: FONT_PX[fontSize], textColor: resolvedTextColor, fontFamily: FONT_STACK[fontFamily] };
 
+      // Resolve graphData at export time so 3D layouts can
+      // re-project node positions through the current camera
+      // angle. Static-object callers keep working unchanged.
+      const gd = typeof source.graphData === 'function'
+        ? source.graphData()
+        : source.graphData;
+
       // For vector output (SVG / PDF) on a canvas-only graph that
       // carries node positions in graphData, build a fresh SVG
       // from those positions and route through the vector path.
       // That replaces the old "PNG embedded inside an <svg>"
       // raster-wrapped output with a true scalable vector.
       let svgForVector: SVGSVGElement | null = liveSvg;
-      if (!svgForVector && (format === 'svg' || format === 'pdf') && source.graphData) {
-        svgForVector = nodesToSVG(source.graphData.nodes, source.graphData.links, {
+      if (!svgForVector && (format === 'svg' || format === 'pdf') && gd) {
+        svgForVector = nodesToSVG(gd.nodes, gd.links, {
           bg: bgHex,
           fontSize: FONT_PX[fontSize],
           textColor: resolvedTextColor,
@@ -191,10 +201,10 @@ export function GraphExportMenu({
       } else if (format === 'pdf') {
         if (svgForVector) await exportPDFFromSVG(svgForVector, fn, bgHex, styleOpts);
         else if (canvas) await exportPDFFromCanvas(canvas, fn, bgHex);
-      } else if (format === 'json' && source.graphData) {
-        exportGraphJSON(source.graphData.nodes, source.graphData.links, fn);
-      } else if (format === 'graphml' && source.graphData) {
-        exportGraphML(source.graphData.nodes, source.graphData.links, fn);
+      } else if (format === 'json' && gd) {
+        exportGraphJSON(gd.nodes, gd.links, fn);
+      } else if (format === 'graphml' && gd) {
+        exportGraphML(gd.nodes, gd.links, fn);
       } else if (format === 'json-rows' && source.tableData) {
         downloadText(JSON.stringify(source.tableData.rows, null, 2), `${filename}.json`, 'application/json;charset=utf-8');
       } else if (format === 'csv' && source.tableData) {
@@ -215,8 +225,13 @@ export function GraphExportMenu({
   // True-vector output is available when a live SVG element
   // exists OR when the source carries node positions we can
   // rebuild an SVG from (nodesToSVG handles force-layout graphs).
-  const canVector = hasSvg || (hasData
-    && (source.graphData!.nodes.some((n) => Number.isFinite(n.x) && Number.isFinite(n.y))));
+  // For function-form graphData we have to optimistically assume
+  // positions are available — the getter is evaluated lazily so
+  // can't be peeked into here without invoking it.
+  const canVector = hasSvg || (hasData && (
+    typeof source.graphData === 'function'
+      ? true
+      : source.graphData!.nodes.some((n) => Number.isFinite(n.x) && Number.isFinite(n.y))));
 
   const bgChip = (id: ExportBg, label: string, Icon: typeof Sun) => (
     <button
