@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { bus } from '@/lib/event-bus';
 
 async function loadOwn(userId: string, slug: string) {
@@ -118,14 +118,43 @@ export async function DELETE(
   if (!sec) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const purge = req.nextUrl.searchParams.get('purge') === '1';
+  // Sharing cleanup — deleting a section should also tear down
+  // every share that targeted it (section / group / row scope),
+  // so a re-created section with the same id doesn't inherit
+  // stale recipients. Targets section-scope shares directly, plus
+  // group-scope shares whose targetId starts with `${sec.id}:`,
+  // plus row-scope shares whose rowId belongs to this section.
+  const rowIds = (await db
+    .select({ id: schema.rows.id })
+    .from(schema.rows)
+    .where(eq(schema.rows.sectionId, sec.id))).map((r) => r.id);
+  await db.delete(schema.shares).where(and(
+    eq(schema.shares.ownerUserId, userId),
+    eq(schema.shares.scope, 'section'),
+    eq(schema.shares.targetId, sec.id),
+  ));
+  await db.delete(schema.shares).where(and(
+    eq(schema.shares.ownerUserId, userId),
+    eq(schema.shares.scope, 'group'),
+    sql`${schema.shares.targetId} LIKE ${sec.id + ':%'}`,
+  ));
+  if (rowIds.length > 0) {
+    await db.delete(schema.shares).where(and(
+      eq(schema.shares.ownerUserId, userId),
+      eq(schema.shares.scope, 'row'),
+      inArray(schema.shares.targetId, rowIds),
+    ));
+  }
   if (purge) {
     await db.delete(schema.sections).where(eq(schema.sections.id, sec.id));
     bus.emit(userId, { kind: 'sections.listChanged' });
+    bus.emit(userId, { kind: 'share.received', shareId: '' });
     return NextResponse.json({ ok: true, purged: true });
   }
   await db.update(schema.sections)
     .set({ enabled: false, updatedAt: new Date() })
     .where(eq(schema.sections.id, sec.id));
   bus.emit(userId, { kind: 'sections.listChanged' });
+  bus.emit(userId, { kind: 'share.received', shareId: '' });
   return NextResponse.json({ ok: true, hidden: true });
 }

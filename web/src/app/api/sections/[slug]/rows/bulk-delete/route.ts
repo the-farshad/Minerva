@@ -179,6 +179,36 @@ export async function POST(
     if (driveIds.length) {
       await Promise.all(driveIds.map((fid) => deleteDriveFile(userId, fid)));
     }
+    // Sharing cleanup: deleting a playlist/category should also
+    // tear down any shares that targeted it. The user's complaint
+    // was that re-adding a playlist with the same name inherited
+    // the old share — so wipe scope='group' shares whose targetId
+    // matches sectionId:value, plus scope='row' shares for any
+    // fully-deleted rows.
+    const deletedRowIds = await db
+      .select({ id: schema.rows.id })
+      .from(schema.rows)
+      .where(and(
+        eq(schema.rows.userId, userId),
+        eq(schema.rows.sectionId, sec.id),
+        eq(schema.rows.deleted, true),
+      ));
+    // For the field+value branch, also nuke group-scope shares.
+    if (deleted > 0 || untagged > 0) {
+      const groupKey = `${sec.id}:${(/* eslint-disable @typescript-eslint/no-non-null-assertion */ (await req.clone().json().catch(() => ({}))) as { value?: string }).value ?? ''}`;
+      await db.delete(schema.shares).where(and(
+        eq(schema.shares.ownerUserId, userId),
+        eq(schema.shares.scope, 'group'),
+        eq(schema.shares.targetId, groupKey),
+      ));
+    }
+    if (deletedRowIds.length > 0) {
+      await db.delete(schema.shares).where(and(
+        eq(schema.shares.ownerUserId, userId),
+        eq(schema.shares.scope, 'row'),
+        inArray(schema.shares.targetId, deletedRowIds.map((r) => r.id)),
+      ));
+    }
     // Broadcast once: every open tab on this section invalidates
     // its cached row list. We don't itemise the IDs in the payload
     // for an ids-mode delete (the client only needs to know *that*
@@ -186,6 +216,7 @@ export async function POST(
     // signal "refetch this section."
     if (deleted > 0 || untagged > 0) {
       bus.emit(userId, { kind: 'rows.bulkChanged', sectionSlug: sec.slug, rowIds: [] });
+      bus.emit(userId, { kind: 'share.received', shareId: '' });
     }
     return NextResponse.json({ ok: true, deleted, untagged, driveDeleted: driveIds.length });
   } catch (e) {

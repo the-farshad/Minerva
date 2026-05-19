@@ -11,6 +11,14 @@ import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 
 type Found = { id: string; username: string | null; name: string | null; image: string | null };
+type ExistingRecipient = {
+  id: string;
+  shareId: string;
+  username: string | null;
+  mode: 'view' | 'edit';
+  acceptedAt: string | null;
+  declinedAt: string | null;
+};
 
 export function ShareDialog({
   scope,
@@ -44,6 +52,44 @@ export function ShareDialog({
    *  watch progress on every shared row. Defaults false so a
    *  brand-new share doesn't leak progress without consent. */
   const [shareProgress, setShareProgress] = useState(false);
+  // Existing shares for this exact target — loaded on dialog open
+  // and on share.received. Rendered above the picker with inline
+  // Unshare so the user doesn't have to leave the dialog (or visit
+  // /shares) to remove a previously-shared user.
+  const [existing, setExisting] = useState<ExistingRecipient[]>([]);
+  const [refreshExistingTick, setRefreshExistingTick] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch('/api/shares?direction=outgoing', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = (await r.json()) as { shares: { id: string; scope: string; targetId: string; revokedAt: string | null; recipients: ExistingRecipient[] }[] };
+        const matches = (j.shares || []).filter((s) => s.scope === scope && s.targetId === targetId && !s.revokedAt);
+        const list: ExistingRecipient[] = [];
+        for (const s of matches) {
+          for (const r of (s.recipients || [])) {
+            if (!r.declinedAt) list.push({ ...r, shareId: s.id });
+          }
+        }
+        if (!cancelled) setExisting(list);
+      } catch { /* tolerate */ }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, [open, scope, targetId, refreshExistingTick]);
+
+  async function unshare(shareId: string, recipientId: string) {
+    try {
+      const r = await fetch(`/api/shares/${shareId}/recipients/${recipientId}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error(`unshare: ${r.status}`);
+      toast.success('Recipient removed.');
+      setRefreshExistingTick((n) => n + 1);
+    } catch (e) {
+      notify.error((e as Error).message);
+    }
+  }
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
   /** Once a public link is generated for this scope+target this
@@ -184,6 +230,39 @@ export function ShareDialog({
               <Link2 className="h-3 w-3" /> Public link
             </button>
           </div>
+
+          {/* Existing recipients for this target — always shown
+            *  (in either tab) so 'Unshare' is reachable without
+            *  leaving the dialog. */}
+          {existing.length > 0 && (
+            <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50/50 p-2 dark:border-emerald-900 dark:bg-emerald-950/20">
+              <p className="mb-1.5 text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                Already shared with
+              </p>
+              <ul className="flex flex-wrap items-center gap-1.5">
+                {existing.map((r) => (
+                  <li
+                    key={r.id}
+                    className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[11px] dark:bg-zinc-900"
+                  >
+                    <AtSign className="h-3 w-3 text-zinc-500" />
+                    {r.username ?? '(link)'}
+                    <span className="text-[10px] text-zinc-500">· {r.mode}</span>
+                    {!r.acceptedAt && <span className="text-[10px] text-amber-600 dark:text-amber-400">pending</span>}
+                    <button
+                      type="button"
+                      onClick={() => void unshare(r.shareId, r.id)}
+                      title={`Unshare from ${r.username ? '@' + r.username : 'this link'}`}
+                      className="rounded-full p-0.5 text-red-500 hover:bg-red-100 dark:hover:bg-red-950/40"
+                      aria-label="Unshare"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {tab === 'link' ? (
             <div className="space-y-3">

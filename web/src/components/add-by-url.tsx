@@ -87,6 +87,20 @@ export function AddByUrl({
         const created: { id: string; data: Record<string, unknown>; updatedAt: string }[] = [];
         let skipped = 0;
         const playlistLabel = preview.playlistName || preview.playlistId;
+        // Persist the canonical playlist URL keyed by the label
+        // immediately on import — same key the About-this-playlist
+        // dialog reads. Without this the About link only resolves
+        // for users who happen to have list= preserved on row
+        // URLs, and the user's been hitting the manual 'Set URL'
+        // path every time. Wins over per-row URL parsing.
+        if (preview.playlistId && playlistLabel) {
+          try {
+            localStorage.setItem(
+              `minerva.v2.playlistUrl.${playlistLabel}`,
+              `https://www.youtube.com/playlist?list=${preview.playlistId}`,
+            );
+          } catch { /* private mode / disabled storage — tolerate */ }
+        }
         for (const item of preview.items) {
           if (existingUrls.has(item.url)) { skipped++; continue; }
           const data: Record<string, unknown> = {};

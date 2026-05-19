@@ -101,6 +101,16 @@ export async function DELETE(
   await db.update(schema.rows)
     .set({ deleted: true, updatedAt: new Date() })
     .where(eq(schema.rows.id, id));
+  // Tear down any shares targeting this specific row. Without
+  // this, recipients keep a dead share in their inbox and
+  // re-adding a row with the same id (rare but possible via
+  // re-import flows) would inherit the prior share state.
+  await db.delete(schema.shares).where(and(
+    eq(schema.shares.ownerUserId, userId),
+    eq(schema.shares.scope, 'row'),
+    eq(schema.shares.targetId, id),
+  ));
   bus.emit(userId, { kind: 'row.deleted', sectionSlug: slug, rowId: id });
+  bus.emit(userId, { kind: 'share.received', shareId: '' });
   return NextResponse.json({ ok: true, driveDeleted: driveIds.size });
 }
