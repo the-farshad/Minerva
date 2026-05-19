@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen, RotateCcw } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen, RotateCcw, Eye, EyeOff } from 'lucide-react';
 import { readingMinutes, formatReadingMinutes, MINUTES_PER_PAGE, WORDS_PER_MINUTE } from '@/lib/reading-time';
 import { relativeTime, formatDateTime } from '@/lib/relative-time';
 import type { Row } from '@/lib/row';
@@ -1211,6 +1211,67 @@ function CardActions({
     }
   }
 
+  /** Manual watched/unwatched toggle for video rows. Watched
+   *  sets the local resume position to the row's duration (so
+   *  the per-card progress bar fills + the About-this-playlist
+   *  "completed" count picks it up) AND POSTs server-side so
+   *  other devices + shared progress views agree. Unwatched
+   *  clears both. Storage event fires so the progress bar
+   *  refreshes immediately without a page reload. */
+  async function markVideoWatched(watched: boolean) {
+    const url = String(row.data.url || '');
+    if (!url) { notify.error('No URL on this row to mark.'); return; }
+    // Try the same duration field set the About dialog reads.
+    const data = row.data as Record<string, unknown>;
+    let duration = 0;
+    const candidates = [data.duration, data.seconds, data.lengthSeconds, data.length, data.runtime];
+    for (const c of candidates) {
+      if (typeof c === 'number' && c > 0) { duration = c; break; }
+      if (typeof c === 'string') {
+        const m = c.match(/(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?/);
+        if (m) {
+          duration = m[3]
+            ? parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10)
+            : parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+          if (duration > 0) break;
+        }
+        const n = Number(c);
+        if (Number.isFinite(n) && n > 0) { duration = n; break; }
+      }
+    }
+    // Fallback when duration is unknown — pick a number bigger
+    // than any plausible video so the >=90% completion check
+    // always passes against itself.
+    const position = duration > 0 ? duration : 86_400;
+    const resumeKey = 'minerva.v2.resume.' + url;
+    try {
+      if (watched) {
+        localStorage.setItem(resumeKey, String(position));
+      } else {
+        localStorage.removeItem(resumeKey);
+      }
+      window.dispatchEvent(new StorageEvent('storage', { key: resumeKey }));
+    } catch { /* private mode / disabled — tolerate */ }
+    // Server-side parity so other devices / shared-progress
+    // views match what this device just set.
+    try {
+      if (watched) {
+        await fetch('/api/watch-progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rowId: row.id, position, duration: duration || undefined, url }),
+        });
+      } else {
+        await fetch('/api/watch-progress', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rowIds: [row.id] }),
+        });
+      }
+    } catch { /* tolerate */ }
+    toast.success(watched ? 'Marked as watched.' : 'Marked as unwatched.');
+  }
+
   async function saveOffline() {
     toast.info(kind === 'video' ? 'Downloading + uploading to Drive…' : 'Mirroring PDF to Drive…');
     try {
@@ -1359,6 +1420,22 @@ function CardActions({
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
                 >
                   <Upload className="h-3.5 w-3.5" /> Upload local MP4
+                </DropdownMenu.Item>
+              )}
+              {kind === 'video' && (
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); void markVideoWatched(true); }}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <Eye className="h-3.5 w-3.5" /> Mark as watched
+                </DropdownMenu.Item>
+              )}
+              {kind === 'video' && (
+                <DropdownMenu.Item
+                  onSelect={(e) => { e.preventDefault(); void markVideoWatched(false); }}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <EyeOff className="h-3.5 w-3.5" /> Mark as unwatched
                 </DropdownMenu.Item>
               )}
               {hasOfflineCopy && (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -47,6 +47,11 @@ export function AddByUrl({
   const [preview, setPreview] = useState<LookupResult | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Track the URL the current preview came from so we only
+  // auto-lookup on actual changes (not on every re-render or
+  // when the user just blurs / re-opens the dialog).
+  const lastLookedUp = useRef<string>('');
+
   async function lookup() {
     if (!url.trim()) return;
     setBusy(true);
@@ -59,12 +64,32 @@ export function AddByUrl({
       });
       if (!r.ok) throw new Error(`Lookup failed: ${r.status}`);
       setPreview((await r.json()) as LookupResult);
+      lastLookedUp.current = url.trim();
     } catch (e) {
       notify.error((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
+
+  // Auto-lookup on paste/type when the input contains a
+  // plausible URL — the user said "do lookup and get metadata
+  // automatically when I add them." Debounced 500ms so we
+  // don't fire on every keystroke when typing manually.
+  // Skipped if the same URL was just looked up, or while a
+  // lookup is already in flight.
+  useEffect(() => {
+    const trimmed = url.trim();
+    if (!trimmed) { setPreview(null); lastLookedUp.current = ''; return; }
+    if (trimmed === lastLookedUp.current) return;
+    if (busy) return;
+    let valid = false;
+    try { new URL(trimmed); valid = true; } catch { /* not a URL yet */ }
+    if (!valid) return;
+    const t = setTimeout(() => { void lookup(); }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -142,6 +167,36 @@ export function AddByUrl({
           if (!r.ok) throw new Error(`Add row failed: ${r.status}`);
           created.push(await r.json());
         }
+        // Auto-enrich every playlist item the same way the
+        // single-row branch does below. The playlist scraper
+        // returns title / channel / thumbnail but never duration,
+        // so without this the rows show up missing duration until
+        // the user clicks Refresh on each one. Throttled to 3
+        // concurrent so we don't fan out 50 YouTube Data API
+        // calls at once. 409 (no API key configured) is silent.
+        (async () => {
+          const queue = [...created];
+          const enrichOne = async (c: { id: string }) => {
+            try {
+              const mr = await fetch(
+                `/api/sections/${section.slug}/rows/${c.id}/refresh-metadata`,
+                { method: 'POST' },
+              );
+              if (!mr.ok) return;
+              const mj = (await mr.json().catch(() => ({}))) as { data?: Record<string, unknown> };
+              if (mj.data) {
+                onAdded({ id: c.id, data: mj.data, updatedAt: new Date().toISOString() });
+              }
+            } catch { /* tolerate */ }
+          };
+          const workers = Array.from({ length: 3 }, async () => {
+            while (queue.length > 0) {
+              const next = queue.shift();
+              if (next) await enrichOne(next);
+            }
+          });
+          await Promise.all(workers);
+        })();
         return { many: created, skipped, playlistLabel };
       }
 
