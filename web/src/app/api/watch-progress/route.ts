@@ -9,6 +9,12 @@
  * localStorage.minerva.v2.resume.<url> per device. Drives the
  * Phase-4 progress-comparison view on shared content.
  */
+/**
+ * Also: DELETE /api/watch-progress  { rowIds: string[] }
+ *   Drop the current user's watch_progress rows for the given
+ *   rowIds. Used by the group-level "Reset watch progress" action
+ *   so server-side data stays in sync with the localStorage wipe.
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { auth } from '@/auth';
@@ -105,4 +111,22 @@ export async function GET(req: NextRequest) {
     ));
 
   return NextResponse.json({ progress: rows });
+}
+
+export async function DELETE(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const userId = (session.user as { id: string }).id;
+  const body = (await req.json().catch(() => ({}))) as { rowIds?: string[] };
+  const ids = (body.rowIds || []).filter((s) => typeof s === 'string' && s);
+  if (ids.length === 0) return NextResponse.json({ deleted: 0 });
+  if (ids.length > 500) return NextResponse.json({ error: 'Too many rowIds' }, { status: 400 });
+
+  const res = await db
+    .delete(schema.watchProgress)
+    .where(and(
+      eq(schema.watchProgress.userId, userId),
+      inArray(schema.watchProgress.rowId, ids),
+    ));
+  return NextResponse.json({ deleted: (res as { rowCount?: number }).rowCount ?? ids.length });
 }

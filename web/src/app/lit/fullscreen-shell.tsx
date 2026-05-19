@@ -14,8 +14,15 @@ import { Maximize2, Minimize2 } from 'lucide-react';
 
 export function FullscreenShell({
   children,
+  extras,
 }: {
   children: (ctx: { fullscreen: boolean; width: number; height: number }) => React.ReactNode;
+  /** Optional toolbar slot rendered next to the maximize button —
+   *  receives the live fullscreen flag so the chart can render a
+   *  more compact UI when maximized. Used by ChartShell to keep
+   *  the Export menu reachable while the chart is fullscreen
+   *  (where the outer toolbar is covered by the inset-0 overlay). */
+  extras?: (ctx: { fullscreen: boolean }) => React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -53,14 +60,21 @@ export function FullscreenShell({
 
   return (
     <div ref={ref} className={outer}>
-      <button
-        type="button"
-        onClick={() => setFullscreen((v) => !v)}
-        title={fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
-        className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-      >
-        {fullscreen ? <><Minimize2 className="h-3 w-3" /> Exit</> : <><Maximize2 className="h-3 w-3" /> Fullscreen</>}
-      </button>
+      <div className="absolute right-2 top-2 z-20 flex items-center gap-1">
+        {/* Caller-supplied toolbar (e.g. an Export menu) so the
+          *  user can still reach those actions when the chart is
+          *  maximised — the regular toolbar lives outside this
+          *  shell and gets covered by the inset-0 overlay. */}
+        {extras?.({ fullscreen })}
+        <button
+          type="button"
+          onClick={() => setFullscreen((v) => !v)}
+          title={fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
+          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          {fullscreen ? <><Minimize2 className="h-3 w-3" /> Exit</> : <><Maximize2 className="h-3 w-3" /> Fullscreen</>}
+        </button>
+      </div>
       <div style={bodyStyle} className="relative">
         {children({ fullscreen, width: size.width, height: size.height })}
       </div>

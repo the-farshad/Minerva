@@ -659,6 +659,17 @@ export function GroupedGrid({
                                     }
                                   }
                                   window.dispatchEvent(new StorageEvent('storage'));
+                                  // Server-side: also clear watch_progress
+                                  // rows so cross-device + shared-with-X
+                                  // views stay consistent with the
+                                  // localStorage wipe.
+                                  try {
+                                    await fetch('/api/watch-progress', {
+                                      method: 'DELETE',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ rowIds: groupRows.map((gr) => gr.id) }),
+                                    });
+                                  } catch { /* tolerate */ }
                                   toast.success(`Cleared progress on ${cleared} video${cleared === 1 ? '' : 's'}.`);
                                 }}
                                 className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
