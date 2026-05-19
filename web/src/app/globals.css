@@ -18,6 +18,30 @@ html[data-text-size="sm"] { font-size: 14px; }
 html[data-text-size="lg"] { font-size: 18px; }
 html[data-text-size="xl"] { font-size: 20px; }
 
+/* Marquee-on-hover for truncated labels (playlist names, etc.).
+ * The container uses CSS container queries so the keyframe knows
+ * its own width without JS. When the inner text fits, the
+ * min(0px, …) clamp leaves the translation at zero and nothing
+ * moves — only overflowing text animates. Animation runs once
+ * and pauses at the end so the user can read the tail; mouse-
+ * leave snaps back instantly. */
+.marquee {
+  container-type: inline-size;
+  overflow: hidden;
+}
+.marquee > .marquee-inner {
+  display: inline-block;
+  white-space: nowrap;
+  transform: translateX(0);
+}
+.marquee:hover > .marquee-inner {
+  animation: minerva-marquee 6s linear forwards;
+}
+@keyframes minerva-marquee {
+  0%, 12%   { transform: translateX(0); }
+  88%, 100% { transform: translateX(min(0px, calc(100cqw - 100% - 8px))); }
+}
+
 :root {
   /* Light defaults — `html.dark` flips them. The OS preference is
    * NOT consulted at the CSS layer; the inline boot script in

@@ -1139,7 +1139,7 @@ function GroupNameEditor({
   }
   return (
     <div
-      className="group flex min-w-0 max-w-[55%] items-center gap-1"
+      className="group flex min-w-0 max-w-[70%] items-center gap-1"
       onDoubleClick={() => setEditing(true)}
       title={`${name} — double-click to rename`}
     >
@@ -1149,8 +1149,12 @@ function GroupNameEditor({
         className="flex min-w-0 items-center gap-1 text-sm font-medium"
       >
         {isCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
-        <span className="truncate group-hover:underline group-hover:underline-offset-2 group-hover:decoration-zinc-300 dark:group-hover:decoration-zinc-700">
-          {name}
+        {/* marquee on hover: when the text overflows the
+          *  container, hovering scrolls it left so the user can
+          *  see the tail without having to read the title tooltip.
+          *  Falls back to a no-op when the text fits. */}
+        <span className="marquee min-w-0 flex-1 group-hover:underline group-hover:underline-offset-2 group-hover:decoration-zinc-300 dark:group-hover:decoration-zinc-700">
+          <span className="marquee-inner">{name}</span>
         </span>
         <span className="shrink-0 text-xs font-normal text-zinc-500">· {count}</span>
       </button>
@@ -1206,10 +1210,16 @@ function PlaylistProgress({ rows, size = 'chip' }: { rows: Row[]; size?: 'chip' 
   }
   return (
     <div className="flex items-center gap-1.5 text-[10px] text-zinc-500" title={`${known} of ${rows.length} videos have durations`}>
-      <div className="progress-track h-1 w-24 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+      <div className="progress-track h-1 w-24 shrink-0 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
         <div className={`progress-fill h-full ${fill}`} style={{ width: `${pct * 100}%` }} />
       </div>
-      <span>{mm(totalWatched)} / {mm(totalDur)}</span>
+      {/* Reserved width + right-aligned + tabular figures so every
+       *  group's time chip lines up in a column even as one says
+       *  "0m / 39h28m" and the next says "12m / 1h2m". Without
+       *  min-w the column would jitter between rows. */}
+      <span className="inline-block min-w-[6rem] text-right font-mono tabular-nums">
+        {mm(totalWatched)} / {mm(totalDur)}
+      </span>
     </div>
   );
 }
