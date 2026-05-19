@@ -774,6 +774,44 @@ export function SectionView({
       <PreviewModal
         item={previewItem}
         onClose={() => setPreviewItem(null)}
+        onAdvance={(currentRowId) => {
+          // Auto-advance: pick the next row in the same playlist /
+          // category as the current one and reopen the preview on
+          // it. Falls back to "next row in the sorted list" when
+          // the rows aren't grouped (rare for YouTube preset).
+          const cur = rows.find((r) => r.id === currentRowId);
+          if (!cur) return null;
+          const curData = cur.data as Record<string, unknown>;
+          const groupCol = section.preset === 'youtube'
+            ? 'playlist'
+            : section.preset === 'papers'
+              ? 'category'
+              : null;
+          const curGroup = groupCol ? String(curData[groupCol] || '') : '';
+          // Same-group candidate set, sorted by playlist position
+          // when present (preserves the source playlist order),
+          // otherwise by createdAt asc.
+          const inGroup = (groupCol
+            ? rows.filter((r) => {
+                const d = r.data as Record<string, unknown>;
+                return String(d[groupCol] || '') === curGroup;
+              })
+            : rows.slice()
+          ).slice().sort((a, b) => {
+            const pa = Number((a.data as Record<string, unknown>)._playlistPos);
+            const pb = Number((b.data as Record<string, unknown>)._playlistPos);
+            if (Number.isFinite(pa) && Number.isFinite(pb)) return pa - pb;
+            return (a.createdAt || '').localeCompare(b.createdAt || '');
+          });
+          const idx = inGroup.findIndex((r) => r.id === currentRowId);
+          const next = idx >= 0 && idx + 1 < inGroup.length ? inGroup[idx + 1] : null;
+          if (!next) {
+            toast.info('No next item in this playlist.');
+            return null;
+          }
+          openPreview(next);
+          return next.id;
+        }}
         onNotesSaved={(rowId, notes) => {
           setRows((rs) => rs.map((x) => (
             x.id === rowId ? { ...x, data: { ...x.data, notes } } : x

@@ -74,6 +74,7 @@ export function PreviewModal({
   onClose,
   onNotesSaved,
   onRowDataChanged,
+  onAdvance,
 }: {
   item: PreviewItem | null;
   onClose: () => void;
@@ -89,6 +90,13 @@ export function PreviewModal({
    * mode re-extracts on every open even though the cached markdown
    * was just saved. */
   onRowDataChanged?: (rowId: string, data: Record<string, unknown>) => void;
+  /** Open the next row in the same group. Wired to the offline /
+   * host <video onEnded> handler so a finished video advances to
+   * the next one automatically, and to a 'Next ▶' button so the
+   * user can also skip forward manually. Returns the rowId of the
+   * row that was opened (if any) so the caller can re-render the
+   * progress chip. */
+  onAdvance?: (currentRowId: string) => string | null;
 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(!!item), [item]);
@@ -989,6 +997,14 @@ export function PreviewModal({
                   }
                 }}
                 onTimeUpdate={(e) => { ytTimeRef.current = e.currentTarget.currentTime; }}
+                onEnded={() => {
+                  // Auto-advance: ask the parent to open the next
+                  // row in the same group. Parent's openNextInGroup
+                  // returns the new rowId (or null if there's
+                  // nothing left) so the user lands on the next
+                  // video automatically when one ends.
+                  if (view.rowId && onAdvance) onAdvance(view.rowId);
+                }}
                 className="h-full w-full bg-black"
               />
             ) : yt ? (
@@ -999,7 +1015,13 @@ export function PreviewModal({
                 fallbackUrl={view.url}
               />
             ) : hostSrc ? (
-              <video src={hostSrc} controls autoPlay className="h-full w-full bg-black" />
+              <video
+                src={hostSrc}
+                controls
+                autoPlay
+                onEnded={() => { if (view.rowId && onAdvance) onAdvance(view.rowId); }}
+                className="h-full w-full bg-black"
+              />
             ) : (
               <IframeWithFallback
                 title={view.title || view.url}
