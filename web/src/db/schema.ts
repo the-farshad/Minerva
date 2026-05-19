@@ -76,10 +76,15 @@ export const shareRecipients = pgTable('share_recipients', {
   mode: text('mode').notNull().default('view'),
   acceptedAt: timestamp('acceptedAt'),
   declinedAt: timestamp('declinedAt'),
-  /** Phase-4 progress visibility. When true the OWNER lets the
-   *  recipient see their watch progress on the shared content
-   *  (and a future toggle on the recipient side reverses it). */
+  /** Phase-4 progress visibility — owner → recipient direction.
+   *  When true the recipient can see the owner's watch_progress
+   *  for every row in the shared scope. */
   shareProgress: boolean('shareProgress').default(false).notNull(),
+  /** Phase-4 inverse direction — recipient → owner. When true
+   *  the owner can see this recipient's watch_progress on the
+   *  same shared rows. Owner and recipient each control their
+   *  own direction independently. */
+  recipientShareProgress: boolean('recipientShareProgress').default(false).notNull(),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
 }, (t) => ({
   byShare: index('share_recipients_share_idx').on(t.shareId),

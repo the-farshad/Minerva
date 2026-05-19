@@ -13,6 +13,7 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
 import { CloneButton } from './clone-button';
+import { ShareBackToggle } from './share-back-toggle';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Shared with me — Minerva' };
@@ -92,6 +93,9 @@ export default async function SharedWithMePage({ params }: { params: Promise<{ i
         {(share.scope === 'section' || share.scope === 'group') && (
           <CloneButton recipientId={rec.id} />
         )}
+        <div className="mt-1">
+          <ShareBackToggle recipientId={rec.id} initial={rec.recipientShareProgress} />
+        </div>
       </header>
 
       {rows.length === 0 ? (
