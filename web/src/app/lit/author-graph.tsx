@@ -20,6 +20,7 @@ import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
 import { GraphExportMenu, type ExportFontSize, type ExportTextColor } from './graph-export-menu';
+import { useCropRegion } from './use-crop-region';
 
 /** Three.js / react-force-graph-3d for the 3D layout. Loaded
  *  dynamically (ssr:false) so the ~400KB-gz WebGL stack stays
@@ -94,6 +95,13 @@ export function AuthorGraph({
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const fg3dRef = useRef<ForceGraph3DMethodsLike | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  // Region-select crop. Only meaningful when the active layout
+  // renders to an SVG (circular / arc / bundled); the force and
+  // 3d layouts paint to a canvas / WebGL context where this
+  // viewBox-mutation approach doesn't apply, so the crop button
+  // hides for those.
+  const crop = useCropRegion(svgRef);
+  const isSvgLayout = layout === 'circular' || layout === 'arc' || layout === 'bundled';
   // Zoom + pan state for the circular SVG. Force layout already
   // has react-force-graph-2d's built-in wheel zoom; SVG needs its
   // own. tx/ty are in viewBox units, scale is multiplicative.
@@ -107,7 +115,11 @@ export function AuthorGraph({
   const [chordSel, setChordSel] = useState<ChordSel | null>(null);
   const dragRef = useRef<{ startClientX: number; startClientY: number; startTx: number; startTy: number } | null>(null);
   function resetView() { setView({ scale: 1, tx: 0, ty: 0 }); }
+  // Pan / zoom / wheel handlers below short-circuit when the
+  // user is in crop-selection mode so the marquee drag doesn't
+  // race the chart-drag.
   function onSvgWheel(e: React.WheelEvent<SVGSVGElement>) {
+    if (crop.cropping) return;
     e.preventDefault();
     const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
@@ -126,6 +138,7 @@ export function AuthorGraph({
     });
   }
   function onSvgMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    if (crop.cropping) return;
     if (e.button !== 0) return;
     dragRef.current = {
       startClientX: e.clientX, startClientY: e.clientY,
@@ -133,6 +146,7 @@ export function AuthorGraph({
     };
   }
   function onSvgMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    if (crop.cropping) return;
     const d = dragRef.current;
     if (!d) return;
     const svg = e.currentTarget;
@@ -242,7 +256,10 @@ export function AuthorGraph({
           if (layout === '3d') return fg3dRef.current?.renderer().domElement ?? null;
           return null;
         },
-        svgEl: () => (layout === 'circular' || layout === 'arc' || layout === 'bundled') ? svgRef.current : null,
+        // Route through the crop hook so any saved crop region
+        // applies at export time. When no region is selected this
+        // returns the live SVG unchanged.
+        svgEl: () => isSvgLayout ? crop.getSvgForExport() : null,
         graphData: {
           // Carry x/y/size so the exporter can rebuild a true-
           // vector SVG of the force layout via nodesToSVG.
@@ -276,6 +293,7 @@ export function AuthorGraph({
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span>Co-author network — {nodes.length} authors, {links.length} edges</span>
         <span className="text-zinc-300 dark:text-zinc-700">|</span>
+        {isSvgLayout && crop.cropButton}
         {exportMenuEl}
         <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
           <button
@@ -367,8 +385,13 @@ export function AuthorGraph({
         <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
           {() => (
             <div
-              className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              ref={crop.bodyRef}
+              className={`relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 ${crop.cropping ? 'cursor-crosshair select-none' : ''}`}
               style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
+              onMouseDown={crop.onMouseDown}
+              onMouseMove={crop.onMouseMove}
+              onMouseUp={crop.onMouseUp}
+              onMouseLeave={crop.onMouseUp}
             >
               <ArcDiagram
                 nodes={circular.ordered}
@@ -377,6 +400,7 @@ export function AuthorGraph({
                 onAuthorClick={onAuthorClick}
                 svgRef={svgRef}
               />
+              {crop.decorations}
             </div>
           )}
         </FullscreenShell>
@@ -384,8 +408,13 @@ export function AuthorGraph({
         <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
           {() => (
             <div
-              className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              ref={crop.bodyRef}
+              className={`relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 ${crop.cropping ? 'cursor-crosshair select-none' : ''}`}
               style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
+              onMouseDown={crop.onMouseDown}
+              onMouseMove={crop.onMouseMove}
+              onMouseUp={crop.onMouseUp}
+              onMouseLeave={crop.onMouseUp}
             >
               <BundledDiagram
                 nodes={circular.ordered}
@@ -394,6 +423,7 @@ export function AuthorGraph({
                 onAuthorClick={onAuthorClick}
                 svgRef={svgRef}
               />
+              {crop.decorations}
             </div>
           )}
         </FullscreenShell>
@@ -501,8 +531,13 @@ export function AuthorGraph({
         <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
           {() => (
             <div
-              className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              ref={crop.bodyRef}
+              className={`relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 ${crop.cropping ? 'cursor-crosshair select-none' : ''}`}
               style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
+              onMouseDown={crop.onMouseDown}
+              onMouseMove={crop.onMouseMove}
+              onMouseUp={crop.onMouseUp}
+              onMouseLeave={crop.onMouseUp}
             >
               {/* Chord-selection readout floats over the chart so
                 * it stays visible when the user maximises into
@@ -681,6 +716,7 @@ export function AuthorGraph({
                   </g>
                 )}
               </svg>
+              {crop.decorations}
             </div>
           )}
         </FullscreenShell>
