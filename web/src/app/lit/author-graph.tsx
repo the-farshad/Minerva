@@ -56,7 +56,7 @@ export function AuthorGraph({
   focalAuthor?: string;
   onAuthorClick?: (name: string) => void;
 }) {
-  const [layout, setLayout] = useState<'force' | 'circular' | 'arc'>('force');
+  const [layout, setLayout] = useState<'force' | 'circular' | 'arc' | 'bundled'>('force');
   /** Read the active page theme so the graph background matches
    *  by default instead of always starting on light. The user can
    *  still override via the BG toggle; this only sets the initial
@@ -310,6 +310,17 @@ export function AuthorGraph({
           >
             Arc
           </button>
+          <button
+            type="button"
+            onClick={() => setLayout('bundled')}
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              layout === 'bundled'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            Bundled
+          </button>
         </div>
       </div>
 
@@ -321,6 +332,23 @@ export function AuthorGraph({
               style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
             >
               <ArcDiagram
+                nodes={circular.ordered}
+                links={links}
+                isDark={isDark}
+                onAuthorClick={onAuthorClick}
+                svgRef={svgRef}
+              />
+            </div>
+          )}
+        </FullscreenShell>
+      ) : layout === 'bundled' ? (
+        <FullscreenShell>
+          {() => (
+            <div
+              className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
+            >
+              <BundledDiagram
                 nodes={circular.ordered}
                 links={links}
                 isDark={isDark}
@@ -575,6 +603,172 @@ export function AuthorGraph({
         </FullscreenShell>
       )}
     </div>
+  );
+}
+
+/** Hierarchical edge-bundling layout. Authors are clustered by the
+ *  first letter of their last name, clusters are placed around a
+ *  ring, authors are positioned in a small arc near their cluster
+ *  centroid, and every edge is a cubic Bezier that passes through
+ *  both endpoints' cluster centroids — so edges between the same
+ *  letter cluster fan out from one point, and cross-cluster edges
+ *  produce the bundled-tree look from the Holten 2006 paper.
+ *  Vector-native, so PDF / SVG export is clean. */
+function BundledDiagram({
+  nodes,
+  links,
+  isDark,
+  onAuthorClick,
+  svgRef,
+}: {
+  nodes: CoAuthorNode[];
+  links: CoAuthorLink[];
+  isDark: boolean;
+  onAuthorClick?: (id: string) => void;
+  svgRef: React.RefObject<SVGSVGElement | null>;
+}) {
+  const W = 760;
+  const H = 520;
+  const cx = W / 2;
+  const cy = H / 2;
+  const ringR = Math.min(W, H) / 2 - 60;
+  // Bezier control points sit at a fraction of the ring radius
+  // toward the center — this is the "bundling tightness". 0.55
+  // hits the sweet spot for ~30 authors: cross-cluster edges
+  // visibly bundle without merging into a black mass.
+  const TIGHTNESS = 0.55;
+
+  // Cluster by first letter of the part after the last space (the
+  // last-name surname for "First Last" forms; for "Last, First"
+  // forms it still picks a sensible cluster). Fall back to '?'.
+  const clusterKey = (name: string): string => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return '?';
+    if (trimmed.includes(',')) return trimmed[0].toUpperCase();
+    const parts = trimmed.split(/\s+/);
+    return (parts[parts.length - 1][0] || '?').toUpperCase();
+  };
+
+  // Group nodes by cluster, sort cluster keys alphabetically.
+  const buckets = new Map<string, CoAuthorNode[]>();
+  for (const n of nodes) {
+    const k = clusterKey(n.label);
+    const arr = buckets.get(k) ?? [];
+    arr.push(n);
+    buckets.set(k, arr);
+  }
+  const clusterKeys = [...buckets.keys()].sort();
+  const clusterCount = clusterKeys.length || 1;
+
+  // Cluster centroids around the ring.
+  const clusterAngle = new Map<string, number>();
+  clusterKeys.forEach((k, i) => {
+    const a = (i / clusterCount) * 2 * Math.PI - Math.PI / 2;
+    clusterAngle.set(k, a);
+  });
+
+  // Per-author positions: spread within a small arc around the
+  // cluster centroid. Arc width scales with the cluster's size so
+  // a 10-author cluster doesn't crowd a 2-author one off the ring.
+  const positions = new Map<string, { x: number; y: number; ang: number }>();
+  for (const k of clusterKeys) {
+    const members = buckets.get(k)!;
+    const baseAng = clusterAngle.get(k)!;
+    const spread = Math.min(0.6, 0.1 + members.length * 0.04);
+    members.forEach((n, i) => {
+      const t = members.length === 1 ? 0 : (i / (members.length - 1) - 0.5);
+      const a = baseAng + t * spread;
+      positions.set(n.id, {
+        x: cx + ringR * Math.cos(a),
+        y: cy + ringR * Math.sin(a),
+        ang: a,
+      });
+    });
+  }
+
+  // Control point for a cluster — sits on the line from origin to
+  // cluster centroid at TIGHTNESS scale.
+  const controlFor = (key: string) => {
+    const a = clusterAngle.get(key)!;
+    return { x: cx + ringR * TIGHTNESS * Math.cos(a), y: cy + ringR * TIGHTNESS * Math.sin(a) };
+  };
+
+  return (
+    <svg
+      ref={svgRef}
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="xMidYMid meet"
+      className="block h-full w-full"
+    >
+      {/* edges first (under nodes) */}
+      {links.map((l, i) => {
+        const sId = typeof l.source === 'object' && l.source !== null
+          ? (l.source as { id: string }).id : l.source;
+        const tId = typeof l.target === 'object' && l.target !== null
+          ? (l.target as { id: string }).id : l.target;
+        const sNode = nodes.find((n) => n.id === sId);
+        const tNode = nodes.find((n) => n.id === tId);
+        if (!sNode || !tNode) return null;
+        const a = positions.get(sId);
+        const b = positions.get(tId);
+        if (!a || !b) return null;
+        const c1 = controlFor(clusterKey(sNode.label));
+        const c2 = controlFor(clusterKey(tNode.label));
+        const path = `M${a.x},${a.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${b.x},${b.y}`;
+        const sw = Math.max(0.6, Math.min(5, 0.6 + l.weight * 0.5));
+        const op = Math.min(0.85, 0.35 + Math.log2(1 + l.weight) * 0.1);
+        return (
+          <path
+            key={`b-${i}`}
+            d={path}
+            fill="none"
+            stroke={isDark ? '#e4e4e7' : '#27272a'}
+            strokeOpacity={op}
+            strokeWidth={sw}
+            strokeLinecap="round"
+          >
+            <title>{`${sId} ↔ ${tId} · ${l.weight} shared paper${l.weight === 1 ? '' : 's'}`}</title>
+          </path>
+        );
+      })}
+      {/* cluster letter labels — sit just outside the ring at each
+        * centroid angle. Gives the bundled view a tree-of-letters
+        * anchor without needing per-author tags everywhere. */}
+      {clusterKeys.map((k) => {
+        const a = clusterAngle.get(k)!;
+        const lx = cx + (ringR + 22) * Math.cos(a);
+        const ly = cy + (ringR + 22) * Math.sin(a);
+        return (
+          <text
+            key={`cl-${k}`}
+            x={lx} y={ly}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            className="fill-zinc-400 text-[14px] font-semibold dark:fill-zinc-500"
+          >
+            {k}
+          </text>
+        );
+      })}
+      {/* nodes */}
+      {nodes.map((n) => {
+        const p = positions.get(n.id);
+        if (!p) return null;
+        const r = 3 + Math.min(8, Math.log2(1 + n.papers) * 1.5);
+        return (
+          <g key={`bn-${n.id}`} className="cursor-pointer" onClick={() => onAuthorClick?.(n.id)}>
+            <circle
+              cx={p.x} cy={p.y} r={r}
+              fill={n.isFocal ? '#1e40af' : (isDark ? '#a1a1aa' : '#52525b')}
+              stroke={n.isFocal ? (isDark ? '#fafafa' : '#18181b') : 'none'}
+              strokeWidth={n.isFocal ? 1.5 : 0}
+            >
+              <title>{`${n.label} · ${n.papers} paper${n.papers === 1 ? '' : 's'}`}</title>
+            </circle>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
