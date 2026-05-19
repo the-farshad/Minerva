@@ -56,7 +56,7 @@ export function AuthorGraph({
   focalAuthor?: string;
   onAuthorClick?: (name: string) => void;
 }) {
-  const [layout, setLayout] = useState<'force' | 'circular'>('force');
+  const [layout, setLayout] = useState<'force' | 'circular' | 'arc'>('force');
   /** Read the active page theme so the graph background matches
    *  by default instead of always starting on light. The user can
    *  still override via the BG toggle; this only sets the initial
@@ -299,10 +299,38 @@ export function AuthorGraph({
           >
             Circular
           </button>
+          <button
+            type="button"
+            onClick={() => setLayout('arc')}
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              layout === 'arc'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            Arc
+          </button>
         </div>
       </div>
 
-      {layout === 'force' ? (
+      {layout === 'arc' ? (
+        <FullscreenShell>
+          {() => (
+            <div
+              className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
+            >
+              <ArcDiagram
+                nodes={circular.ordered}
+                links={links}
+                isDark={isDark}
+                onAuthorClick={onAuthorClick}
+                svgRef={svgRef}
+              />
+            </div>
+          )}
+        </FullscreenShell>
+      ) : layout === 'force' ? (
         <FullscreenShell>
           {({ width, height }) => (
             <div
@@ -547,6 +575,110 @@ export function AuthorGraph({
         </FullscreenShell>
       )}
     </div>
+  );
+}
+
+/** Arc-diagram layout: authors on a horizontal line, semicircular
+ *  arcs above the line connecting collaborators. Width = weight,
+ *  vector-native (it's pure SVG paths) so PDF / SVG export is
+ *  always clean. Skips force-layout entirely — useful when the
+ *  user wants to see which authors form the densest collaboration
+ *  cluster without the spaghetti of a force graph. */
+function ArcDiagram({
+  nodes,
+  links,
+  isDark,
+  onAuthorClick,
+  svgRef,
+}: {
+  nodes: CoAuthorNode[];
+  links: CoAuthorLink[];
+  isDark: boolean;
+  onAuthorClick?: (id: string) => void;
+  svgRef: React.RefObject<SVGSVGElement | null>;
+}) {
+  const W = 920;
+  const H = 360;
+  const PAD = { l: 40, r: 40, top: 40, baseline: 280 };
+  const positions = new Map<string, number>();
+  const usable = nodes.length > 0 ? nodes : [];
+  const step = usable.length > 1 ? (W - PAD.l - PAD.r) / (usable.length - 1) : 0;
+  usable.forEach((n, i) => positions.set(n.id, PAD.l + i * step));
+
+  return (
+    <svg
+      ref={svgRef}
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="xMidYMid meet"
+      className="block h-full w-full"
+    >
+      {/* baseline */}
+      <line
+        x1={PAD.l - 8} x2={W - PAD.r + 8}
+        y1={PAD.baseline} y2={PAD.baseline}
+        stroke={isDark ? '#3f3f46' : '#d4d4d8'} strokeWidth={0.8}
+      />
+      {/* arcs */}
+      {links.map((l, i) => {
+        const sId = typeof l.source === 'object' && l.source !== null
+          ? (l.source as { id: string }).id : l.source;
+        const tId = typeof l.target === 'object' && l.target !== null
+          ? (l.target as { id: string }).id : l.target;
+        const a = positions.get(sId);
+        const b = positions.get(tId);
+        if (a == null || b == null) return null;
+        const x1 = Math.min(a, b);
+        const x2 = Math.max(a, b);
+        const cx = (x1 + x2) / 2;
+        const radius = (x2 - x1) / 2;
+        // Half-ellipse arc above the baseline. Height scales with
+        // arc width so a long-distance collab doesn't push past
+        // the top viewBox, and a short-distance one stays visibly
+        // arched. Stroke width = weight.
+        const archHeight = Math.min(radius * 0.85, PAD.baseline - PAD.top);
+        const path = `M${x1},${PAD.baseline} A${radius},${archHeight} 0 0 1 ${x2},${PAD.baseline}`;
+        const sw = Math.max(0.8, Math.min(6, 0.6 + l.weight * 0.6));
+        const op = Math.min(0.9, 0.45 + Math.log2(1 + l.weight) * 0.1);
+        return (
+          <path
+            key={`a-${i}`}
+            d={path}
+            fill="none"
+            stroke={isDark ? '#e4e4e7' : '#27272a'}
+            strokeOpacity={op}
+            strokeWidth={sw}
+            strokeLinecap="round"
+          >
+            <title>{`${sId} ↔ ${tId} · ${l.weight} shared paper${l.weight === 1 ? '' : 's'}`}</title>
+            {void cx /* cx is intentionally unused after path construction */}
+          </path>
+        );
+      })}
+      {/* nodes + rotated labels */}
+      {usable.map((n) => {
+        const x = positions.get(n.id)!;
+        const r = 3 + Math.min(8, Math.log2(1 + n.papers) * 1.5);
+        return (
+          <g key={`n-${n.id}`} className="cursor-pointer" onClick={() => onAuthorClick?.(n.id)}>
+            <circle
+              cx={x} cy={PAD.baseline} r={r}
+              fill={n.isFocal ? '#1e40af' : (isDark ? '#a1a1aa' : '#52525b')}
+              stroke={n.isFocal ? (isDark ? '#fafafa' : '#18181b') : 'none'}
+              strokeWidth={n.isFocal ? 1.5 : 0}
+            />
+            <text
+              x={x} y={PAD.baseline + r + 6}
+              textAnchor="end"
+              transform={`rotate(-45 ${x} ${PAD.baseline + r + 6})`}
+              className="fill-zinc-700 text-[10px] dark:fill-zinc-300"
+            >
+              {n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}
+              <title>{`${n.label} · ${n.papers} paper${n.papers === 1 ? '' : 's'}`}</title>
+            </text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 

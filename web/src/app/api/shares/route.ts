@@ -124,8 +124,26 @@ export async function POST(req: NextRequest) {
       mode: 'view',
       acceptedAt: new Date(),
     });
-    const origin = req.nextUrl.origin;
-    publicUrl = `${origin}/share/${token}`;
+    // Build the canonical base URL. req.nextUrl.origin can resolve
+    // to the internal address (e.g. localhost:3000) when the
+    // reverse proxy doesn't forward X-Forwarded-Host — that's
+    // exactly the 'localhost:3000' link the user just saw on
+    // production. Prefer the X-Forwarded-* headers, then
+    // AUTH_URL / NEXTAUTH_URL / NEXT_PUBLIC_APP_URL envs, then
+    // fall back to origin as a last resort.
+    const fwdHost = req.headers.get('x-forwarded-host') || req.headers.get('host');
+    const fwdProto = req.headers.get('x-forwarded-proto');
+    const envBase = process.env.AUTH_URL || process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL;
+    let baseUrl: string;
+    if (envBase) {
+      baseUrl = envBase.replace(/\/$/, '');
+    } else if (fwdHost) {
+      const proto = fwdProto || (fwdHost.includes('localhost') ? 'http' : 'https');
+      baseUrl = `${proto}://${fwdHost}`;
+    } else {
+      baseUrl = req.nextUrl.origin;
+    }
+    publicUrl = `${baseUrl}/share/${token}`;
   }
 
   // Notify recipients via SSE so their inbox badge lights up live.
