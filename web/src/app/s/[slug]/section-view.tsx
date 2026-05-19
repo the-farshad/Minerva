@@ -8,6 +8,7 @@ import type { Row } from '@/lib/row';
 import { relativeTime, formatDateTime } from '@/lib/relative-time';
 import { Plus, LayoutGrid, List, Trash2, Columns3, Calendar as CalendarIcon, FileSpreadsheet, Upload, FileUp, ArrowDownUp, Share2 } from 'lucide-react';
 import { ShareDialog } from '@/components/share-dialog';
+import { PaperSearchModal } from '@/components/paper-search-modal';
 import { useQueryClient } from '@tanstack/react-query';
 import { useServerEvents } from '@/hooks/use-server-events';
 import { toast } from 'sonner';
@@ -531,6 +532,22 @@ export function SectionView({
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">{section.title}</h1>
         <div className="flex flex-wrap items-center gap-2">
+          {section.preset === 'papers' && (
+            <PaperSearchModal
+              sectionSlug={section.slug}
+              onAdded={(row) => setRows((rs) => rs.some((x) => x.id === row.id) ? rs : [row as Row, ...rs])}
+              trigger={
+                <button
+                  type="button"
+                  title="Search and add papers from Semantic Scholar / OpenAlex"
+                  className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Search & add
+                </button>
+              }
+            />
+          )}
           <ShareDialog
             scope="section"
             targetId={section.id}
