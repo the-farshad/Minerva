@@ -102,7 +102,19 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
   const stats = useMemo(() => {
     // The manually-saved URL wins over per-row URL parsing — that's
     // the whole point of letting the user paste it.
+    // Resolution order: manually-saved URL (storedListId) → any
+    // row's `_playlistId` meta field (set by add-by-url on import)
+    // → any row URL's list= param. First win sticks.
     let listId = storedListId ?? '';
+    if (!listId) {
+      for (const r of rows) {
+        const data = r.data as Record<string, unknown>;
+        if (typeof data._playlistId === 'string' && data._playlistId) {
+          listId = data._playlistId;
+          break;
+        }
+      }
+    }
     let totalSec = 0;
     let watchedSec = 0;
     let completed = 0;

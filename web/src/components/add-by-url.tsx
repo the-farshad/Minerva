@@ -95,6 +95,26 @@ export function AddByUrl({
             if (v == null || v === '' || k === 'playlist' || k === 'position') continue;
             if (allowed.has(k)) data[k] = v;
           }
+          // Always preserve the playlist's list= id on the stored
+          // URL so the About-this-playlist dialog can recover the
+          // canonical /playlist?list=… link without a manual paste.
+          // The youtubePlaylist() scraper returns bare watch URLs,
+          // so without this every per-video URL forgets the
+          // playlist it belongs to.
+          if (typeof data.url === 'string' && preview.playlistId) {
+            try {
+              const u = new URL(data.url);
+              if (!u.searchParams.has('list')) {
+                u.searchParams.set('list', preview.playlistId);
+                data.url = u.toString();
+              }
+            } catch { /* malformed URL — leave it alone */ }
+          }
+          // Also store the playlist id as a hidden meta field so
+          // any future consumer that walks data directly (rather
+          // than parsing data.url) can find it without the URL
+          // round-trip.
+          if (preview.playlistId) data._playlistId = preview.playlistId;
           // Preserve the video's place in the playlist as a meta
           // field (underscore-prefixed → hidden from the column
           // grid) so the section can sort rows back into playlist

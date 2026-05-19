@@ -112,6 +112,17 @@ export function SharesView() {
     }
   }
 
+  async function revokeRecipient(shareId: string, recipientId: string) {
+    try {
+      const r = await fetch(`/api/shares/${shareId}/recipients/${recipientId}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error(`revoke-recipient: ${r.status}`);
+      toast.success('Recipient removed from this share.');
+      await loadOutgoing();
+    } catch (e) {
+      notify.error((e as Error).message);
+    }
+  }
+
   const pendingIn = incoming.filter((s) => !s.acceptedAt && !s.declinedAt).length;
 
   return (
@@ -254,6 +265,17 @@ export function SharesView() {
                     }`}
                   >
                     {r.username ? `@${r.username}` : '(link)'}
+                    {/* Per-recipient revoke — drops just this user
+                      *  without tearing down the whole share. */}
+                    <button
+                      type="button"
+                      onClick={() => void revokeRecipient(s.id, r.id)}
+                      title={`Remove ${r.username ? '@' + r.username : 'this link'} from this share`}
+                      className="rounded-full p-0.5 hover:bg-black/10 dark:hover:bg-white/20"
+                      aria-label="Revoke recipient"
+                    >
+                      ×
+                    </button>
                   </li>
                 ))}
               </ul>

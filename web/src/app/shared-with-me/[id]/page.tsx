@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { and, eq, isNull } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
+import { CloneButton } from './clone-button';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Shared with me — Minerva' };
@@ -88,6 +89,9 @@ export default async function SharedWithMePage({ params }: { params: Promise<{ i
         <p className="mt-2 text-sm text-zinc-500">
           {rows.length} item{rows.length === 1 ? '' : 's'} · read-only
         </p>
+        {(share.scope === 'section' || share.scope === 'group') && (
+          <CloneButton recipientId={rec.id} />
+        )}
       </header>
 
       {rows.length === 0 ? (
