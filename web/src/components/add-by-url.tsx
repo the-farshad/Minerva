@@ -104,6 +104,23 @@ export function AddByUrl({
           .map((er: { data: Record<string, unknown> }) => String(er.data.url || ''))
           .filter(Boolean),
       );
+      // Build a parallel set of YouTube video ids so the dedup
+      // catches re-imports where the existing rows carry the
+      // `&list=…` suffix and the playlist scraper hands back
+      // bare `watch?v=` URLs (or vice versa). Per
+      // [[lib/youtube-id]]: the 11-char `videoId` is the only
+      // canonical identifier across all URL shapes.
+      const { youtubeVideoId } = await import('@/lib/youtube-id');
+      const existingVideoIds = new Set<string>();
+      for (const er of (existing.rows || []) as { data: Record<string, unknown> }[]) {
+        const vid = youtubeVideoId(String(er.data.url || ''));
+        if (vid) existingVideoIds.add(vid);
+      }
+      const isDup = (u: string) => {
+        if (existingUrls.has(u)) return true;
+        const vid = youtubeVideoId(u);
+        return !!vid && existingVideoIds.has(vid);
+      };
 
       // Playlist branch: fan out into N rows, one per video. Use the
       // scraped playlist NAME (not the bare id) so the column is
@@ -127,7 +144,7 @@ export function AddByUrl({
           } catch { /* private mode / disabled storage — tolerate */ }
         }
         for (const item of preview.items) {
-          if (existingUrls.has(item.url)) { skipped++; continue; }
+          if (isDup(item.url)) { skipped++; continue; }
           const data: Record<string, unknown> = {};
           if (allowed.has('playlist')) data.playlist = playlistLabel;
           for (const [k, v] of Object.entries(item)) {
@@ -208,7 +225,7 @@ export function AddByUrl({
       });
       if (Object.keys(data).length === 0) data.url = url.trim();
       const targetUrl = String(data.url || url.trim());
-      if (targetUrl && existingUrls.has(targetUrl)) {
+      if (targetUrl && isDup(targetUrl)) {
         return { duplicate: true, one: null };
       }
       const r = await fetch(`/api/sections/${section.slug}/rows`, {

@@ -782,6 +782,20 @@ export function SectionView({
                   if (!lr.ok) throw new Error(lj.error || `Lookup ${lr.status}`);
                   const allowed = new Set(section.schema.headers);
                   const existingUrls = new Set(rows.map((r) => String(r.data.url || '')).filter(Boolean));
+                  // Parallel videoId set — catches dedup when
+                  // existing rows carry &list= but the scraper
+                  // returns bare watch?v= URLs (or vice versa).
+                  const { youtubeVideoId } = await import('@/lib/youtube-id');
+                  const existingVideoIds = new Set<string>();
+                  for (const r of rows) {
+                    const vid = youtubeVideoId(String(r.data.url || ''));
+                    if (vid) existingVideoIds.add(vid);
+                  }
+                  const isDup = (u: string) => {
+                    if (existingUrls.has(u)) return true;
+                    const vid = youtubeVideoId(u);
+                    return !!vid && existingVideoIds.has(vid);
+                  };
                   if (lj.kind === 'playlist' && Array.isArray(lj.items)) {
                     const playlistLabel = lj.playlistName || lj.playlistId;
                     if (lj.playlistId && playlistLabel) {
@@ -797,7 +811,7 @@ export function SectionView({
                     for (const item of lj.items as Array<Record<string, unknown>>) {
                       const itemUrl = String(item.url || '');
                       if (!itemUrl) { skipped++; continue; }
-                      if (existingUrls.has(itemUrl)) { skipped++; continue; }
+                      if (isDup(itemUrl)) { skipped++; continue; }
                       const data: Record<string, unknown> = {};
                       if (allowed.has('playlist')) data.playlist = playlistLabel;
                       for (const [k, v] of Object.entries(item)) {
@@ -864,7 +878,7 @@ export function SectionView({
                   } else {
                     // Single video.
                     const singleUrl = String((lj as Record<string, unknown>).url || trimmed);
-                    if (existingUrls.has(singleUrl)) {
+                    if (isDup(singleUrl)) {
                       toast.info('Already in this section.');
                       return;
                     }

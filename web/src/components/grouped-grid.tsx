@@ -593,6 +593,127 @@ export function GroupedGrid({
                             >
                               <RefreshCw className="h-3.5 w-3.5" /> Refresh metadata
                             </DropdownMenu.Item>
+                            {section.preset === 'youtube' && groupCol === 'playlist' && (
+                              <DropdownMenu.Item
+                                onSelect={async () => {
+                                  // Find the playlist id: prefer the
+                                  // saved minerva.v2.playlistUrl entry
+                                  // for this group; fall back to the
+                                  // first row that carries a list= or
+                                  // _playlistId. Without one we can't
+                                  // re-fetch the canonical playlist.
+                                  let listId = '';
+                                  try {
+                                    const saved = localStorage.getItem(`minerva.v2.playlistUrl.${key}`) || '';
+                                    const m = saved.match(/[?&]list=([A-Za-z0-9_-]+)/);
+                                    if (m) listId = m[1];
+                                    else if (/^[A-Za-z0-9_-]{10,}$/.test(saved)) listId = saved;
+                                  } catch { /* tolerate */ }
+                                  if (!listId) {
+                                    for (const gr of groupRows) {
+                                      const d = gr.data as Record<string, unknown>;
+                                      if (typeof d._playlistId === 'string' && d._playlistId) { listId = d._playlistId; break; }
+                                      const m = String(d.url || '').match(/[?&]list=([A-Za-z0-9_-]+)/);
+                                      if (m) { listId = m[1]; break; }
+                                    }
+                                  }
+                                  if (!listId) {
+                                    notify.error('No playlist id known for this group — paste the playlist URL via the About dialog first.');
+                                    return;
+                                  }
+                                  toast.info('Checking YouTube for new videos…');
+                                  try {
+                                    const lr = await fetch('/api/import/lookup', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ url: `https://www.youtube.com/playlist?list=${listId}` }),
+                                    });
+                                    const lj = (await lr.json().catch(() => ({}))) as { kind?: string; playlistId?: string; playlistName?: string; items?: Array<Record<string, unknown>>; error?: string };
+                                    if (!lr.ok) throw new Error(lj.error || `Lookup ${lr.status}`);
+                                    if (lj.kind !== 'playlist' || !Array.isArray(lj.items)) {
+                                      toast.info('YouTube returned no playlist for that id.');
+                                      return;
+                                    }
+                                    const { youtubeVideoId } = await import('@/lib/youtube-id');
+                                    const existingIds = new Set<string>();
+                                    for (const gr of groupRows) {
+                                      const vid = youtubeVideoId(String((gr.data as Record<string, unknown>).url || ''));
+                                      if (vid) existingIds.add(vid);
+                                    }
+                                    const allowed = new Set(section.schema.headers);
+                                    const toAdd = lj.items.filter((it) => {
+                                      const vid = youtubeVideoId(String(it.url || ''));
+                                      return vid && !existingIds.has(vid);
+                                    });
+                                    if (toAdd.length === 0) {
+                                      toast.success(`Already up to date — no new videos in "${key}".`);
+                                      return;
+                                    }
+                                    let added = 0;
+                                    const createdIds: string[] = [];
+                                    for (const item of toAdd) {
+                                      const data: Record<string, unknown> = {};
+                                      if (allowed.has('playlist')) data.playlist = key;
+                                      for (const [k, v] of Object.entries(item)) {
+                                        if (v == null || v === '' || k === 'playlist' || k === 'position') continue;
+                                        if (allowed.has(k)) data[k] = v;
+                                      }
+                                      if (typeof data.url === 'string' && listId) {
+                                        try {
+                                          const u = new URL(data.url);
+                                          if (!u.searchParams.has('list')) {
+                                            u.searchParams.set('list', listId);
+                                            data.url = u.toString();
+                                          }
+                                        } catch { /* tolerate */ }
+                                      }
+                                      data._playlistId = listId;
+                                      if (typeof item.position === 'number') data._playlistPos = item.position;
+                                      const cr = await fetch(`/api/sections/${section.slug}/rows`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ data }),
+                                      });
+                                      if (cr.ok) {
+                                        added++;
+                                        try {
+                                          const cj = (await cr.json()) as { id?: string };
+                                          if (cj.id) createdIds.push(cj.id);
+                                        } catch { /* tolerate */ }
+                                      }
+                                    }
+                                    toast.success(`Added ${added} new video${added === 1 ? '' : 's'} to "${key}".`);
+                                    // Auto-enrich the new rows so
+                                    // duration / channel / thumbnail
+                                    // land without a manual refresh,
+                                    // same pattern as Add-by-URL.
+                                    (async () => {
+                                      const queue = [...createdIds];
+                                      const enrichOne = async (rid: string) => {
+                                        try {
+                                          const mr = await fetch(`/api/sections/${section.slug}/rows/${rid}/refresh-metadata`, { method: 'POST' });
+                                          if (!mr.ok) return;
+                                        } catch { /* tolerate */ }
+                                      };
+                                      await Promise.all(Array.from({ length: 3 }, async () => {
+                                        while (queue.length > 0) {
+                                          const next = queue.shift();
+                                          if (next) await enrichOne(next);
+                                        }
+                                      }));
+                                    })();
+                                    // rows.bulkChanged SSE will refetch
+                                    // the section in section-view; no
+                                    // local setRows call needed here.
+                                  } catch (e) {
+                                    notify.error((e as Error).message);
+                                  }
+                                }}
+                                className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                              >
+                                <Download className="h-3.5 w-3.5" /> Sync playlist (add new videos)
+                              </DropdownMenu.Item>
+                            )}
                             <DropdownMenu.Item
                               onSelect={async () => {
                                 const pending = groupRows.filter((gr) => !/drive:[\w-]{20,}/.test(String((gr.data as Record<string, unknown>).offline || '')));
