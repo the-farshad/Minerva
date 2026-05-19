@@ -13,7 +13,7 @@
  * it. Stopwords + min-3-letter + min-2-occurrence pruning keeps the
  * graph readable. Capped at the top 40 keywords by frequency.
  */
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
@@ -80,6 +80,19 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
   // source of truth.
   const [exportFontSize, setExportFontSize] = useState<ExportFontSize>('M');
   const [exportTextColor, setExportTextColor] = useState<ExportTextColor>('auto');
+  // Node spacing — same pattern as author-graph: push into d3
+  // force's link distance on change + reheat the sim.
+  const [spacing, setSpacing] = useState<'tight' | 'normal' | 'loose'>('normal');
+  const linkDistanceFor = (kind: 'tight' | 'normal' | 'loose') =>
+    kind === 'tight' ? 18 : kind === 'loose' ? 80 : 36;
+  useEffect(() => {
+    const ref = graphRef.current as unknown as { d3Force?: (name: string) => { distance?: (n: number) => unknown } | undefined; d3ReheatSimulation?: () => void } | undefined;
+    const link = ref?.d3Force?.('link');
+    if (link && typeof link.distance === 'function') {
+      link.distance(linkDistanceFor(spacing));
+      ref?.d3ReheatSimulation?.();
+    }
+  }, [spacing]);
 
   const { nodes, links } = useMemo(() => {
     const wordPapers = new Map<string, number>();
@@ -179,6 +192,22 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
         <span>Title-keyword co-occurrence — {nodes.length} keywords, {links.length} edges</span>
         <span className="text-zinc-300 dark:text-zinc-700">|</span>
         {exportMenuEl}
+        <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-900" title="Node spacing — pushes nodes apart via d3 link distance.">
+          {(['tight', 'normal', 'loose'] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSpacing(s)}
+              className={`rounded-full px-2 py-0.5 transition ${
+                spacing === s
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
         <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
           <button
             type="button"
@@ -209,7 +238,7 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
             style={{ backgroundColor: isDark ? '#0b0d10' : '#fafafa' }}
           >
             <ForceGraph2D
-              key={`bg-${bgMode}`}
+              key={`bg-${bgMode}-${spacing}`}
               ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
               width={width}
               height={height}
