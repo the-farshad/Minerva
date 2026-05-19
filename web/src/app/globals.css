@@ -7,6 +7,17 @@
  */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* User-selectable global text scale. Default `md` leaves the
+ * browser's root font size untouched; other sizes shift the rem
+ * base so every Tailwind text utility (text-xs / text-sm / …)
+ * scales proportionally, including the row cards, toolbars, and
+ * dialogs. Picked from Settings → Text size; persisted to
+ * localStorage and re-applied on first paint by the boot script
+ * in layout.tsx so there's no flash on navigation. */
+html[data-text-size="sm"] { font-size: 14px; }
+html[data-text-size="lg"] { font-size: 18px; }
+html[data-text-size="xl"] { font-size: 20px; }
+
 :root {
   /* Light defaults — `html.dark` flips them. The OS preference is
    * NOT consulted at the CSS layer; the inline boot script in

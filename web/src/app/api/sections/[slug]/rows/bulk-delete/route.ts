@@ -194,8 +194,14 @@ export async function POST(
         eq(schema.rows.deleted, true),
       ));
     // For the field+value branch, also nuke group-scope shares.
-    if (deleted > 0 || untagged > 0) {
-      const groupKey = `${sec.id}:${(/* eslint-disable @typescript-eslint/no-non-null-assertion */ (await req.clone().json().catch(() => ({}))) as { value?: string }).value ?? ''}`;
+    // `value` is already in scope from the body parse above —
+    // do NOT call req.json()/req.clone().json() again; the body
+    // stream was consumed on the first read and a second read
+    // throws "body unusable", which surfaced as
+    // 'Delete failed: unusable' on the client even though the
+    // actual row delete had already succeeded.
+    if ((deleted > 0 || untagged > 0) && value != null) {
+      const groupKey = `${sec.id}:${value}`;
       await db.delete(schema.shares).where(and(
         eq(schema.shares.ownerUserId, userId),
         eq(schema.shares.scope, 'group'),

@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen, RotateCcw, Eye, EyeOff } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen, RotateCcw, Eye, EyeOff, UserCircle } from 'lucide-react';
 import { readingMinutes, formatReadingMinutes, MINUTES_PER_PAGE, WORDS_PER_MINUTE } from '@/lib/reading-time';
 import { relativeTime, formatDateTime } from '@/lib/relative-time';
 import type { Row } from '@/lib/row';
@@ -356,13 +356,13 @@ export function GroupedGrid({
         />
       )}
       {section.preset === 'youtube' && (
-        <div className="-mt-1 mb-3 flex flex-col items-center gap-1 text-zinc-500">
+        <div className="-mt-1 mb-3 flex flex-col items-start gap-1 text-zinc-500">
           <span className="text-[10px] uppercase tracking-wide">Section total</span>
           <PlaylistProgress rows={rows} size="wide" />
         </div>
       )}
       {section.preset === 'papers' && (
-        <div className="-mt-1 mb-3 flex flex-col items-center gap-1 text-zinc-500">
+        <div className="-mt-1 mb-3 flex flex-col items-start gap-1 text-zinc-500">
           <span className="text-[10px] uppercase tracking-wide">Section total</span>
           <ReadingTimeTotal rows={rows} size="wide" />
           <BackfillPagesButton section={section} rows={rows} />
@@ -804,8 +804,13 @@ export function GroupedGrid({
                         </div>
                         {section.preset === 'notes' && <NotesTypeBadge type={String(r.data.type || 'md')} />}
                       </div>
-                      <div className="mt-1.5 line-clamp-1 text-xs text-zinc-500">
-                        {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
+                      <div className="mt-1.5 flex items-center gap-1 text-xs text-zinc-500">
+                        {!!(r.data.channel || r.data.authors) && (
+                          <UserCircle className="h-3 w-3 shrink-0 text-zinc-400" />
+                        )}
+                        <span className="line-clamp-1">
+                          {String(r.data.channel || r.data.authors || r.data.url || new Date(r.updatedAt).toLocaleDateString())}
+                        </span>
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-400">
                         <span title={`Last edited ${formatDateTime(r.updatedAt)}`}>

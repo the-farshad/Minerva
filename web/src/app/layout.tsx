@@ -42,12 +42,14 @@ export default function RootLayout({
                   var ls = function (k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
                   var theme = ls('minerva.v2.theme') || 'system';
                   var font  = ls('minerva.v2.font');
+                  var size  = ls('minerva.v2.textSize');
                   var h = document.documentElement;
                   if (theme !== 'system') h.setAttribute('data-theme', theme);
                   var wantDark = theme === 'dark' || theme === 'vt323' ||
                     (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
                   h.classList.toggle('dark', wantDark);
                   if (font) h.setAttribute('data-font', font);
+                  if (size && size !== 'md') h.setAttribute('data-text-size', size);
                 } catch (e) {}
               })();
             `,

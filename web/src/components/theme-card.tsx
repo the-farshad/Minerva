@@ -6,6 +6,14 @@ import { readPref, writePref } from '@/lib/prefs';
 
 type Theme = 'system' | 'light' | 'dark' | 'sepia' | 'vt323';
 type Font = 'system' | 'serif' | 'mono' | 'vt323' | 'ubuntu' | 'roboto' | 'vazir';
+type TextSize = 'sm' | 'md' | 'lg' | 'xl';
+
+const TEXT_SIZES: { v: TextSize; label: string }[] = [
+  { v: 'sm', label: 'Small' },
+  { v: 'md', label: 'Default' },
+  { v: 'lg', label: 'Large' },
+  { v: 'xl', label: 'X-Large' },
+];
 
 const THEMES: { v: Theme; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { v: 'system', label: 'System', Icon: Sun },
@@ -43,10 +51,16 @@ export function applyFont(f: Font) {
   if (f === 'system') document.documentElement.removeAttribute('data-font');
   else document.documentElement.setAttribute('data-font', f);
 }
+export function applyTextSize(s: TextSize) {
+  if (typeof document === 'undefined') return;
+  if (s === 'md') document.documentElement.removeAttribute('data-text-size');
+  else document.documentElement.setAttribute('data-text-size', s);
+}
 
 export function ThemeCard() {
   const [theme, setTheme] = useState<Theme>('system');
   const [font, setFont] = useState<Font>('system');
+  const [textSize, setTextSize] = useState<TextSize>('md');
 
   useEffect(() => {
     const t = readPref<Theme>('theme', 'system');
@@ -55,6 +69,9 @@ export function ThemeCard() {
     const f = readPref<Font>('font', 'system');
     setFont(f);
     applyFont(f);
+    const s = readPref<TextSize>('textSize', 'md');
+    setTextSize(s);
+    applyTextSize(s);
   }, []);
 
   function pickTheme(t: Theme) {
@@ -66,6 +83,11 @@ export function ThemeCard() {
     setFont(f);
     writePref('font', f === 'system' ? '' : f);
     applyFont(f);
+  }
+  function pickTextSize(s: TextSize) {
+    setTextSize(s);
+    writePref('textSize', s === 'md' ? '' : s);
+    applyTextSize(s);
   }
 
   return (
@@ -103,6 +125,23 @@ export function ThemeCard() {
           </button>
         ))}
       </div>
+
+      <div className="mt-4 flex items-center gap-2">
+        <Type className="h-4 w-4 text-zinc-500" />
+        <strong className="text-sm">Text size</strong>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {TEXT_SIZES.map((s) => (
+          <button
+            key={s.v}
+            type="button"
+            onClick={() => pickTextSize(s.v)}
+            className={`rounded-full border px-2.5 py-1 text-xs ${textSize === s.v ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900' : 'border-zinc-200 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800'}`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -115,6 +154,8 @@ export function ThemeBoot() {
     applyTheme(t);
     const f = readPref<Font>('font', 'system');
     applyFont(f);
+    const s = readPref<TextSize>('textSize', 'md');
+    applyTextSize(s);
   }, []);
   return null;
 }

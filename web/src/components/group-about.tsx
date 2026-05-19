@@ -19,7 +19,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
-  X, ExternalLink, Clock, Eye, EyeOff, BookOpen, Users, Calendar, FileText, Pencil,
+  X, ExternalLink, Clock, Eye, EyeOff, BookOpen, Users, Calendar, FileText, Pencil, UserCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { readingMinutes, formatReadingMinutes } from '@/lib/reading-time';
@@ -123,9 +123,15 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
     let lastWatchedTitle = '';
     let lastWatchedAt = 0;
     let avgDurSec = 0;
+    // Channel / creator tally. Most playlists have a single
+    // owner so we surface the top one; if a couple of channels
+    // co-author the playlist we show up to 3.
+    const channelCounts = new Map<string, number>();
     for (const r of rows) {
       const data = r.data;
       const url = String(data.url || '');
+      const channel = String(data.channel || data.author || data.creator || '').trim();
+      if (channel) channelCounts.set(channel, (channelCounts.get(channel) ?? 0) + 1);
       if (!listId) {
         const m = url.match(/[?&]list=([A-Za-z0-9_-]+)/);
         if (m) listId = m[1];
@@ -183,6 +189,9 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
       else if (oneHourChunks <= 24) etaText = `~${oneHourChunks}h left`;
       else etaText = `~${Math.ceil(oneHourChunks / 8)} sessions left (8 h each)`;
     }
+    const topChannels = [...channelCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
     return {
       listId,
       totalSec,
@@ -195,6 +204,7 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
       avgDurSec,
       lastWatchedTitle,
       etaText,
+      topChannels,
     };
   }, [rows, storedListId]);
 
@@ -266,6 +276,19 @@ function YoutubeBody({ rows, groupKey }: { rows: Row[]; groupKey: string }) {
       {/* Secondary stat row — average length, ETA, link. Only the
        *  fields with real values show; the rest collapse. */}
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        {stats.topChannels.length > 0 && stats.topChannels.map(([name, count]) => (
+          <span
+            key={name}
+            title={count > 1 ? `${count} videos by ${name}` : name}
+            className="inline-flex max-w-[260px] items-center gap-1 rounded-full border border-zinc-200 px-2 py-0.5 dark:border-zinc-800"
+          >
+            <UserCircle className="h-3 w-3 text-zinc-500" />
+            <span className="truncate">{name}</span>
+            {count > 1 && stats.topChannels.length > 1 && (
+              <span className="text-[10px] text-zinc-500">· {count}</span>
+            )}
+          </span>
+        ))}
         {stats.avgDurSec > 0 && (
           <span className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2 py-0.5 dark:border-zinc-800">
             <Clock className="h-3 w-3 text-zinc-500" />
