@@ -17,10 +17,32 @@ import { eq, and } from 'drizzle-orm';
 import { getGoogleAccessToken } from '@/lib/google';
 import { bus } from '@/lib/event-bus';
 
+/** Pull a Google Sheets file id out of whatever the user pasted.
+ *  Real-world Sheets URLs come in many shapes:
+ *    https://docs.google.com/spreadsheets/d/<ID>/edit#gid=0
+ *    https://docs.google.com/spreadsheets/d/<ID>
+ *    https://docs.google.com/spreadsheets/d/<ID>/edit?usp=sharing
+ *    https://drive.google.com/file/d/<ID>/view
+ *    docs.google.com/spreadsheets/d/<ID>/htmlview  (no scheme)
+ *  Plus the user might paste with surrounding quotes from a
+ *  share-link copy menu, or just the bare id alone.
+ *
+ *  Strategy: trim + strip wrapping quotes, then in order:
+ *    1. look for /d/<id> (the canonical sheets-URL shape),
+ *    2. accept the input itself as a bare id (20-100 chars),
+ *    3. fall back to the FIRST 40+ character [a-zA-Z0-9_-] run
+ *       anywhere in the input — Google Sheets ids are
+ *       consistently 44 chars, so this catches odd embedded
+ *       shapes (web-published URLs, query-string variants) the
+ *       /d/ regex misses. */
 function extractSheetId(s: string): string | null {
-  const m = s.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
-  if (m) return m[1];
-  if (/^[a-zA-Z0-9_-]{20,}$/.test(s.trim())) return s.trim();
+  const t = s.trim().replace(/^['"\s]+|['"\s]+$/g, '');
+  if (!t) return null;
+  const m1 = t.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  if (m1) return m1[1];
+  if (/^[a-zA-Z0-9_-]{20,100}$/.test(t)) return t;
+  const m2 = t.match(/([a-zA-Z0-9_-]{40,})/);
+  if (m2) return m2[1];
   return null;
 }
 
@@ -40,7 +62,11 @@ export async function POST(
 
   const body = (await req.json().catch(() => ({}))) as { sheetIdOrUrl?: string; mode?: 'replace' | 'merge' };
   const id = extractSheetId(body.sheetIdOrUrl || '');
-  if (!id) return NextResponse.json({ error: 'Invalid sheet id or URL' }, { status: 400 });
+  if (!id) {
+    return NextResponse.json({
+      error: 'Couldn\'t find a Sheet id in that input. Paste the full sheet URL (https://docs.google.com/spreadsheets/d/<id>/edit) or just the id itself.',
+    }, { status: 400 });
+  }
   const mode = body.mode === 'replace' ? 'replace' : 'merge';
 
   const token = await getGoogleAccessToken(userId);
