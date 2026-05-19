@@ -63,6 +63,15 @@ export async function POST(req: NextRequest) {
       where: and(eq(schema.sections.id, sectionId), eq(schema.sections.userId, ownerUserId)),
     });
     if (!sec) return NextResponse.json({ error: 'Section not found or not yours.' }, { status: 404 });
+  } else if (body.scope === 'row') {
+    // Same ownership rule — without this any authenticated user
+    // could share a row id belonging to someone else and grant
+    // recipients view (or edit) access to it. Verify the row's
+    // userId before creating any share record.
+    const row = await db.query.rows.findFirst({
+      where: and(eq(schema.rows.id, body.targetId), eq(schema.rows.userId, ownerUserId)),
+    });
+    if (!row) return NextResponse.json({ error: 'Row not found or not yours.' }, { status: 404 });
   }
 
   // Resolve usernames → user ids. Missing usernames are returned in
