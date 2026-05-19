@@ -34,7 +34,7 @@ import { Crop, X } from 'lucide-react';
 
 export type CropRect = { x: number; y: number; w: number; h: number };
 
-export function useCropRegion(svgRef: RefObject<SVGSVGElement | null>) {
+export function useCropRegion(svgRef?: RefObject<SVGSVGElement | null>) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [cropping, setCropping] = useState(false);
   const [cropRect, setCropRect] = useState<CropRect | null>(null);
@@ -89,7 +89,7 @@ export function useCropRegion(svgRef: RefObject<SVGSVGElement | null>) {
    *  into its serialised output, so the live view returns to its
    *  original state without affecting the in-flight export. */
   function getSvgForExport(): SVGSVGElement | null {
-    const live = svgRef.current;
+    const live = svgRef?.current;
     if (!live) return null;
     if (!cropRect || !bodyRef.current) return live;
     const bodyRect = bodyRef.current.getBoundingClientRect();
@@ -172,6 +172,69 @@ export function useCropRegion(svgRef: RefObject<SVGSVGElement | null>) {
     </>
   );
 
+  /** Bitmap-crop counterpart for canvas-rendered charts (force-
+   *  graph-2D / -3D). Reads the current cropRect, maps container
+   *  pixels into the source canvas's pixel buffer, and returns a
+   *  fresh canvas containing only the cropped region. Null source
+   *  → null. No crop selected → the source canvas, untouched. */
+  function getCanvasForExport(src: HTMLCanvasElement | null): HTMLCanvasElement | null {
+    if (!src) return null;
+    if (!cropRect || !bodyRef.current) return src;
+    const bodyRect = bodyRef.current.getBoundingClientRect();
+    const canvasRect = src.getBoundingClientRect();
+    const canvasLeft = canvasRect.left - bodyRect.left;
+    const canvasTop = canvasRect.top - bodyRect.top;
+    const dispToBufX = src.width / canvasRect.width;
+    const dispToBufY = src.height / canvasRect.height;
+    const cropDispX = Math.max(0, cropRect.x - canvasLeft);
+    const cropDispY = Math.max(0, cropRect.y - canvasTop);
+    const cropDispW = Math.max(0, Math.min(cropRect.w, canvasRect.width - cropDispX));
+    const cropDispH = Math.max(0, Math.min(cropRect.h, canvasRect.height - cropDispY));
+    const sx = cropDispX * dispToBufX;
+    const sy = cropDispY * dispToBufY;
+    const sw = cropDispW * dispToBufX;
+    const sh = cropDispH * dispToBufY;
+    if (sw < 4 || sh < 4) return src;
+    const out = document.createElement('canvas');
+    out.width = Math.round(sw);
+    out.height = Math.round(sh);
+    const ctx = out.getContext('2d');
+    if (!ctx) return src;
+    ctx.drawImage(src, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    return out;
+  }
+
+  /** Vector-crop counterpart: filter a force-graph graphData down
+   *  to nodes whose positions land inside the cropRect, and drop
+   *  any link that loses an endpoint. `screen2World` translates
+   *  the cropRect (container pixels) into the same coordinate
+   *  space the nodes live in. Omit `screen2World` when graphData
+   *  already carries screen-pixel coords (e.g. the 3D camera-
+   *  projected getter in author-graph). */
+  function getCroppedGraphData<N extends { id: string; x?: number; y?: number }, L extends { source: string; target: string }>(
+    gd: { nodes: N[]; links: L[] } | null,
+    screen2World?: (x: number, y: number) => { x: number; y: number },
+  ): { nodes: N[]; links: L[] } | null {
+    if (!gd) return null;
+    if (!cropRect || !bodyRef.current) return gd;
+    let minX: number, minY: number, maxX: number, maxY: number;
+    if (screen2World) {
+      const a = screen2World(cropRect.x, cropRect.y);
+      const b = screen2World(cropRect.x + cropRect.w, cropRect.y + cropRect.h);
+      minX = Math.min(a.x, b.x); minY = Math.min(a.y, b.y);
+      maxX = Math.max(a.x, b.x); maxY = Math.max(a.y, b.y);
+    } else {
+      minX = cropRect.x; minY = cropRect.y;
+      maxX = cropRect.x + cropRect.w; maxY = cropRect.y + cropRect.h;
+    }
+    const inside = (n: N) => n.x != null && n.y != null
+      && n.x >= minX && n.x <= maxX && n.y >= minY && n.y <= maxY;
+    const filteredNodes = gd.nodes.filter(inside);
+    const ids = new Set(filteredNodes.map((n) => n.id));
+    const filteredLinks = gd.links.filter((l) => ids.has(l.source) && ids.has(l.target));
+    return { nodes: filteredNodes, links: filteredLinks };
+  }
+
   return {
     bodyRef,
     cropping,
@@ -182,5 +245,7 @@ export function useCropRegion(svgRef: RefObject<SVGSVGElement | null>) {
     cropButton,
     decorations,
     getSvgForExport,
+    getCanvasForExport,
+    getCroppedGraphData,
   };
 }

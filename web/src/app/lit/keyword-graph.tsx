@@ -18,6 +18,7 @@ import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
 import { GraphExportMenu, type ExportFontSize, type ExportTextColor, type ExportFontFamily } from './graph-export-menu';
+import { useCropRegion } from './use-crop-region';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -148,6 +149,14 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
       : `rgba(91,33,182,${0.35 + 0.6 * t})`;
   }
 
+  // Region-select crop. Force-graph-2D paints to a canvas, so the
+  // SVG-based viewBox crop path doesn't apply — instead the hook's
+  // getCanvasForExport returns a sub-canvas for PNG, and
+  // getCroppedGraphData filters nodes by world-coord box for the
+  // vector (SVG/PDF) path so the saved file matches the visible
+  // selection regardless of format.
+  const crop = useCropRegion();
+
   function canvasEl(): HTMLCanvasElement | null {
     return (containerRef.current?.querySelector('canvas') as HTMLCanvasElement | null) ?? null;
   }
@@ -160,22 +169,37 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
     <GraphExportMenu
       filename="lit-keywords"
       source={{
-        canvasEl,
-        graphData: {
-          nodes: nodes.map((n) => ({
-            id: n.id,
-            label: n.label,
-            x: n.x,
-            y: n.y,
-            size: nodeRadius(n),
-            color: nodeFill(n),
-            attrs: { papers: n.papers },
-          })),
-          links: links.map((l) => ({
-            source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
-            target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
-            weight: l.weight,
-          })),
+        // Routed through crop.getCanvasForExport: returns a fresh
+        // canvas containing only the selected region when a crop
+        // is active, the live canvas otherwise. PNG export reads
+        // this directly.
+        canvasEl: () => crop.getCanvasForExport(canvasEl()),
+        // Getter form so the vector path (SVG/PDF) can re-filter
+        // graphData by the active crop rect at export time. World-
+        // coord conversion goes through screen2GraphCoords on the
+        // live force-graph ref so a panned/zoomed view crops to
+        // exactly what the user sees, not the underlying world
+        // bounding box.
+        graphData: () => {
+          const gd = {
+            nodes: nodes.map((n) => ({
+              id: n.id,
+              label: n.label,
+              x: n.x,
+              y: n.y,
+              size: nodeRadius(n),
+              color: nodeFill(n),
+              attrs: { papers: n.papers },
+            })),
+            links: links.map((l) => ({
+              source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
+              target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
+              weight: l.weight,
+            })),
+          };
+          const fg = graphRef.current as unknown as { screen2GraphCoords?: (x: number, y: number) => { x: number; y: number } } | undefined;
+          const screen2World = fg?.screen2GraphCoords?.bind(fg);
+          return crop.getCroppedGraphData(gd, screen2World) ?? gd;
         },
       }}
       bg={bgMode}
@@ -195,6 +219,7 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
         <span>Title-keyword co-occurrence — {nodes.length} keywords, {links.length} edges</span>
         <span className="text-zinc-300 dark:text-zinc-700">|</span>
         {exportMenuEl}
+        {crop.cropButton}
         <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-900" title="Node spacing — pushes nodes apart via d3 link distance.">
           {(['tight', 'normal', 'loose'] as const).map((s) => (
             <button
@@ -237,8 +262,13 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
       <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
         {({ width, height }) => (
           <div
-            className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+            ref={crop.bodyRef}
+            className={`relative h-full w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 ${crop.cropping ? 'cursor-crosshair select-none' : ''}`}
             style={{ backgroundColor: isDark ? '#0b0d10' : '#fafafa' }}
+            onMouseDown={crop.onMouseDown}
+            onMouseMove={crop.onMouseMove}
+            onMouseUp={crop.onMouseUp}
+            onMouseLeave={crop.onMouseUp}
           >
             <ForceGraph2D
               key={`bg-${bgMode}-${spacing}`}
@@ -277,6 +307,7 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
               minZoom={0.4}
               maxZoom={6}
             />
+            {crop.decorations}
           </div>
         )}
       </FullscreenShell>
