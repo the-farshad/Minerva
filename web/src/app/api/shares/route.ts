@@ -26,6 +26,10 @@ type CreateBody = {
    *  addition to) usernames. Public-link recipients are always
    *  view-only regardless of `mode`. */
   publicLink?: boolean;
+  /** Phase-4 opt-in: owner shares their watch progress with each
+   *  resolved user recipient. No-op for public-link recipients
+   *  (anonymous viewers don't get progress). */
+  shareProgress?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -106,6 +110,7 @@ export async function POST(req: NextRequest) {
         shareId: share.id,
         recipientUserId: r.id,
         mode,
+        shareProgress: !!body.shareProgress,
       })),
     );
   }

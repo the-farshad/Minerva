@@ -40,6 +40,10 @@ export function ShareDialog({
   const [results, setResults] = useState<Found[]>([]);
   const [picked, setPicked] = useState<Found[]>([]);
   const [mode, setMode] = useState<'view' | 'edit'>('view');
+  /** Phase-4 opt-in: when checked the recipient sees the owner's
+   *  watch progress on every shared row. Defaults false so a
+   *  brand-new share doesn't leak progress without consent. */
+  const [shareProgress, setShareProgress] = useState(false);
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
   /** Once a public link is generated for this scope+target this
@@ -89,6 +93,7 @@ export function ShareDialog({
           targetId,
           mode,
           usernames: picked.map((p) => p.username).filter(Boolean),
+          shareProgress,
         }),
       });
       const j = (await r.json().catch(() => ({}))) as { error?: string; recipients?: unknown[]; missing?: string[] };
@@ -99,7 +104,7 @@ export function ShareDialog({
         notify.error(`Username(s) not found or hidden: ${j.missing!.join(', ')}`);
       }
       setOpen(false);
-      setPicked([]); setQ(''); setResults([]); setMode('view');
+      setPicked([]); setQ(''); setResults([]); setMode('view'); setShareProgress(false);
     } catch (e) {
       notify.error((e as Error).message);
     } finally {
@@ -302,6 +307,18 @@ export function ShareDialog({
               ))}
             </div>
           </div>
+          <label className="mt-3 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={shareProgress}
+              onChange={(e) => setShareProgress(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-600"
+            />
+            <span>
+              Share my watch progress
+              <span className="ml-1 text-zinc-500">— recipient sees how far you&apos;ve watched each item.</span>
+            </span>
+          </label>
 
           <div className="mt-5 flex justify-end gap-2">
             <button
