@@ -95,11 +95,17 @@ export function exportPNGFromCanvas(canvas: HTMLCanvasElement | null, filename: 
   document.body.removeChild(a);
 }
 
-/** SVG-wrapped raster export. True vector-from-canvas isn't
- *  feasible — the force-directed layout is canvas-only — so we
- *  embed the PNG in a minimal SVG envelope. Editable in Inkscape /
- *  Illustrator, scales without quality loss as a single image. */
+/** SVG-wrapped raster export. The output is technically a .svg
+ *  file but its only content is a <image> wrapping a PNG, so it
+ *  doesn't scale or re-edit as vector. Used only as a last-resort
+ *  fallback for canvas charts that don't ship graphData — every
+ *  caller should prefer nodesToSVG when graphData with positions
+ *  is available. Surfaces a console warning so the regression is
+ *  visible during dev. */
 export function exportSVGFromCanvas(canvas: HTMLCanvasElement | null, filename: string, bg: string = '#ffffff') {
+  if (typeof window !== 'undefined') {
+    console.warn('[graph-export] SVG export hit the canvas-wrapped fallback — output is a raster bitmap inside an SVG envelope, not true vector. Supply graphData with x/y positions on the export source to get vector instead.');
+  }
   if (!canvas) return;
   const { dataUrl, width, height } = canvasOnBackground(canvas, bg);
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
@@ -109,10 +115,14 @@ export function exportSVGFromCanvas(canvas: HTMLCanvasElement | null, filename: 
   downloadBlob(svg, filename, 'image/svg+xml;charset=utf-8');
 }
 
-/** PDF export via jsPDF. One page sized to the canvas; lazy-import
- *  so the ~250 KB jsPDF bundle stays out of the initial /lit
- *  payload. */
+/** PDF export via jsPDF — raster output (one page sized to the
+ *  canvas). Like exportSVGFromCanvas, only the last-resort
+ *  fallback. Surfaces a console warning so degraded vector
+ *  intent is visible. */
 export async function exportPDFFromCanvas(canvas: HTMLCanvasElement | null, filename: string, bg: string = '#ffffff') {
+  if (typeof window !== 'undefined') {
+    console.warn('[graph-export] PDF export hit the canvas-raster fallback — output is a bitmap. Supply graphData with x/y positions on the export source to get vector instead.');
+  }
   if (!canvas) return;
   const { dataUrl, width, height } = canvasOnBackground(canvas, bg);
   const { jsPDF } = await import('jspdf');
@@ -335,6 +345,21 @@ export async function exportPDFFromSVG(svg: SVGSVGElement | null, filename: stri
     // Fall back to the raster path if svg2pdf trips on something
     // (e.g. an exotic SVG feature it can't translate).
     console.warn('[graph-export] svg2pdf failed, falling back to raster PDF', e);
+    // Loud user-visible warning — the raster fallback degrades a
+    // PDF the user picked for editability. See feedback_vector_
+    // exports_no_raster_fallback.md.
+    if (typeof window !== 'undefined') {
+      console.error('[graph-export] svg2pdf failed — PDF saved as raster (not vector). svg2pdf message:', e);
+      const w = window as unknown as { __minervaRasterWarned?: number };
+      const now = Date.now();
+      if (!w.__minervaRasterWarned || now - w.__minervaRasterWarned > 4000) {
+        w.__minervaRasterWarned = now;
+        try {
+          const { toast } = await import('sonner');
+          toast.warning('PDF exported as raster — svg2pdf couldn\'t render some chart feature. Open the console for details.');
+        } catch { /* sonner not available in this context */ }
+      }
+    }
     const raster = await svgToRasterDataURL(svg, bg, EXPORT_RASTER_SCALE, style);
     if (raster) {
       pdf.addImage(raster.dataUrl, 'PNG', 0, 0, width, height);

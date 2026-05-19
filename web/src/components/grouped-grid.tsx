@@ -688,6 +688,20 @@ export function GroupedGrid({
                                   body: 'Pick one or more — applies to every item in this group.',
                                 });
                                 if (next === null) return;
+                                // Persist any newly-typed category back to
+                                // the section's multiselect option list
+                                // so the picker shows it next time
+                                // instead of making the user retype.
+                                const newCats = next.filter((c) => !options.includes(c));
+                                if (newCats.length > 0) {
+                                  await fetch(`/api/sections/${section.slug}`, {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                      setSelect: { column: 'category', options: [...options, ...newCats] },
+                                    }),
+                                  }).catch(() => undefined);
+                                }
                                 await Promise.all(groupRows.map((gr) =>
                                   fetch(`/api/sections/${section.slug}/rows/${gr.id}`, {
                                     method: 'PATCH',
@@ -1167,6 +1181,19 @@ function CardActions({
     });
     if (next === null) return; // cancelled
     const value = next.join(', ');
+    // Persist any newly-typed category back to the section schema's
+    // multiselect option list so future picker invocations show it
+    // instead of asking the user to retype.
+    const newCats = next.filter((c) => !catOptions.includes(c));
+    if (newCats.length > 0) {
+      await fetch(`/api/sections/${section.slug}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          setSelect: { column: 'category', options: [...catOptions, ...newCats] },
+        }),
+      }).catch(() => undefined);
+    }
     try {
       const r = await fetch(`/api/sections/${section.slug}/rows/${row.id}`, {
         method: 'PATCH',
@@ -1298,6 +1325,26 @@ function CardActions({
                   </Link>
                 </DropdownMenu.Item>
               )}
+              {section.preset === 'papers' && (() => {
+                // Build a /lit deep-link from the strongest
+                // identifier the row has. DOI > arXiv > title.
+                const data = row.data as Record<string, unknown>;
+                const doi = typeof data.doi === 'string' && data.doi ? data.doi : '';
+                const arxiv = typeof data.arxiv === 'string' && data.arxiv ? data.arxiv : '';
+                const title = typeof data.title === 'string' && data.title ? data.title : '';
+                const q = doi || arxiv || title;
+                if (!q) return null;
+                return (
+                  <DropdownMenu.Item asChild>
+                    <Link
+                      href={`/lit?q=${encodeURIComponent(q)}`}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open in /lit
+                    </Link>
+                  </DropdownMenu.Item>
+                );
+              })()}
               {isOffliable && (
                 <DropdownMenu.Item
                   onSelect={(e) => { e.preventDefault(); void saveOffline(); }}
