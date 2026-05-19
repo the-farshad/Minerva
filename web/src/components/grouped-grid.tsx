@@ -97,6 +97,7 @@ export function GroupedGrid({
   onDelete,
   onRowUpdated,
   onBulkDeleted,
+  sharedWith,
 }: {
   section: Section;
   rows: Row[];
@@ -112,6 +113,13 @@ export function GroupedGrid({
    * group vanishes without waiting for router.refresh() or the
    * SSE catch-up. */
   onBulkDeleted?: (rowIds: string[]) => void;
+  /** target → recipient count for outgoing shares the user owns.
+   * Keys: 'section:<id>' for section scope (passed but unused
+   * here since the section pill lives in the page header),
+   * '<sectionId>:<groupKey>' for groups, 'row:<rowId>' for rows.
+   * Surfaced as a 'Shared · N' pill on the group header and as
+   * a small ✓-style badge on each card. */
+  sharedWith?: Map<string, number>;
 }) {
   const router = useRouter();
   const groupCol = GROUP_COL(section.schema.headers);
@@ -423,6 +431,19 @@ export function GroupedGrid({
                   <span className="text-xs font-normal text-zinc-500">· {groupRows.length}</span>
                 </button>
               )}
+              {(() => {
+                const n = sharedWith?.get(`${section.id}:${key}`);
+                if (!n) return null;
+                return (
+                  <span
+                    title={`Shared with ${n} ${n === 1 ? 'person' : 'people'} · open the three-dots menu to manage`}
+                    className="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                  >
+                    <Share2 className="h-3 w-3" />
+                    Shared · {n}
+                  </span>
+                );
+              })()}
               {section.preset === 'youtube' && (
                 <div className="ml-2"><PlaylistProgress rows={groupRows} /></div>
               )}
