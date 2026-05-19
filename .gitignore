@@ -18,6 +18,16 @@ Thumbs.db
 # Stale Next traces if anything ever runs Next from repo root
 .next/
 
+# Root-level npm artifacts — every package lives in web/. If you
+# see node_modules or package.json at the repo root it's because
+# someone ran `npm install` from the wrong directory; deleting
+# them is safe. These three lines anchor with a leading slash so
+# they only match the root, never web/node_modules/* (which is
+# covered by web/.gitignore).
+/node_modules/
+/package.json
+/package-lock.json
+
 # Secrets — Minerva intentionally keeps no secrets in the repo,
 # but ignore these defensively in case anything is ever pasted locally.
 .env
