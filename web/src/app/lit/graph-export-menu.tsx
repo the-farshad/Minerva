@@ -94,23 +94,46 @@ export type GraphExportSource = {
 export type ExportFontSize = 'S' | 'M' | 'L' | 'XL';
 const FONT_PX: Record<ExportFontSize, number> = { S: 9, M: 11, L: 14, XL: 18 };
 
+export type ExportTextColor = 'auto' | 'black' | 'white' | 'invert-bg';
+
 export function GraphExportMenu({
   filename,
   source,
   bg,
   onBgChange,
+  fontSize: fontSizeProp,
+  onFontSizeChange,
+  textColor: textColorProp,
+  onTextColorChange,
 }: {
   filename: string;
   source: GraphExportSource;
   bg: ExportBg;
   onBgChange: (next: ExportBg) => void;
+  /** Optional controlled props — pass through from a parent
+   *  (e.g. ChartShell) so two menu instances render identical
+   *  options. When omitted the menu manages its own state. */
+  fontSize?: ExportFontSize;
+  onFontSizeChange?: (next: ExportFontSize) => void;
+  textColor?: ExportTextColor;
+  onTextColorChange?: (next: ExportTextColor) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [fontSize, setFontSize] = useState<ExportFontSize>('M');
+  const [fontSizeLocal, setFontSizeLocal] = useState<ExportFontSize>('M');
+  const fontSize = fontSizeProp ?? fontSizeLocal;
+  const setFontSize = (n: ExportFontSize) => {
+    if (onFontSizeChange) onFontSizeChange(n);
+    else setFontSizeLocal(n);
+  };
   // Text colour: 'auto' leaves the chart's own colours alone;
   // every other value forces every <text> fill to that colour
   // at serialise time so labels read the way the user wants.
-  const [textColor, setTextColor] = useState<'auto' | 'black' | 'white' | 'invert-bg'>('auto');
+  const [textColorLocal, setTextColorLocal] = useState<ExportTextColor>('auto');
+  const textColor = textColorProp ?? textColorLocal;
+  const setTextColor = (n: ExportTextColor) => {
+    if (onTextColorChange) onTextColorChange(n);
+    else setTextColorLocal(n);
+  };
 
   async function doExport(format: 'png' | 'svg' | 'pdf' | 'json' | 'graphml' | 'json-rows' | 'csv') {
     if (busy) return;

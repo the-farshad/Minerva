@@ -19,7 +19,7 @@ import { useMemo, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import { GraphExportMenu } from './graph-export-menu';
+import { GraphExportMenu, type ExportFontSize, type ExportTextColor } from './graph-export-menu';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -76,6 +76,12 @@ export function AuthorGraph({
   // target (print, slides, papers) is a white background. The
   // user can flip to dark for in-app review.
   const [bgMode, setBgMode] = useState<'light' | 'dark'>(() => detectInitialBg());
+  // Export font / text-colour state lifted up so the toolbar
+  // instance and the fullscreen-extras instance of the Export
+  // menu share a single source of truth instead of each tracking
+  // its own selection.
+  const [exportFontSize, setExportFontSize] = useState<ExportFontSize>('M');
+  const [exportTextColor, setExportTextColor] = useState<ExportTextColor>('auto');
   const isDarkBg = bgMode === 'dark';
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
@@ -213,43 +219,49 @@ export function AuthorGraph({
   // reads the active layout each click via the source factories,
   // picks the right canvas / svg path, and passes the current
   // bgMode through to the file so the BG choice actually lands in
-  // the saved output.
+  // the saved output. Renders both in the inline toolbar and (via
+  // a shared element) as a FullscreenShell extras slot, so the
+  // user can still trigger an export while the chart is maximised.
+  const exportMenuEl = (
+    <GraphExportMenu
+      filename="lit-coauthors"
+      source={{
+        canvasEl: () => layout === 'force' ? canvasEl() : null,
+        svgEl: () => (layout === 'circular' || layout === 'arc' || layout === 'bundled') ? svgRef.current : null,
+        graphData: {
+          // Carry x/y/size so the exporter can rebuild a true-
+          // vector SVG of the force layout via nodesToSVG.
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            label: n.label,
+            x: n.x,
+            y: n.y,
+            size: nodeRadius(n),
+            color: nodeFill(n),
+            attrs: { papers: n.papers, isFocal: n.isFocal },
+          })),
+          links: links.map((l) => ({
+            source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
+            target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
+            weight: l.weight,
+          })),
+        },
+      }}
+      bg={bgMode}
+      onBgChange={setBgMode}
+      fontSize={exportFontSize}
+      onFontSizeChange={setExportFontSize}
+      textColor={exportTextColor}
+      onTextColorChange={setExportTextColor}
+    />
+  );
 
   return (
     <div ref={containerRef} className="relative">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span>Co-author network — {nodes.length} authors, {links.length} edges</span>
         <span className="text-zinc-300 dark:text-zinc-700">|</span>
-        <GraphExportMenu
-          filename="lit-coauthors"
-          source={{
-            canvasEl: () => layout === 'force' ? canvasEl() : null,
-            svgEl: () => layout === 'circular' ? svgRef.current : null,
-            graphData: {
-              // Carry x/y/size so the exporter can rebuild a true-
-              // vector SVG of the force layout via nodesToSVG.
-              // react-force-graph-2d mutates x/y onto each node
-              // after the simulation runs, so reading them off the
-              // same array we passed in is correct here.
-              nodes: nodes.map((n) => ({
-                id: n.id,
-                label: n.label,
-                x: n.x,
-                y: n.y,
-                size: nodeRadius(n),
-                color: nodeFill(n),
-                attrs: { papers: n.papers, isFocal: n.isFocal },
-              })),
-              links: links.map((l) => ({
-                source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
-                target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
-                weight: l.weight,
-              })),
-            },
-          }}
-          bg={bgMode}
-          onBgChange={setBgMode}
-        />
+        {exportMenuEl}
         <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
           <button
             type="button"
@@ -325,7 +337,7 @@ export function AuthorGraph({
       </div>
 
       {layout === 'arc' ? (
-        <FullscreenShell>
+        <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
           {() => (
             <div
               className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
@@ -342,7 +354,7 @@ export function AuthorGraph({
           )}
         </FullscreenShell>
       ) : layout === 'bundled' ? (
-        <FullscreenShell>
+        <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
           {() => (
             <div
               className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
@@ -359,7 +371,7 @@ export function AuthorGraph({
           )}
         </FullscreenShell>
       ) : layout === 'force' ? (
-        <FullscreenShell>
+        <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
           {({ width, height }) => (
             <div
               className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
@@ -415,7 +427,7 @@ export function AuthorGraph({
           )}
         </FullscreenShell>
       ) : (
-        <FullscreenShell>
+        <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
           {() => (
             <div
               className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
