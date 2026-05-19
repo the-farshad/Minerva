@@ -17,7 +17,7 @@ import { useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
-import { GraphExportMenu } from './graph-export-menu';
+import { GraphExportMenu, type ExportFontSize, type ExportTextColor } from './graph-export-menu';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -75,6 +75,11 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
     return 'light';
   };
   const [bgMode, setBgMode] = useState<'light' | 'dark'>(() => detectInitialBg());
+  // Lifted export state so the toolbar instance and the
+  // fullscreen-extras instance of the Export menu share one
+  // source of truth.
+  const [exportFontSize, setExportFontSize] = useState<ExportFontSize>('M');
+  const [exportTextColor, setExportTextColor] = useState<ExportTextColor>('auto');
 
   const { nodes, links } = useMemo(() => {
     const wordPapers = new Map<string, number>();
@@ -133,36 +138,47 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
     return (containerRef.current?.querySelector('canvas') as HTMLCanvasElement | null) ?? null;
   }
 
+  // Single Export menu element shared between the inline toolbar
+  // and the FullscreenShell extras slot. State lives at this
+  // component so both instances stay in sync (without lifting we'd
+  // see independent font / colour selections per instance).
+  const exportMenuEl = (
+    <GraphExportMenu
+      filename="lit-keywords"
+      source={{
+        canvasEl,
+        graphData: {
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            label: n.label,
+            x: n.x,
+            y: n.y,
+            size: nodeRadius(n),
+            color: nodeFill(n),
+            attrs: { papers: n.papers },
+          })),
+          links: links.map((l) => ({
+            source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
+            target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
+            weight: l.weight,
+          })),
+        },
+      }}
+      bg={bgMode}
+      onBgChange={setBgMode}
+      fontSize={exportFontSize}
+      onFontSizeChange={setExportFontSize}
+      textColor={exportTextColor}
+      onTextColorChange={setExportTextColor}
+    />
+  );
+
   return (
     <div ref={containerRef} className="relative">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span>Title-keyword co-occurrence — {nodes.length} keywords, {links.length} edges</span>
         <span className="text-zinc-300 dark:text-zinc-700">|</span>
-        <GraphExportMenu
-          filename="lit-keywords"
-          source={{
-            canvasEl,
-            graphData: {
-              // Carry x/y for true-vector export via nodesToSVG.
-              nodes: nodes.map((n) => ({
-                id: n.id,
-                label: n.label,
-                x: n.x,
-                y: n.y,
-                size: nodeRadius(n),
-                color: nodeFill(n),
-                attrs: { papers: n.papers },
-              })),
-              links: links.map((l) => ({
-                source: typeof l.source === 'object' && l.source !== null ? (l.source as { id: string }).id : (l.source as string),
-                target: typeof l.target === 'object' && l.target !== null ? (l.target as { id: string }).id : (l.target as string),
-                weight: l.weight,
-              })),
-            },
-          }}
-          bg={bgMode}
-          onBgChange={setBgMode}
-        />
+        {exportMenuEl}
         <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
           <button
             type="button"
@@ -186,7 +202,7 @@ export function KeywordGraph({ papers }: { papers: Paper[] }) {
           >BG ☾</button>
         </div>
       </div>
-      <FullscreenShell>
+      <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
         {({ width, height }) => (
           <div
             className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
