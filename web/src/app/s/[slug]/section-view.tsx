@@ -87,6 +87,34 @@ export function SectionView({
   // open modals, mid-edit drafts and scroll position aren't lost
   // to a router.refresh(). Other-tab / other-device mutations
   // propagate through this same path within ~1 RTT.
+  // Outgoing-shares map (target → recipient count) so we can pin a
+  // "Shared with N" pill next to the Share button and on each
+  // group / row header without a separate request per target.
+  // Refetches on share.received events so accept / decline / revoke
+  // by anyone keeps the badge accurate.
+  const [sharedWith, setSharedWith] = useState<Map<string, number>>(new Map());
+  const [shareRefetch, setShareRefetch] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadShares() {
+      try {
+        const r = await fetch('/api/shares?direction=outgoing', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = (await r.json()) as { shares: { scope: string; targetId: string; recipients: { acceptedAt: string | null; declinedAt: string | null }[] }[] };
+        const map = new Map<string, number>();
+        for (const s of (j.shares || [])) {
+          const live = s.recipients.filter((r) => !r.declinedAt).length;
+          if (live === 0) continue;
+          const key = s.scope === 'section' ? s.targetId : s.scope === 'group' ? s.targetId : `row:${s.targetId}`;
+          map.set(key, (map.get(key) ?? 0) + live);
+        }
+        if (!cancelled) setSharedWith(map);
+      } catch { /* tolerate */ }
+    }
+    void loadShares();
+    return () => { cancelled = true; };
+  }, [shareRefetch]);
+
   useServerEvents((event) => {
     if (event.kind === 'row.created' && event.sectionSlug === section.slug) {
       const now = new Date().toISOString();
@@ -113,6 +141,10 @@ export function SectionView({
           setRows(fresh);
         } catch { /* tolerate */ }
       })();
+    } else if (event.kind === 'share.received') {
+      // Bump the outgoing-shares refetch counter so the "Shared
+      // with N" pills stay accurate on accept / decline / revoke.
+      setShareRefetch((n) => n + 1);
     }
   });
 
@@ -555,11 +587,13 @@ export function SectionView({
             trigger={
               <button
                 type="button"
-                title="Share this section with another Minerva user"
-                className="inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800"
+                title={sharedWith.get(section.id) ? `Already shared with ${sharedWith.get(section.id)} ${sharedWith.get(section.id) === 1 ? 'person' : 'people'} · open dialog to add more or revoke` : 'Share this section with another Minerva user'}
+                className={sharedWith.get(section.id)
+                  ? 'inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs text-emerald-800 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200 dark:hover:bg-emerald-900/40'
+                  : 'inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-800'}
               >
                 <Share2 className="h-3.5 w-3.5" />
-                Share
+                {sharedWith.get(section.id) ? `Shared · ${sharedWith.get(section.id)}` : 'Share'}
               </button>
             }
           />
