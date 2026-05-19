@@ -19,27 +19,40 @@ html[data-text-size="lg"] { font-size: 18px; }
 html[data-text-size="xl"] { font-size: 20px; }
 
 /* Marquee-on-hover for truncated labels (playlist names, etc.).
- * The container uses CSS container queries so the keyframe knows
- * its own width without JS. When the inner text fits, the
- * min(0px, …) clamp leaves the translation at zero and nothing
- * moves — only overflowing text animates. Animation runs once
- * and pauses at the end so the user can read the tail; mouse-
- * leave snaps back instantly. */
+ * Two stacked text layers: the static one shows the truncated
+ * text with ellipsis at rest; on hover, visibility flips to the
+ * animated layer which slides left by exactly `--marquee-distance`
+ * pixels (measured + written by the React wrapper via ResizeObserver).
+ * When the text fits, distance is 0 and nothing moves. The box
+ * does NOT use `container-type` because that implies `contain: size`
+ * which collapses the element to zero width inside a flex parent. */
 .marquee {
-  container-type: inline-size;
+  position: relative;
   overflow: hidden;
+  min-width: 0;
 }
-.marquee > .marquee-inner {
-  display: inline-block;
+.marquee > .marquee-static {
+  display: block;
   white-space: nowrap;
-  transform: translateX(0);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.marquee:hover > .marquee-inner {
+.marquee > .marquee-anim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+  width: max-content;
+  visibility: hidden;
+}
+.marquee:hover > .marquee-static { visibility: hidden; }
+.marquee:hover > .marquee-anim {
+  visibility: visible;
   animation: minerva-marquee 6s linear forwards;
 }
 @keyframes minerva-marquee {
   0%, 12%   { transform: translateX(0); }
-  88%, 100% { transform: translateX(min(0px, calc(100cqw - 100% - 8px))); }
+  88%, 100% { transform: translateX(calc(-1 * var(--marquee-distance, 0px))); }
 }
 
 :root {

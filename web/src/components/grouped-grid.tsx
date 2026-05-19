@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen, RotateCcw, Eye, EyeOff, UserCircle } from 'lucide-react';
+import { Trash2, GripVertical, ChevronDown, ChevronRight, Cloud, HardDrive, Server, Save, Info, MoreVertical, X, RefreshCw, Quote, Download, Tags, Pencil, Upload, Network, ExternalLink, BookOpen, RotateCcw, Eye, EyeOff, UserCircle, ListVideo, Film, CheckCircle2, Play, Circle } from 'lucide-react';
 import { readingMinutes, formatReadingMinutes, MINUTES_PER_PAGE, WORDS_PER_MINUTE } from '@/lib/reading-time';
 import { relativeTime, formatDateTime } from '@/lib/relative-time';
 import type { Row } from '@/lib/row';
@@ -378,8 +378,9 @@ export function GroupedGrid({
         />
       )}
       {section.preset === 'youtube' && (
-        <div className="-mt-1 mb-3 flex flex-col items-start gap-1 text-zinc-500">
+        <div className="-mt-1 mb-3 flex flex-col items-center gap-2 text-zinc-500">
           <span className="text-[10px] uppercase tracking-wide">Section total</span>
+          <SectionVideoStats rows={rows} groupCol={groupCol || 'playlist'} />
           <PlaylistProgress rows={rows} size="wide" />
         </div>
       )}
@@ -1093,6 +1094,41 @@ function WatchedBar({ row }: { row: Row }) {
  *  something you can write into. Enter / blur commits via the
  *  same rewrite-tag endpoint the old pencil-icon button used;
  *  Escape discards. */
+/** Truncated label with hover-to-marquee. Measures
+ *  scrollWidth − clientWidth on mount + resize and writes the
+ *  result into a CSS variable (`--marquee-distance`) so the
+ *  `.marquee:hover .marquee-anim` keyframes only translate by
+ *  the actual overflow distance. When the text fits, the
+ *  distance is zero and hover is a no-op. */
+function MarqueeText({ text, className }: { text: string; className?: string }) {
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
+  const staticRef = useRef<HTMLSpanElement | null>(null);
+  const [distance, setDistance] = useState(0);
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    const s = staticRef.current;
+    if (!wrap || !s) return;
+    const update = () => {
+      const dx = s.scrollWidth - s.clientWidth;
+      setDistance(dx > 0 ? dx : 0);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [text]);
+  return (
+    <span
+      ref={wrapRef}
+      className={cn('marquee', className)}
+      style={{ '--marquee-distance': `${distance}px` } as React.CSSProperties}
+    >
+      <span ref={staticRef} className="marquee-static">{text}</span>
+      <span aria-hidden className="marquee-anim">{text}</span>
+    </span>
+  );
+}
+
 function GroupNameEditor({
   name, onRename, isCollapsed, onToggle, count,
 }: {
@@ -1139,25 +1175,80 @@ function GroupNameEditor({
   }
   return (
     <div
-      className="group flex min-w-0 max-w-[70%] items-center gap-1"
+      className="group flex min-w-0 max-w-[70%] flex-1 items-center gap-1"
       onDoubleClick={() => setEditing(true)}
       title={`${name} — double-click to rename`}
     >
       <button
         type="button"
         onClick={onToggle}
-        className="flex min-w-0 items-center gap-1 text-sm font-medium"
+        className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium"
       >
         {isCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
-        {/* marquee on hover: when the text overflows the
-          *  container, hovering scrolls it left so the user can
-          *  see the tail without having to read the title tooltip.
-          *  Falls back to a no-op when the text fits. */}
-        <span className="marquee min-w-0 flex-1 group-hover:underline group-hover:underline-offset-2 group-hover:decoration-zinc-300 dark:group-hover:decoration-zinc-700">
-          <span className="marquee-inner">{name}</span>
-        </span>
+        <MarqueeText
+          text={name}
+          className="min-w-0 flex-1 text-left group-hover:underline group-hover:underline-offset-2 group-hover:decoration-zinc-300 dark:group-hover:decoration-zinc-700"
+        />
         <span className="shrink-0 text-xs font-normal text-zinc-500">· {count}</span>
       </button>
+    </div>
+  );
+}
+
+/** Top-of-section roll-up for a YouTube section: playlist count,
+ *  total videos, completed, in progress, unstarted. Each stat is
+ *  a chip with a lucide icon. Subscribes to the resume-position
+ *  storage event so completed/started counters update live as the
+ *  user toggles watched / unwatched. */
+function SectionVideoStats({ rows, groupCol }: { rows: Row[]; groupCol: string }) {
+  // Force re-render when any video's resume position changes.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || e.key.startsWith('minerva.v2.resume.')) setTick((t) => t + 1);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  let completed = 0;
+  let started = 0;
+  const playlistSet = new Set<string>();
+  for (const r of rows) {
+    const key = groupCol ? String((r.data as Record<string, unknown>)[groupCol] || '').trim() : '';
+    if (key) playlistSet.add(key);
+    const { pct, duration, watched } = computeWatched(r);
+    if (!duration) continue;
+    if (watched > 0) started += 1;
+    if (pct && pct >= 0.9) completed += 1;
+  }
+  const total = rows.length;
+  const inProgress = Math.max(0, started - completed);
+  const unstarted = Math.max(0, total - started);
+  const chip = 'inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2 py-0.5 text-[11px] dark:border-zinc-800';
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-1.5">
+      {playlistSet.size > 0 && (
+        <span className={chip} title={`${playlistSet.size} playlist${playlistSet.size === 1 ? '' : 's'}`}>
+          <ListVideo className="h-3 w-3 text-zinc-500" />
+          {playlistSet.size} playlist{playlistSet.size === 1 ? '' : 's'}
+        </span>
+      )}
+      <span className={chip} title={`${total} video${total === 1 ? '' : 's'} in this section`}>
+        <Film className="h-3 w-3 text-zinc-500" />
+        {total} video{total === 1 ? '' : 's'}
+      </span>
+      <span className={chip} title={`${completed} watched to ≥90%`}>
+        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+        {completed} watched
+      </span>
+      <span className={chip} title={`${inProgress} started but not finished`}>
+        <Play className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+        {inProgress} in progress
+      </span>
+      <span className={chip} title={`${unstarted} not started yet`}>
+        <Circle className="h-3 w-3 text-zinc-400" />
+        {unstarted} unwatched
+      </span>
     </div>
   );
 }
@@ -1203,22 +1294,31 @@ function PlaylistProgress({ rows, size = 'chip' }: { rows: Row[]; size?: 'chip' 
           <span className="font-mono text-[10px] text-zinc-500">of {mm(totalDur)} · {Math.round(pct * 100)}%</span>
         </div>
         <div className="progress-track h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-          <div className={`progress-fill h-full ${fill} transition-[width] duration-300`} style={{ width: `${pct * 100}%` }} />
+          <div
+            className={`progress-fill h-full ${fill} transition-[width] duration-300`}
+            style={{ width: pct > 0 ? `max(3px, ${pct * 100}%)` : '0' }}
+          />
         </div>
       </div>
     );
   }
   return (
-    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500" title={`${known} of ${rows.length} videos have durations`}>
-      <div className="progress-track h-1 w-24 shrink-0 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-        <div className={`progress-fill h-full ${fill}`} style={{ width: `${pct * 100}%` }} />
+    <div className="flex items-center gap-2 text-[10px] text-zinc-500" title={`${known} of ${rows.length} videos have durations`}>
+      {/* Wider track so the chip reads as a proper bar instead of
+       *  a tiny chip — and so a 14m-of-535h fill is at least one
+       *  visible pixel via the `max(2px, …)` clamp below. */}
+      <div className="progress-track h-1.5 w-56 max-w-[40vw] shrink-0 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+        <div
+          className={`progress-fill h-full ${fill}`}
+          style={{ width: pct > 0 ? `max(2px, ${pct * 100}%)` : '0' }}
+        />
       </div>
       {/* Reserved width + right-aligned + tabular figures so every
        *  group's time chip lines up in a column even as one says
        *  "0m / 39h28m" and the next says "12m / 1h2m". Without
        *  min-w the column would jitter between rows. */}
       <span className="inline-block min-w-[6rem] text-right font-mono tabular-nums">
-        {mm(totalWatched)} / {mm(totalDur)}
+        {mm(totalWatched)} / {mm(totalDur)} · {Math.round(pct * 100)}%
       </span>
     </div>
   );
