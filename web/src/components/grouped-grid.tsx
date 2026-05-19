@@ -813,6 +813,19 @@ export function GroupedGrid({
                     </button>
                     {section.preset === 'youtube' && <WatchedBar row={r} />}
                     {section.preset === 'papers' && <PaperReadingBadge row={r} />}
+                    {(() => {
+                      const n = sharedWith?.get(`row:${r.id}`);
+                      if (!n) return null;
+                      return (
+                        <div
+                          title={`Shared with ${n} ${n === 1 ? 'person' : 'people'}`}
+                          className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                        >
+                          <Share2 className="h-3 w-3" />
+                          Shared
+                        </div>
+                      );
+                    })()}
                     {Boolean((r.data as Record<string, unknown>)._queued) && (
                       <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700 dark:bg-amber-950 dark:text-amber-300" title="A local worker is downloading this video">
                         <Cloud className="h-3 w-3" />
