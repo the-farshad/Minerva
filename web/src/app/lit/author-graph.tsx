@@ -15,7 +15,7 @@
  * readable on the lit-explorer column. Click an author to chain
  * into a new author-hub search.
  */
-import { useMemo, useState, useRef } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
@@ -84,6 +84,38 @@ export function AuthorGraph({
   // target (print, slides, papers) is a white background. The
   // user can flip to dark for in-app review.
   const [bgMode, setBgMode] = useState<'light' | 'dark'>(() => detectInitialBg());
+  // Node-spacing preset for the force / 3d layouts. Threads
+  // through linkDistance + d3 charge strength so the user can
+  // spread crowded clusters out. SVG-positioned layouts
+  // (circular / arc / bundled) compute their own positions and
+  // ignore this.
+  const [spacing, setSpacing] = useState<'tight' | 'normal' | 'loose'>('normal');
+  const linkDistanceFor = (kind: 'tight' | 'normal' | 'loose') =>
+    kind === 'tight' ? 18 : kind === 'loose' ? 80 : 36;
+  const isForceLayout = layout === 'force' || layout === '3d';
+
+  // react-force-graph-2d / -3d don't expose linkDistance as a
+  // direct prop — push the value into the underlying d3 force
+  // via the imperative API whenever the spacing preset changes
+  // and reheat so the new distance actually applies.
+  useEffect(() => {
+    if (layout !== 'force') return;
+    const ref = graphRef.current as unknown as { d3Force?: (name: string) => { distance?: (n: number) => unknown } | undefined; d3ReheatSimulation?: () => void } | undefined;
+    const link = ref?.d3Force?.('link');
+    if (link && typeof link.distance === 'function') {
+      link.distance(linkDistanceFor(spacing));
+      ref?.d3ReheatSimulation?.();
+    }
+  }, [spacing, layout]);
+  useEffect(() => {
+    if (layout !== '3d') return;
+    const ref = fg3dRef.current as unknown as { d3Force?: (name: string) => { distance?: (n: number) => unknown } | undefined; d3ReheatSimulation?: () => void } | null;
+    const link = ref?.d3Force?.('link');
+    if (link && typeof link.distance === 'function') {
+      link.distance(linkDistanceFor(spacing));
+      ref?.d3ReheatSimulation?.();
+    }
+  }, [spacing, layout]);
   // Export font / text-colour state lifted up so the toolbar
   // instance and the fullscreen-extras instance of the Export
   // menu share a single source of truth instead of each tracking
@@ -379,6 +411,24 @@ export function AuthorGraph({
             3D
           </button>
         </div>
+        {isForceLayout && (
+          <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-900" title="Spread nodes further apart (force-layout only).">
+            {(['tight', 'normal', 'loose'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSpacing(s)}
+                className={`rounded-full px-2 py-0.5 transition ${
+                  spacing === s
+                    ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {layout === 'arc' ? (
@@ -445,6 +495,7 @@ export function AuthorGraph({
                 const FG = ForceGraph3D as unknown as React.ComponentType<Record<string, unknown>>;
                 return (
                   <FG
+                    key={`3d-${spacing}`}
                     ref={((inst: unknown) => { fg3dRef.current = inst as ForceGraph3DMethodsLike | null; })}
                     width={width}
                     height={height}
@@ -491,7 +542,7 @@ export function AuthorGraph({
               style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
             >
               <ForceGraph2D
-                key={`bg-${bgMode}`}
+                key={`bg-${bgMode}-${spacing}`}
                 ref={graphRef as unknown as React.RefObject<ForceGraphMethods>}
                 width={width}
                 height={height}
