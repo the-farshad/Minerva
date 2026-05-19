@@ -724,18 +724,116 @@ export function SectionView({
           <button
             type="button"
             onClick={async () => {
-              const input = await appPrompt('Import from Google Sheet', {
-                body: 'Paste the Sheet URL or id. Rows merge by `id` when present, otherwise append.',
-                placeholder: 'https://docs.google.com/spreadsheets/d/…',
+              const input = await appPrompt('Import', {
+                body: 'Paste a Google Sheet URL/id (rows merge by `id`), or a YouTube playlist / video URL.',
+                placeholder: 'https://docs.google.com/spreadsheets/d/… or https://youtube.com/playlist?list=…',
                 okLabel: 'Import',
               });
               if (!input) return;
+              const trimmed = input.trim();
+              // YouTube routing — the Import button used to be
+              // Sheets-only, but users kept pasting playlist URLs
+              // here and getting "Couldn't find a Sheet id" back.
+              // Detect anything that smells like YouTube and run
+              // the same lookup + per-row insert the Add-by-URL
+              // dialog uses, so a paste here just works.
+              const isYouTube = /(?:^https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\//i.test(trimmed)
+                || /^[?&]?list=/.test(trimmed);
+              if (isYouTube) {
+                toast.info('Importing from YouTube…');
+                try {
+                  const lr = await fetch('/api/import/lookup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: trimmed }),
+                  });
+                  const lj = await lr.json();
+                  if (!lr.ok) throw new Error(lj.error || `Lookup ${lr.status}`);
+                  const allowed = new Set(section.schema.headers);
+                  const existingUrls = new Set(rows.map((r) => String(r.data.url || '')).filter(Boolean));
+                  if (lj.kind === 'playlist' && Array.isArray(lj.items)) {
+                    const playlistLabel = lj.playlistName || lj.playlistId;
+                    if (lj.playlistId && playlistLabel) {
+                      try {
+                        localStorage.setItem(
+                          `minerva.v2.playlistUrl.${playlistLabel}`,
+                          `https://www.youtube.com/playlist?list=${lj.playlistId}`,
+                        );
+                      } catch { /* tolerate */ }
+                    }
+                    let inserted = 0, skipped = 0;
+                    const created: Row[] = [];
+                    for (const item of lj.items as Array<Record<string, unknown>>) {
+                      const itemUrl = String(item.url || '');
+                      if (!itemUrl) { skipped++; continue; }
+                      if (existingUrls.has(itemUrl)) { skipped++; continue; }
+                      const data: Record<string, unknown> = {};
+                      if (allowed.has('playlist')) data.playlist = playlistLabel;
+                      for (const [k, v] of Object.entries(item)) {
+                        if (v == null || v === '' || k === 'playlist' || k === 'position') continue;
+                        if (allowed.has(k)) data[k] = v;
+                      }
+                      if (typeof data.url === 'string' && lj.playlistId) {
+                        try {
+                          const u = new URL(data.url);
+                          if (!u.searchParams.has('list')) {
+                            u.searchParams.set('list', lj.playlistId);
+                            data.url = u.toString();
+                          }
+                        } catch { /* malformed — leave alone */ }
+                      }
+                      if (lj.playlistId) data._playlistId = lj.playlistId;
+                      if (typeof item.position === 'number') data._playlistPos = item.position;
+                      const cr = await fetch(`/api/sections/${section.slug}/rows`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ data }),
+                      });
+                      if (!cr.ok) continue;
+                      created.push(await cr.json());
+                      inserted++;
+                    }
+                    setRows((rs) => {
+                      const ids = new Set(rs.map((r) => r.id));
+                      return [...created.filter((r) => !ids.has(r.id)), ...rs];
+                    });
+                    qc.invalidateQueries({ queryKey: ['rows', section.slug] });
+                    toast.success(`Imported ${inserted} videos${skipped ? ` · skipped ${skipped} duplicate${skipped === 1 ? '' : 's'}` : ''}.`);
+                  } else {
+                    // Single video.
+                    const singleUrl = String((lj as Record<string, unknown>).url || trimmed);
+                    if (existingUrls.has(singleUrl)) {
+                      toast.info('Already in this section.');
+                      return;
+                    }
+                    const data: Record<string, unknown> = {};
+                    for (const [k, v] of Object.entries(lj as Record<string, unknown>)) {
+                      if (v == null || v === '' || k === 'kind') continue;
+                      if (allowed.has(k)) data[k] = v;
+                    }
+                    if (Object.keys(data).length === 0) data.url = singleUrl;
+                    const cr = await fetch(`/api/sections/${section.slug}/rows`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ data }),
+                    });
+                    const cj = await cr.json();
+                    if (!cr.ok) throw new Error(cj.error || `Add ${cr.status}`);
+                    setRows((rs) => [cj as Row, ...rs]);
+                    qc.invalidateQueries({ queryKey: ['rows', section.slug] });
+                    toast.success('Added.');
+                  }
+                } catch (e) {
+                  notify.error((e as Error).message);
+                }
+                return;
+              }
               toast.info('Importing from Sheet…');
               try {
                 const r = await fetch(`/api/sections/${section.slug}/import-sheet`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ sheetIdOrUrl: input, mode: 'merge' }),
+                  body: JSON.stringify({ sheetIdOrUrl: trimmed, mode: 'merge' }),
                 });
                 const j = await r.json();
                 if (!r.ok) throw new Error(j.error || String(r.status));

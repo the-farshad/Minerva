@@ -1160,6 +1160,29 @@ function CardActions({
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  // Track this row's watched state so the three-dots menu shows
+  // only the relevant action (Mark watched OR Mark unwatched, not
+  // both). Re-reads on `storage` events so flipping the state from
+  // this menu — or from another tab — refreshes both items.
+  const [isWatched, setIsWatched] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const { pct } = computeWatched(row);
+    return !!pct && pct >= 0.9;
+  });
+  useEffect(() => {
+    const refresh = () => {
+      const { pct } = computeWatched(row);
+      setIsWatched(!!pct && pct >= 0.9);
+    };
+    refresh();
+    const url = String(row.data.url || '');
+    if (!url) return;
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || e.key === 'minerva.v2.resume.' + url) refresh();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [row]);
   const isOffliable = (section.preset === 'youtube' || section.preset === 'papers')
     && typeof row.data.url === 'string' && !!row.data.url;
   const kind = section.preset === 'youtube' ? 'video' : 'paper';
@@ -1422,7 +1445,7 @@ function CardActions({
                   <Upload className="h-3.5 w-3.5" /> Upload local MP4
                 </DropdownMenu.Item>
               )}
-              {kind === 'video' && (
+              {kind === 'video' && !isWatched && (
                 <DropdownMenu.Item
                   onSelect={(e) => { e.preventDefault(); void markVideoWatched(true); }}
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
@@ -1430,7 +1453,7 @@ function CardActions({
                   <Eye className="h-3.5 w-3.5" /> Mark as watched
                 </DropdownMenu.Item>
               )}
-              {kind === 'video' && (
+              {kind === 'video' && isWatched && (
                 <DropdownMenu.Item
                   onSelect={(e) => { e.preventDefault(); void markVideoWatched(false); }}
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 outline-none hover:bg-zinc-100 dark:hover:bg-zinc-800"
