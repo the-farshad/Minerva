@@ -21,6 +21,13 @@ import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { FullscreenShell } from './fullscreen-shell';
 import { GraphExportMenu, type ExportFontSize, type ExportTextColor } from './graph-export-menu';
 
+/** Three.js / react-force-graph-3d for the 3D layout. Loaded
+ *  dynamically (ssr:false) so the ~400KB-gz WebGL stack stays
+ *  out of the initial /lit bundle for users who never open this
+ *  view. */
+const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), { ssr: false });
+type ForceGraph3DMethodsLike = { scene: () => unknown; renderer: () => { domElement: HTMLCanvasElement } };
+
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
 type Paper = {
@@ -56,7 +63,7 @@ export function AuthorGraph({
   focalAuthor?: string;
   onAuthorClick?: (name: string) => void;
 }) {
-  const [layout, setLayout] = useState<'force' | 'circular' | 'arc' | 'bundled'>('force');
+  const [layout, setLayout] = useState<'force' | 'circular' | 'arc' | 'bundled' | '3d'>('force');
   /** Read the active page theme so the graph background matches
    *  by default instead of always starting on light. The user can
    *  still override via the BG toggle; this only sets the initial
@@ -85,6 +92,7 @@ export function AuthorGraph({
   const isDarkBg = bgMode === 'dark';
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
+  const fg3dRef = useRef<ForceGraph3DMethodsLike | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   // Zoom + pan state for the circular SVG. Force layout already
   // has react-force-graph-2d's built-in wheel zoom; SVG needs its
@@ -226,7 +234,14 @@ export function AuthorGraph({
     <GraphExportMenu
       filename="lit-coauthors"
       source={{
-        canvasEl: () => layout === 'force' ? canvasEl() : null,
+        // 3D shares the canvas path (PNG only — WebGL has no
+        // vector equivalent, so SVG / PDF fall back to PNG-
+        // wrapped via the canvas helpers).
+        canvasEl: () => {
+          if (layout === 'force') return canvasEl();
+          if (layout === '3d') return fg3dRef.current?.renderer().domElement ?? null;
+          return null;
+        },
         svgEl: () => (layout === 'circular' || layout === 'arc' || layout === 'bundled') ? svgRef.current : null,
         graphData: {
           // Carry x/y/size so the exporter can rebuild a true-
@@ -333,6 +348,18 @@ export function AuthorGraph({
           >
             Bundled
           </button>
+          <button
+            type="button"
+            onClick={() => setLayout('3d')}
+            title="WebGL 3D force-directed view — orbit by drag, zoom by wheel"
+            className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+              layout === '3d'
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+          >
+            3D
+          </button>
         </div>
       </div>
 
@@ -367,6 +394,50 @@ export function AuthorGraph({
                 onAuthorClick={onAuthorClick}
                 svgRef={svgRef}
               />
+            </div>
+          )}
+        </FullscreenShell>
+      ) : layout === '3d' ? (
+        <FullscreenShell extras={({ fullscreen }) => fullscreen ? exportMenuEl : null}>
+          {({ width, height }) => (
+            <div
+              className="h-full w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              style={{ backgroundColor: isDarkBg ? '#0b0d10' : '#fafafa' }}
+            >
+              {/* preserveDrawingBuffer:true so canvas.toDataURL()
+                * (the path GraphExportMenu's PNG export uses) gets
+                * back actual pixels instead of black on WebGL.
+                * `react-force-graph-3d`'s ref typing is strict and
+                * conflicts with the unknown-shaped accessor we
+                * actually need; the cast through `any` lets the
+                * callback-ref idiom past TS without dragging the
+                * three-d-only z/vz/fz coords into the project's
+                * CoAuthorNode shape. */}
+              {(() => {
+                const FG = ForceGraph3D as unknown as React.ComponentType<Record<string, unknown>>;
+                return (
+                  <FG
+                    ref={((inst: unknown) => { fg3dRef.current = inst as ForceGraph3DMethodsLike | null; })}
+                    width={width}
+                    height={height}
+                    graphData={{ nodes, links }}
+                    backgroundColor={isDarkBg ? '#0b0d10' : '#fafafa'}
+                    nodeRelSize={6}
+                    nodeColor={(n: unknown) => (n as CoAuthorNode).isFocal ? '#1e40af' : (isDark ? '#a1a1aa' : '#52525b')}
+                    nodeVal={(n: unknown) => Math.max(1, (n as CoAuthorNode).papers)}
+                    nodeLabel={(n: unknown) => `${(n as CoAuthorNode).label} · ${(n as CoAuthorNode).papers} paper${(n as CoAuthorNode).papers === 1 ? '' : 's'}`}
+                    linkColor={() => isDark ? 'rgba(161,161,170,0.5)' : 'rgba(82,82,91,0.55)'}
+                    linkWidth={(l: unknown) => {
+                      const w = (l as CoAuthorLink).weight || 1;
+                      return Math.max(0.6, Math.min(6, 0.6 + w * 0.6));
+                    }}
+                    onNodeClick={(n: unknown) => onAuthorClick?.((n as CoAuthorNode).id)}
+                    rendererConfig={{ preserveDrawingBuffer: true, antialias: true }}
+                    cooldownTicks={120}
+                    showNavInfo={false}
+                  />
+                );
+              })()}
             </div>
           )}
         </FullscreenShell>
