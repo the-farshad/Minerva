@@ -45,6 +45,7 @@ type OutgoingShare = {
     declinedAt: string | null;
     shareProgress: boolean;
     recipientShareProgress: boolean;
+    progress: { started: number; total: number } | null;
   }[];
 };
 
@@ -271,9 +272,14 @@ export function SharesView() {
                       <Link
                         href={`/shared-by-me/${r.id}`}
                         title="See this recipient's progress on the share"
-                        className="ml-0.5 inline-flex items-center text-blue-600 hover:underline dark:text-blue-400"
+                        className="ml-0.5 inline-flex items-center gap-0.5 text-blue-600 hover:underline dark:text-blue-400"
                       >
                         ↕
+                        {r.progress && r.progress.total > 0 && (
+                          <span className="text-[10px] font-medium">
+                            {r.progress.started}/{r.progress.total}
+                          </span>
+                        )}
                       </Link>
                     ) : null}
                     {r.shareProgress && (

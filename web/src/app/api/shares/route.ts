@@ -238,11 +238,98 @@ export async function GET(req: NextRequest) {
         .where(inArray(schema.sections.id, sectionTargets)))
         .map((s) => [s.id, s.title]),
     );
+
+    // Per-recipient progress summary when recipientShareProgress
+    // is on. Resolves each share's row-set, then queries each
+    // sharing recipient's watch_progress on those rows, and
+    // aggregates 'started / total' so the outgoing UI can render
+    // an inline count without click-through.
+    const sharingRecs = recs.filter((r) => r.recipientShareProgress && r.userId);
+    const progressByRecipient = new Map<string, { started: number; total: number }>();
+    if (sharingRecs.length > 0) {
+      // 1) For each unique share id, compute the row-set.
+      const shareRowSets = new Map<string, string[]>();
+      const sectionIdsNeeded = new Set<string>();
+      const groupShares: { shareId: string; sectionId: string; groupKey: string }[] = [];
+      const rowShares: { shareId: string; rowId: string }[] = [];
+      const sectionShares: { shareId: string; sectionId: string }[] = [];
+      for (const s of rows) {
+        if (!sharingRecs.some((r) => r.shareId === s.id)) continue;
+        if (s.scope === 'section') {
+          sectionIdsNeeded.add(s.targetId);
+          sectionShares.push({ shareId: s.id, sectionId: s.targetId });
+        } else if (s.scope === 'group') {
+          const [sectionId, ...rest] = s.targetId.split(':');
+          sectionIdsNeeded.add(sectionId);
+          groupShares.push({ shareId: s.id, sectionId, groupKey: rest.join(':') });
+        } else if (s.scope === 'row') {
+          rowShares.push({ shareId: s.id, rowId: s.targetId });
+        }
+      }
+      // 2) Fetch every section's rows in one go.
+      const sectionRows = sectionIdsNeeded.size === 0 ? [] : await db
+        .select({
+          id: schema.rows.id,
+          sectionId: schema.rows.sectionId,
+          data: schema.rows.data,
+        })
+        .from(schema.rows)
+        .where(inArray(schema.rows.sectionId, [...sectionIdsNeeded]));
+      const sectionMap = new Map<string, string>();
+      for (const sec of sectionTargets) sectionMap.set(sec, 'section');
+      // Section preset map for group filtering (playlist vs category).
+      const presetMap = sectionIdsNeeded.size === 0 ? new Map<string, string>() : new Map(
+        (await db
+          .select({ id: schema.sections.id, preset: schema.sections.preset })
+          .from(schema.sections)
+          .where(inArray(schema.sections.id, [...sectionIdsNeeded])))
+          .map((s) => [s.id, s.preset ?? '']),
+      );
+      // Build row-set per share.
+      for (const ss of sectionShares) {
+        shareRowSets.set(ss.shareId, sectionRows.filter((r) => r.sectionId === ss.sectionId).map((r) => r.id));
+      }
+      for (const gs of groupShares) {
+        const groupCol = presetMap.get(gs.sectionId) === 'youtube' ? 'playlist' : 'category';
+        shareRowSets.set(gs.shareId, sectionRows.filter((r) => {
+          if (r.sectionId !== gs.sectionId) return false;
+          const data = r.data as Record<string, unknown>;
+          const v = data[groupCol];
+          const vs = typeof v === 'string' ? v.split(/,\s*/) : [];
+          return vs.includes(gs.groupKey);
+        }).map((r) => r.id));
+      }
+      for (const rs of rowShares) {
+        shareRowSets.set(rs.shareId, [rs.rowId]);
+      }
+      // 3) For each sharing recipient, fetch their progress on
+      //    their share's row-set. One query per unique (recipient,
+      //    rowSet) pair — bounded by recipient count.
+      for (const rec of sharingRecs) {
+        const rowIds = shareRowSets.get(rec.shareId) ?? [];
+        if (rowIds.length === 0) {
+          progressByRecipient.set(rec.id, { started: 0, total: 0 });
+          continue;
+        }
+        const wp = await db
+          .select({ rowId: schema.watchProgress.rowId })
+          .from(schema.watchProgress)
+          .where(and(
+            eq(schema.watchProgress.userId, rec.userId!),
+            inArray(schema.watchProgress.rowId, rowIds),
+          ));
+        progressByRecipient.set(rec.id, { started: wp.length, total: rowIds.length });
+      }
+    }
+
     return NextResponse.json({
       shares: rows.map((r) => ({
         ...r,
         targetTitle: r.scope === 'section' ? sectionTitles.get(r.targetId) ?? null : null,
-        recipients: byShare.get(r.id) ?? [],
+        recipients: (byShare.get(r.id) ?? []).map((rec) => ({
+          ...rec,
+          progress: progressByRecipient.get(rec.id) ?? null,
+        })),
       })),
     });
   }
