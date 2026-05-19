@@ -15,7 +15,12 @@ import { Suspense } from 'react';
 import { LitExplorer } from './lit-explorer';
 
 export const metadata = { title: 'Literature' };
-export const dynamic = 'force-static';
+// Removed force-static — LitExplorer is a client component that
+// reads ?q=… via useSearchParams, and force-static + Suspense had
+// the same prerender-vs-client-effect failure pattern that broke
+// /lit/compare and /lit/path. Static prerender adds no value when
+// the page body is entirely client-rendered, so drop it for
+// consistency with the sibling routes.
 
 export default function LitPage() {
   // useSearchParams in LitExplorer requires a Suspense boundary
