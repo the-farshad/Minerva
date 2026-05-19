@@ -92,6 +92,13 @@ export function AuthorGraph({
   const [spacing, setSpacing] = useState<'tight' | 'normal' | 'loose'>('normal');
   const linkDistanceFor = (kind: 'tight' | 'normal' | 'loose') =>
     kind === 'tight' ? 18 : kind === 'loose' ? 80 : 36;
+  // Label offset — how far each author label sits from its node.
+  // Threaded into ArcDiagram + BundledDiagram via props; the
+  // circular layout reads it inline. Force / 3D label offsets
+  // are baked into the canvas/sprite render code and would need
+  // a separate plumbing pass.
+  const labelOffsetFor = (kind: 'tight' | 'normal' | 'loose') =>
+    kind === 'tight' ? 2 : kind === 'loose' ? 16 : 8;
   const isForceLayout = layout === 'force' || layout === '3d';
 
   // react-force-graph-2d / -3d don't expose linkDistance as a
@@ -449,6 +456,7 @@ export function AuthorGraph({
                 isDark={isDark}
                 onAuthorClick={onAuthorClick}
                 svgRef={svgRef}
+                labelOffset={labelOffsetFor(spacing)}
               />
               {crop.decorations}
             </div>
@@ -472,6 +480,7 @@ export function AuthorGraph({
                 isDark={isDark}
                 onAuthorClick={onAuthorClick}
                 svgRef={svgRef}
+                labelOffset={labelOffsetFor(spacing)}
               />
               {crop.decorations}
             </div>
@@ -714,9 +723,11 @@ export function AuthorGraph({
               const r = nodeRadius(n);
               const angle = Math.atan2(pos.y - circular.H / 2, pos.x - circular.W / 2);
               // Label sits outward from the node, rotated tangentially
-              // so it reads horizontally along the ring.
-              const lx = pos.x + (r + 8) * Math.cos(angle);
-              const ly = pos.y + (r + 8) * Math.sin(angle);
+              // so it reads horizontally along the ring. Offset
+              // beyond the node radius is the spacing-driven gap.
+              const labelGap = labelOffsetFor(spacing);
+              const lx = pos.x + (r + labelGap) * Math.cos(angle);
+              const ly = pos.y + (r + labelGap) * Math.sin(angle);
               const rotate = (angle * 180) / Math.PI;
               const flip = rotate > 90 || rotate < -90;
               const nodeSelected = chordSel?.kind === 'node' && chordSel.id === n.id;
@@ -802,12 +813,14 @@ function BundledDiagram({
   isDark,
   onAuthorClick,
   svgRef,
+  labelOffset = 4,
 }: {
   nodes: CoAuthorNode[];
   links: CoAuthorLink[];
   isDark: boolean;
   onAuthorClick?: (id: string) => void;
   svgRef: React.RefObject<SVGSVGElement | null>;
+  labelOffset?: number;
 }) {
   const W = 760;
   const H = 520;
@@ -943,8 +956,8 @@ function BundledDiagram({
         const dx = p.x - cx;
         const dy = p.y - cy;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const lx = p.x + (dx / dist) * (r + 4);
-        const ly = p.y + (dy / dist) * (r + 4);
+        const lx = p.x + (dx / dist) * (r + labelOffset);
+        const ly = p.y + (dy / dist) * (r + labelOffset);
         const angDeg = (p.ang * 180) / Math.PI;
         const flip = angDeg > 90 || angDeg < -90;
         return (
@@ -985,12 +998,14 @@ function ArcDiagram({
   isDark,
   onAuthorClick,
   svgRef,
+  labelOffset = 6,
 }: {
   nodes: CoAuthorNode[];
   links: CoAuthorLink[];
   isDark: boolean;
   onAuthorClick?: (id: string) => void;
   svgRef: React.RefObject<SVGSVGElement | null>;
+  labelOffset?: number;
 }) {
   const W = 920;
   const H = 360;
@@ -1062,9 +1077,9 @@ function ArcDiagram({
               strokeWidth={n.isFocal ? 1.5 : 0}
             />
             <text
-              x={x} y={PAD.baseline + r + 6}
+              x={x} y={PAD.baseline + r + labelOffset}
               textAnchor="end"
-              transform={`rotate(-45 ${x} ${PAD.baseline + r + 6})`}
+              transform={`rotate(-45 ${x} ${PAD.baseline + r + labelOffset})`}
               className="fill-zinc-700 text-[10px] dark:fill-zinc-300"
             >
               {n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}
