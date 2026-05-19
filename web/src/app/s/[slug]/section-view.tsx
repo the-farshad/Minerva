@@ -799,6 +799,37 @@ export function SectionView({
                     });
                     qc.invalidateQueries({ queryKey: ['rows', section.slug] });
                     toast.success(`Imported ${inserted} videos${skipped ? ` · skipped ${skipped} duplicate${skipped === 1 ? '' : 's'}` : ''}.`);
+                    // Auto-enrich every imported row the same way
+                    // Add-by-URL's playlist path does: the playlist
+                    // scraper never returns duration, so without
+                    // this each row shows up missing duration until
+                    // the user clicks Refresh on each one. Throttled
+                    // to 3 concurrent so the YouTube Data API isn't
+                    // fanned out 50-wide. 409 (no API key) is silent.
+                    (async () => {
+                      const queue = [...created];
+                      const enrichOne = async (c: Row) => {
+                        try {
+                          const mr = await fetch(
+                            `/api/sections/${section.slug}/rows/${c.id}/refresh-metadata`,
+                            { method: 'POST' },
+                          );
+                          if (!mr.ok) return;
+                          const mj = (await mr.json().catch(() => ({}))) as { data?: Record<string, unknown> };
+                          if (mj.data) {
+                            setRows((rs) => rs.map((r) => r.id === c.id
+                              ? { id: c.id, data: mj.data!, updatedAt: new Date().toISOString() }
+                              : r));
+                          }
+                        } catch { /* tolerate */ }
+                      };
+                      await Promise.all(Array.from({ length: 3 }, async () => {
+                        while (queue.length > 0) {
+                          const next = queue.shift();
+                          if (next) await enrichOne(next);
+                        }
+                      }));
+                    })();
                   } else {
                     // Single video.
                     const singleUrl = String((lj as Record<string, unknown>).url || trimmed);
@@ -822,6 +853,24 @@ export function SectionView({
                     setRows((rs) => [cj as Row, ...rs]);
                     qc.invalidateQueries({ queryKey: ['rows', section.slug] });
                     toast.success('Added.');
+                    // Fire-and-forget enrichment so the row picks up
+                    // duration / channel / thumbnail from the YouTube
+                    // Data API without a manual refresh.
+                    (async () => {
+                      try {
+                        const mr = await fetch(
+                          `/api/sections/${section.slug}/rows/${cj.id}/refresh-metadata`,
+                          { method: 'POST' },
+                        );
+                        if (!mr.ok) return;
+                        const mj = (await mr.json().catch(() => ({}))) as { data?: Record<string, unknown> };
+                        if (mj.data) {
+                          setRows((rs) => rs.map((r) => r.id === cj.id
+                            ? { id: cj.id, data: mj.data!, updatedAt: new Date().toISOString() }
+                            : r));
+                        }
+                      } catch { /* tolerate */ }
+                    })();
                   }
                 } catch (e) {
                   notify.error((e as Error).message);
