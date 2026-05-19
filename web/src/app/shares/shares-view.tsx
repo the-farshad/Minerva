@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { Inbox, Outdent, Check, X, Trash2, ExternalLink, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
+import { RecipientControls } from './recipient-controls';
 
 type IncomingShare = {
   recipientId: string;
@@ -268,6 +269,7 @@ export function SharesView() {
                     }`}
                   >
                     {r.username ? `@${r.username}` : '(link)'}
+                    <span className="text-[10px] opacity-70">· {r.mode}</span>
                     {r.recipientShareProgress ? (
                       <Link
                         href={`/shared-by-me/${r.id}`}
@@ -285,17 +287,25 @@ export function SharesView() {
                     {r.shareProgress && (
                       <span title="You are sharing your progress with this recipient" className="ml-0.5 text-zinc-500 dark:text-zinc-400">→</span>
                     )}
-                    {/* Per-recipient revoke — drops just this user
-                      *  without tearing down the whole share. */}
-                    <button
-                      type="button"
-                      onClick={() => void revokeRecipient(s.id, r.id)}
-                      title={`Remove ${r.username ? '@' + r.username : 'this link'} from this share`}
-                      className="rounded-full p-0.5 hover:bg-black/10 dark:hover:bg-white/20"
-                      aria-label="Revoke recipient"
-                    >
-                      ×
-                    </button>
+                    {r.username ? (
+                      <RecipientControls
+                        shareId={s.id}
+                        recipientId={r.id}
+                        mode={r.mode}
+                        shareProgress={r.shareProgress}
+                        onChanged={loadOutgoing}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void revokeRecipient(s.id, r.id)}
+                        title="Revoke this public link"
+                        className="rounded-full p-0.5 hover:bg-black/10 dark:hover:bg-white/20"
+                        aria-label="Revoke link"
+                      >
+                        ×
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
