@@ -444,18 +444,13 @@ export function GroupedGrid({
                   </span>
                 );
               })()}
+              <div className="ml-auto flex flex-wrap items-center gap-2">
               {section.preset === 'youtube' && (
-                <div className="ml-2"><PlaylistProgress rows={groupRows} /></div>
+                <PlaylistProgress rows={groupRows} />
               )}
               {section.preset === 'papers' && (
-                <div className="ml-2"><ReadingTimeTotal rows={groupRows} /></div>
+                <ReadingTimeTotal rows={groupRows} />
               )}
-              {/* The playlist info pill used to live here. Removed
-                * because it duplicated the group title (which IS
-                * the playlist name). A richer "About this playlist"
-                * dialog — link, progress chart, time totals — will
-                * land in the three-dots overflow as a follow-up. */}
-              <div className="ml-auto flex flex-wrap items-center gap-1">
               {groupCol && (
                 <>
                   <select
@@ -799,7 +794,10 @@ export function GroupedGrid({
                         * corner cluster reads as a single control
                         * group. */}
                       <div className="flex items-start gap-1.5 pr-12">
-                        <div className="flex-1 text-sm font-medium">
+                        <div
+                          className="flex-1 text-sm font-medium"
+                          title={titleField ? String(r.data[titleField] ?? '(untitled)') : ''}
+                        >
                           {titleField ? String(r.data[titleField] ?? '(untitled)') : '(row)'}
                         </div>
                         {section.preset === 'notes' && <NotesTypeBadge type={String(r.data.type || 'md')} />}
@@ -989,20 +987,20 @@ function GroupNameEditor({
   }
   return (
     <div
-      className="group inline-flex items-center gap-1"
+      className="group flex min-w-0 max-w-[55%] items-center gap-1"
       onDoubleClick={() => setEditing(true)}
-      title="Double-click to rename"
+      title={`${name} — double-click to rename`}
     >
       <button
         type="button"
         onClick={onToggle}
-        className="inline-flex items-center gap-1 text-sm font-medium"
+        className="flex min-w-0 items-center gap-1 text-sm font-medium"
       >
-        {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        <span className="group-hover:underline group-hover:underline-offset-2 group-hover:decoration-zinc-300 dark:group-hover:decoration-zinc-700">
+        {isCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+        <span className="truncate group-hover:underline group-hover:underline-offset-2 group-hover:decoration-zinc-300 dark:group-hover:decoration-zinc-700">
           {name}
         </span>
-        <span className="text-xs font-normal text-zinc-500">· {count}</span>
+        <span className="shrink-0 text-xs font-normal text-zinc-500">· {count}</span>
       </button>
     </div>
   );
