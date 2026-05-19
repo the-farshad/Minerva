@@ -267,9 +267,15 @@ export function SharesView() {
                     }`}
                   >
                     {r.username ? `@${r.username}` : '(link)'}
-                    {r.recipientShareProgress && (
-                      <span title="This recipient is sharing their progress back to you" className="ml-0.5 text-blue-600 dark:text-blue-400">↕</span>
-                    )}
+                    {r.recipientShareProgress ? (
+                      <Link
+                        href={`/shared-by-me/${r.id}`}
+                        title="See this recipient's progress on the share"
+                        className="ml-0.5 inline-flex items-center text-blue-600 hover:underline dark:text-blue-400"
+                      >
+                        ↕
+                      </Link>
+                    ) : null}
                     {r.shareProgress && (
                       <span title="You are sharing your progress with this recipient" className="ml-0.5 text-zinc-500 dark:text-zinc-400">→</span>
                     )}
