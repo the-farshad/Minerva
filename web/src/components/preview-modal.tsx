@@ -266,13 +266,28 @@ export function PreviewModal({
   // fired.
   useEffect(() => {
     const url = view?.url;
+    const rowId = view?.rowId;
     if (!url) return;
     if (!ytId(url)) return;
     return () => {
       const t = Math.floor(ytTimeRef.current);
       if (t > 5) writePref(`resume.${url}`, t);
+      // Phase-4 progress sync — also push to /api/watch-progress
+      // so other devices + cross-user comparison views see the
+      // same number. Fire-and-forget; failures fall back to the
+      // localStorage value above.
+      if (t > 5 && rowId) {
+        try {
+          void fetch('/api/watch-progress', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rowId, position: t, url }),
+            keepalive: true,
+          });
+        } catch { /* tolerate network error */ }
+      }
     };
-  }, [view?.url]);
+  }, [view?.url, view?.rowId]);
 
   // Paper auto-mirror on first preview-open: fire and forget so
   // the iframe can start loading the (probably-X-Frame-blocked)
