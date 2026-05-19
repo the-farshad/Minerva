@@ -149,7 +149,7 @@ export function CitationFlow({ flow }: { flow: CitationFlowInput }) {
   }
 
   return (
-    <ChartShell filename="lit-citation-flow" summary="Citation flow · references → seed → citers">
+    <ChartShell filename="lit-citation-flow" summary="Citation flow · references → seed → citers" fullscreenable>
       {(svgRef) => (
     <div className="relative w-full">
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Citation flow">

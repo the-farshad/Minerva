@@ -112,7 +112,7 @@ export function DensityChart({ papers }: { papers: Paper[] }) {
   }
 
   return (
-    <ChartShell filename="lit-density" summary="Density heatmap · papers binned by year × cites">
+    <ChartShell filename="lit-density" summary="Density heatmap · papers binned by year × cites" fullscreenable>
       {(svgRef) => (
     <div className="relative w-full">
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="block w-full text-zinc-900 dark:text-zinc-100" role="img" aria-label="Density heatmap">

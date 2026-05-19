@@ -15,7 +15,8 @@
  *   </ChartShell>
  */
 import { useRef, useState, type ReactNode, type RefObject } from 'react';
-import { GraphExportMenu, type ExportBg, type GraphExportSource } from './graph-export-menu';
+import { GraphExportMenu, type ExportBg, type ExportFontSize, type ExportTextColor, type GraphExportSource } from './graph-export-menu';
+import { FullscreenShell } from './fullscreen-shell';
 
 function detectInitialBg(): ExportBg {
   if (typeof document === 'undefined') return 'light';
@@ -32,6 +33,7 @@ export function ChartShell({
   children,
   className,
   tableData,
+  fullscreenable,
 }: {
   filename: string;
   summary?: ReactNode;
@@ -41,24 +43,46 @@ export function ChartShell({
    *  surfaces JSON and CSV options for the raw data, in addition
    *  to PNG / SVG / PDF for the rendered image. */
   tableData?: GraphExportSource['tableData'];
+  /** Wrap the chart body in <FullscreenShell> so the user can
+   *  maximize it. The Export menu is rendered both in the inline
+   *  toolbar AND inside the FullscreenShell extras slot (sharing
+   *  state via the lifted bg/fontSize/textColor below), so it
+   *  stays reachable while the chart is maximized. */
+  fullscreenable?: boolean;
   children: (svgRef: RefObject<SVGSVGElement | null>) => ReactNode;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
+  // Lifted state so the toolbar + fullscreen instances of
+  // GraphExportMenu share one source of truth — see
+  // author-graph for the same pattern.
   const [bg, setBg] = useState<ExportBg>(() => detectInitialBg());
+  const [fontSize, setFontSize] = useState<ExportFontSize>('M');
+  const [textColor, setTextColor] = useState<ExportTextColor>('auto');
+  const menu = (
+    <GraphExportMenu
+      filename={filename}
+      source={{ svgEl: () => svgRef.current, tableData }}
+      bg={bg}
+      onBgChange={setBg}
+      fontSize={fontSize}
+      onFontSizeChange={setFontSize}
+      textColor={textColor}
+      onTextColorChange={setTextColor}
+    />
+  );
   return (
     <div className={className}>
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1 text-[11px] text-zinc-500 dark:text-zinc-400">
           {summary ?? <span />}
         </div>
-        <GraphExportMenu
-          filename={filename}
-          source={{ svgEl: () => svgRef.current, tableData }}
-          bg={bg}
-          onBgChange={setBg}
-        />
+        {menu}
       </div>
-      {children(svgRef)}
+      {fullscreenable ? (
+        <FullscreenShell extras={({ fullscreen }) => fullscreen ? menu : null}>
+          {() => children(svgRef)}
+        </FullscreenShell>
+      ) : children(svgRef)}
     </div>
   );
 }

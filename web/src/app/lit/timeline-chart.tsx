@@ -138,6 +138,7 @@ export function TimelineChart({
     <ChartShell
       filename="lit-timeline"
       summary="Citation timeline · publication year × citation count"
+      fullscreenable
       tableData={{
         rows: [
           ...(seed && seedYear !== null
