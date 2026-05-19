@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { db, schema } from '@/db';
+import { bus } from '@/lib/event-bus';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,6 +86,13 @@ export async function POST(req: NextRequest) {
       },
     });
 
+  bus.emit(userId, {
+    kind: 'watch.changed',
+    rowId: body.rowId,
+    url: body.url ?? null,
+    position: pos,
+    duration: dur ?? null,
+  });
   return NextResponse.json({ ok: true });
 }
 
@@ -128,5 +136,8 @@ export async function DELETE(req: NextRequest) {
       eq(schema.watchProgress.userId, userId),
       inArray(schema.watchProgress.rowId, ids),
     ));
+  for (const rowId of ids) {
+    bus.emit(userId, { kind: 'watch.changed', rowId, url: null, position: 0, duration: null });
+  }
   return NextResponse.json({ deleted: (res as { rowCount?: number }).rowCount ?? ids.length });
 }

@@ -37,7 +37,14 @@ export type MinervaEvent =
   /** Sharing: a share targeting this user changed state — new
    *  incoming, accept/decline, or owner revocation. The recipient
    *  inbox refetches; the owner's outgoing list refetches. */
-  | { kind: 'share.received'; shareId: string };
+  | { kind: 'share.received'; shareId: string }
+  /** Watch position changed for a YouTube row — fires on every
+   *  POST/DELETE to /api/watch-progress so other open tabs and
+   *  other devices re-render their progress bars + watched/
+   *  unwatched chips without a manual refresh. Carries url so
+   *  receivers can also patch localStorage.minerva.v2.resume.<url>
+   *  and stay consistent with their on-device cache. */
+  | { kind: 'watch.changed'; rowId: string; url?: string | null; position: number; duration?: number | null };
 
 // Node EventEmitter is hot-reload friendly under the App Router's
 // in-place module evaluation; storing on globalThis keeps a single

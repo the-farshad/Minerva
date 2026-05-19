@@ -145,6 +145,27 @@ export function SectionView({
       // Bump the outgoing-shares refetch counter so the "Shared
       // with N" pills stay accurate on accept / decline / revoke.
       setShareRefetch((n) => n + 1);
+    } else if (event.kind === 'watch.changed') {
+      // Cross-device watch sync: mirror the server's new position
+      // into local resume cache and dispatch a storage event so
+      // every WatchedBar / PlaylistProgress on this tab re-renders.
+      // url may be null on delete; in that case we drop the cache.
+      try {
+        if (event.url) {
+          const key = 'minerva.v2.resume.' + event.url;
+          if (event.position > 0) {
+            localStorage.setItem(key, String(event.position));
+          } else {
+            localStorage.removeItem(key);
+          }
+          window.dispatchEvent(new StorageEvent('storage', { key }));
+        } else {
+          // No url carried (DELETE for an unknown-url row) — broadcast
+          // a generic storage event so prefix-listening receivers
+          // (PlaylistProgress) recompute even though no key flipped.
+          window.dispatchEvent(new StorageEvent('storage', { key: 'minerva.v2.resume.' }));
+        }
+      } catch { /* tolerate */ }
     }
   });
 
@@ -183,6 +204,16 @@ export function SectionView({
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     });
+    // Deep-link: push ?row=<id> onto the URL so copy-paste lands
+    // on the same row in a new tab. Uses history.replaceState
+    // directly to avoid Next's full re-render — the row preview
+    // is pure client-side state.
+    try {
+      const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+      sp.set('row', r.id);
+      const next = `${window.location.pathname}?${sp.toString()}${window.location.hash}`;
+      window.history.replaceState(window.history.state, '', next);
+    } catch { /* tolerate */ }
     // Record the open as an access. Debounced: a re-open within
     // five minutes doesn't write again. Fire-and-forget — the
     // touch endpoint does NOT bump updatedAt, so it can't pollute
@@ -920,7 +951,18 @@ export function SectionView({
       })()}
       <PreviewModal
         item={previewItem}
-        onClose={() => setPreviewItem(null)}
+        onClose={() => {
+          setPreviewItem(null);
+          // Strip ?row=… so the URL reflects "back on the section
+          // index". Other query params (filters, etc.) survive.
+          try {
+            const sp = new URLSearchParams(window.location.search);
+            sp.delete('row');
+            const qs = sp.toString();
+            const next = `${window.location.pathname}${qs ? '?' + qs : ''}${window.location.hash}`;
+            window.history.replaceState(window.history.state, '', next);
+          } catch { /* tolerate */ }
+        }}
         onAdvance={(currentRowId) => {
           // Auto-advance: pick the next row in the same playlist /
           // category as the current one and reopen the preview on

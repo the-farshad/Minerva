@@ -785,14 +785,14 @@ export function GroupedGrid({
                       persistOrder(key, ids);
                     }}
                     className={cn(
-                      'group relative cursor-grab rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700',
+                      'group relative flex cursor-grab flex-col rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700',
                       draggedId === r.id && 'opacity-40',
                     )}
                   >
                     <button
                       type="button"
                       onClick={() => onOpen(r)}
-                      className="block w-full text-left"
+                      className="block w-full flex-1 text-left"
                     >
                       {/* Title only; offline-state badges live next
                         * to the three-dots overflow menu so the
@@ -900,6 +900,24 @@ export function GroupedGrid({
  * when we don't know the duration (row hasn't been enriched by
  * the YT API yet OR yt-dlp metadata is missing). */
 function WatchedBar({ row }: { row: Row }) {
+  // useState + storage listener so the bar refreshes the instant
+  // the user flips watched/unwatched from this tab — or from
+  // another tab. computeWatched alone is computed at render time
+  // and won't re-run without an external trigger.
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const url = String(row.data.url || '');
+    if (!url) return;
+    const key = 'minerva.v2.resume.' + url;
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || e.key === key) setTick((t) => t + 1);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [row]);
+  // tick is unused outside this dep — declared so React keeps
+  // the re-render but lint doesn't flag it.
+  void tick;
   const { duration, watched, pct } = computeWatched(row);
   if (!pct || !duration || watched <= 0) return null;
   const filled = Math.max(0, Math.min(1, pct));
@@ -991,6 +1009,17 @@ function GroupNameEditor({
 }
 
 function PlaylistProgress({ rows, size = 'chip' }: { rows: Row[]; size?: 'chip' | 'wide' }) {
+  // Aggregate is also computed from localStorage on render, so
+  // mirror WatchedBar and re-render on storage events. Any
+  // minerva.v2.resume.* key change recomputes the whole aggregate.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || e.key.startsWith('minerva.v2.resume.')) setTick((t) => t + 1);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
   let totalDur = 0;
   let totalWatched = 0;
   let known = 0;

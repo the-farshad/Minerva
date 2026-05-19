@@ -17,7 +17,8 @@ export type ServerEvent =
   | { kind: 'bookmark.changed'; url: string; op: 'created' | 'updated' | 'deleted' }
   | { kind: 'poll.changed'; token: string }
   | { kind: 'userprefs.changed' }
-  | { kind: 'share.received'; shareId: string };
+  | { kind: 'share.received'; shareId: string }
+  | { kind: 'watch.changed'; rowId: string; url?: string | null; position: number; duration?: number | null };
 
 /** Every event kind we know how to dispatch — kept in one array so
  *  adding a new event variant only requires extending this list and
@@ -28,6 +29,7 @@ const EVENT_KINDS: ServerEvent['kind'][] = [
   'section.changed', 'section.renamed', 'sections.listChanged',
   'bookmark.changed', 'poll.changed', 'userprefs.changed',
   'share.received',
+  'watch.changed',
 ];
 
 type Handler = (e: ServerEvent) => void;
