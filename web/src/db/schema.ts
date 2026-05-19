@@ -76,11 +76,35 @@ export const shareRecipients = pgTable('share_recipients', {
   mode: text('mode').notNull().default('view'),
   acceptedAt: timestamp('acceptedAt'),
   declinedAt: timestamp('declinedAt'),
+  /** Phase-4 progress visibility. When true the OWNER lets the
+   *  recipient see their watch progress on the shared content
+   *  (and a future toggle on the recipient side reverses it). */
+  shareProgress: boolean('shareProgress').default(false).notNull(),
   createdAt: timestamp('createdAt').defaultNow().notNull(),
 }, (t) => ({
   byShare: index('share_recipients_share_idx').on(t.shareId),
   byRecipient: index('share_recipients_recipient_idx').on(t.recipientUserId),
   tokenUniq: uniqueIndex('share_recipients_token_uniq').on(t.publicToken),
+}));
+
+/** Phase-4 watch-progress sync. Until now the per-video resume
+ *  position lived only in each device's localStorage; lifting it
+ *  to the server lets the recipient comparison view show "you
+ *  watched 12 of 22 videos · @them watched 18" on a shared
+ *  playlist. Keyed by (userId, rowId) so multiple users tracking
+ *  the same row don't collide. videoUrl is stored alongside for
+ *  the corner case where a row gets re-pointed to a different
+ *  video — it acts as an audit field, not the lookup key. */
+export const watchProgress = pgTable('watch_progress', {
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  rowId: text('rowId').notNull().references(() => rows.id, { onDelete: 'cascade' }),
+  positionSec: integer('positionSec').notNull().default(0),
+  durationSec: integer('durationSec'),
+  videoUrl: text('videoUrl'),
+  updatedAt: timestamp('updatedAt').defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.userId, t.rowId] }),
+  byRow: index('watch_progress_row_idx').on(t.rowId),
 }));
 
 export const accounts = pgTable('accounts', {

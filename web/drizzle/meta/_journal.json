@@ -92,6 +92,13 @@
       "when": 1779235200000,
       "tag": "0012_shares",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1779321600000,
+      "tag": "0013_watch_progress",
+      "breakpoints": true
     }
   ]
 }
