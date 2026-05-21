@@ -116,6 +116,58 @@ export function SectionView({
     return () => { cancelled = true; };
   }, [shareRefetch]);
 
+  // Cross-device watch-progress hydration. Watch position is written
+  // both to per-device localStorage AND server-side via
+  // /api/watch-progress, but the progress bars + resume reads ONLY
+  // localStorage — so on a fresh machine the server copy was
+  // invisible. On mount (per slug) pull the server's progress for
+  // every video row and seed localStorage.minerva.v2.resume.<url>,
+  // taking the max of local vs server so a more-recent local
+  // position is never clobbered. A storage event then refreshes
+  // every WatchedBar / PlaylistProgress without a reload.
+  const hydratedSlug = useRef<string | null>(null);
+  useEffect(() => {
+    if (section.preset !== 'youtube') return;
+    if (hydratedSlug.current === section.slug) return;
+    if (rows.length === 0) return;
+    hydratedSlug.current = section.slug;
+    const byId = new Map<string, string>();
+    for (const r of rows) {
+      const url = String((r.data as Record<string, unknown>).url || '');
+      if (url) byId.set(r.id, url);
+    }
+    const ids = [...byId.keys()];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      let changed = false;
+      // Endpoint caps at 200 rowIds per GET — chunk accordingly.
+      for (let i = 0; i < ids.length; i += 200) {
+        const chunk = ids.slice(i, i + 200);
+        try {
+          const r = await fetch(`/api/watch-progress?rowIds=${chunk.join(',')}`, { cache: 'no-store' });
+          if (!r.ok) continue;
+          const j = (await r.json()) as { progress?: { rowId: string; positionSec: number }[] };
+          if (cancelled) return;
+          for (const p of j.progress || []) {
+            const url = byId.get(p.rowId);
+            if (!url || !(p.positionSec > 0)) continue;
+            const key = 'minerva.v2.resume.' + url;
+            let existing = 0;
+            try { existing = Number(JSON.parse(localStorage.getItem(key) || '0')) || 0; } catch { existing = 0; }
+            if (p.positionSec > existing) {
+              try { localStorage.setItem(key, JSON.stringify(p.positionSec)); changed = true; } catch { /* tolerate */ }
+            }
+          }
+        } catch { /* tolerate */ }
+      }
+      if (changed && !cancelled) {
+        window.dispatchEvent(new StorageEvent('storage', { key: 'minerva.v2.resume.' }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [section.slug, section.preset, rows]);
+
   useServerEvents((event) => {
     if (event.kind === 'row.created' && event.sectionSlug === section.slug) {
       const now = new Date().toISOString();
