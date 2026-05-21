@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote, RefreshCw, FileText, BookOpen, Network } from 'lucide-react';
+import { X, ExternalLink, Download, Save, FileCheck2, Info, Sun, Coffee, Moon, RotateCcw, Quote, RefreshCw, FileText, BookOpen, Network, ListVideo, Check, Play } from 'lucide-react';
 import { appConfirm } from './confirm';
 import { CITATION_FORMATS } from '@/lib/citations';
 import { PaperReader } from './paper-reader';
@@ -71,12 +71,21 @@ function pdfDirectUrl(url: string): string {
 
 export function PreviewModal({
   item,
+  playlist,
+  onPickRow,
   onClose,
   onNotesSaved,
   onRowDataChanged,
   onAdvance,
 }: {
   item: PreviewItem | null;
+  /** Sibling rows in the same playlist / category group, in order.
+   *  Rendered as a navigable sidebar so the user can jump between
+   *  videos without leaving the modal. Empty for ungrouped presets
+   *  or single-item groups. */
+  playlist?: { rowId: string; title: string; watched: boolean }[];
+  /** Switch the preview to another row in the group. */
+  onPickRow?: (rowId: string) => void;
   onClose: () => void;
   /** Called after the NotesPane successfully PATCHes the row's
    * notes. Lets the parent refresh its `rows` cache so a reopen of
@@ -159,6 +168,11 @@ export function PreviewModal({
   }, [item?.rowId]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  // Playlist sidebar — default open so the group is visible the
+  // moment a grouped video opens; the user can hide it. Persisted
+  // per-device.
+  const [playlistOpen, setPlaylistOpen] = useState(() => readPref<boolean>('preview.playlistPane', true));
+  const hasPlaylist = !!playlist && playlist.length > 1;
   // PDF theme — light is the default; sepia and dark apply via a
   // CSS filter injected into the iframe's contentDocument (PDF.js
   // 4.10's hash parser doesn't recognise `pagecolors`).
@@ -216,7 +230,21 @@ export function PreviewModal({
   const sentinelOwned = useRef(false);
   useEffect(() => {
     if (!open) return;
-    history.pushState({ minervaPreview: true }, '');
+    // Push a sentinel entry that ALSO carries `?row=<rowId>` so the
+    // modal owns the deep-link param. Closing pops this entry via
+    // history.back() below, which returns the URL to the pre-modal
+    // (clean) state — so the parent's inbound `?row=` effect won't
+    // re-open the modal. (The earlier approach wrote `?row=` onto
+    // the pre-modal entry via the parent, which back() then
+    // restored on close → the "have to close it twice" bug.)
+    let sentinelUrl: string | undefined;
+    try {
+      const u = new URL(window.location.href);
+      if (item?.rowId) u.searchParams.set('row', item.rowId);
+      else u.searchParams.delete('row');
+      sentinelUrl = u.pathname + u.search + u.hash;
+    } catch { sentinelUrl = undefined; }
+    history.pushState({ minervaPreview: true }, '', sentinelUrl);
     sentinelOwned.current = true;
     function onPop(e: PopStateEvent) {
       // popstate fired because the user hit Back — sentinel is
@@ -237,6 +265,10 @@ export function PreviewModal({
         history.back();
       }
     };
+    // item?.rowId is read once at open time (open + item flip
+    // together); intentionally keyed on `open` only so switching
+    // videos mid-playlist doesn't churn the history stack.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Listen for postMessage from the YT iframe's IFrame API so we
@@ -647,7 +679,10 @@ export function PreviewModal({
       })();
     }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+        {/* No backdrop-blur — a fullscreen blur is a per-frame GPU
+          *  compositing pass that made the modal feel slow to open.
+          *  A slightly more opaque solid scrim reads the same. */}
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
         <Dialog.Content className={`fixed inset-0 z-50 m-0 flex flex-col bg-zinc-100 dark:bg-zinc-950 ${view.sectionPreset === 'notes' ? '' : 'sm:inset-2 sm:rounded-xl sm:overflow-hidden'}`}>
           <header className="flex flex-wrap items-center gap-1 border-b border-zinc-200 bg-white/70 px-3 py-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/70">
             <Dialog.Title className="flex-1 truncate text-sm font-medium">
@@ -906,6 +941,16 @@ export function PreviewModal({
                 <Info className="h-4 w-4" />
               </button>
             )}
+            {hasPlaylist && (
+              <button
+                type="button"
+                onClick={() => setPlaylistOpen((v) => { const n = !v; writePref('preview.playlistPane', n); return n; })}
+                title="Show / hide the playlist"
+                className={`rounded-full p-1.5 ${playlistOpen ? 'bg-zinc-200 dark:bg-zinc-800' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+              >
+                <ListVideo className="h-4 w-4" />
+              </button>
+            )}
             {view.sectionSlug && view.rowId && (
               <button
                 type="button"
@@ -1084,6 +1129,57 @@ export function PreviewModal({
                   onNotesSaved?.(view.rowId!, next);
                 }}
               />
+            )}
+            {hasPlaylist && playlistOpen && (
+              <aside className="flex w-72 shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                    <ListVideo className="h-3.5 w-3.5 text-zinc-500" />
+                    Playlist · {playlist!.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPlaylistOpen(() => { writePref('preview.playlistPane', false); return false; })}
+                    title="Hide playlist"
+                    className="rounded-full p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <ol className="flex-1 overflow-y-auto py-1">
+                  {playlist!.map((p, i) => {
+                    const isCurrent = p.rowId === view.rowId;
+                    return (
+                      <li key={p.rowId}>
+                        <button
+                          type="button"
+                          onClick={() => { if (!isCurrent) onPickRow?.(p.rowId); }}
+                          aria-current={isCurrent}
+                          className={`flex w-full items-start gap-2 px-3 py-2 text-left text-xs transition ${
+                            isCurrent
+                              ? 'bg-zinc-100 font-medium dark:bg-zinc-900'
+                              : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50'
+                          }`}
+                        >
+                          <span className="mt-0.5 w-4 shrink-0 text-right tabular-nums text-[10px] text-zinc-400">
+                            {i + 1}
+                          </span>
+                          <span className="mt-0.5 shrink-0">
+                            {isCurrent ? (
+                              <Play className="h-3 w-3 text-blue-500" />
+                            ) : p.watched ? (
+                              <Check className="h-3 w-3 text-emerald-500" />
+                            ) : (
+                              <span className="block h-3 w-3" />
+                            )}
+                          </span>
+                          <span className="line-clamp-2 flex-1">{p.title}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </aside>
             )}
           </div>
           {(yt || pdf) && (

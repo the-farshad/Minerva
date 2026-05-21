@@ -11,6 +11,7 @@ import { ShareDialog } from '@/components/share-dialog';
 import { PaperSearchModal } from '@/components/paper-search-modal';
 import { useQueryClient } from '@tanstack/react-query';
 import { useServerEvents } from '@/hooks/use-server-events';
+import { computeWatched } from '@/lib/watched';
 import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { PreviewModal } from '@/components/preview-modal';
@@ -170,16 +171,61 @@ export function SectionView({
   });
 
   const search = useSearchParams();
+  // Tracks which `?row=` value we've already auto-opened so the
+  // modal's history.back() on close (which can momentarily restore
+  // the param) doesn't re-trigger this effect and reopen the modal
+  // the user just closed — the "had to close it twice" bug.
+  const consumedRowParam = useRef<string | null>(null);
   // When a search hit deep-links into this section with `?row=<id>`,
   // auto-open the matching row's preview so the user lands on the
   // exact thing they searched for instead of having to scan a page.
   useEffect(() => {
     const wantedId = search?.get('row');
-    if (!wantedId) return;
+    if (!wantedId) { consumedRowParam.current = null; return; }
+    if (wantedId === consumedRowParam.current) return; // already handled
+    if (previewItem?.rowId === wantedId) return;        // already open
     const r = rows.find((x) => x.id === wantedId);
-    if (r) openPreview(r);
+    if (r) { consumedRowParam.current = wantedId; openPreview(r); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [search, rows]);
+
+  // Sibling list for the open preview — the other rows in the same
+  // playlist (YouTube) / category (Papers) group, in playlist order.
+  // Rendered as a navigable sidebar inside the modal so the user can
+  // jump between videos without closing it. Empty for ungrouped
+  // presets or a one-item group.
+  const previewPlaylist = useMemo(() => {
+    const rowId = previewItem?.rowId;
+    if (!rowId) return [];
+    const groupCol = section.preset === 'youtube'
+      ? 'playlist'
+      : section.preset === 'papers'
+        ? 'category'
+        : null;
+    if (!groupCol) return [];
+    const cur = rows.find((x) => x.id === rowId);
+    if (!cur) return [];
+    const curGroup = String((cur.data as Record<string, unknown>)[groupCol] || '');
+    if (!curGroup) return [];
+    const siblings = rows
+      .filter((x) => String((x.data as Record<string, unknown>)[groupCol] || '') === curGroup)
+      .sort((a, b) => {
+        const pa = Number((a.data as Record<string, unknown>)._playlistPos);
+        const pb = Number((b.data as Record<string, unknown>)._playlistPos);
+        if (Number.isFinite(pa) && Number.isFinite(pb)) return pa - pb;
+        return (a.createdAt || '').localeCompare(b.createdAt || '');
+      });
+    if (siblings.length < 2) return [];
+    return siblings.map((x) => {
+      const d = x.data as Record<string, unknown>;
+      const w = computeWatched(x);
+      return {
+        rowId: x.id,
+        title: String(d.title || d.name || d.url || 'Untitled'),
+        watched: !!(w.pct && w.pct >= 0.9),
+      };
+    });
+  }, [previewItem?.rowId, rows, section.preset]);
 
   function openPreview(r: Row) {
     const url = String(r.data.url || '');
@@ -204,16 +250,11 @@ export function SectionView({
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     });
-    // Deep-link: push ?row=<id> onto the URL so copy-paste lands
-    // on the same row in a new tab. Uses history.replaceState
-    // directly to avoid Next's full re-render — the row preview
-    // is pure client-side state.
-    try {
-      const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
-      sp.set('row', r.id);
-      const next = `${window.location.pathname}?${sp.toString()}${window.location.hash}`;
-      window.history.replaceState(window.history.state, '', next);
-    } catch { /* tolerate */ }
+    // Deep-link `?row=<id>` is owned by the modal's history sentinel
+    // (see PreviewModal) — it pushes the param on open and pops it on
+    // close, so we deliberately do NOT touch history here. Writing it
+    // onto the current entry from the parent is what caused the
+    // close-twice bug, because the sentinel's back() restored it.
     // Record the open as an access. Debounced: a re-open within
     // five minutes doesn't write again. Fire-and-forget — the
     // touch endpoint does NOT bump updatedAt, so it can't pollute
@@ -965,6 +1006,11 @@ export function SectionView({
       })()}
       <PreviewModal
         item={previewItem}
+        playlist={previewPlaylist}
+        onPickRow={(rowId) => {
+          const r = rows.find((x) => x.id === rowId);
+          if (r) openPreview(r);
+        }}
         onClose={() => {
           setPreviewItem(null);
           // Strip ?row=… so the URL reflects "back on the section

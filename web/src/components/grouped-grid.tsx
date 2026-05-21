@@ -1185,9 +1185,14 @@ function GroupNameEditor({
         className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium"
       >
         {isCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+        {/* min-w-0 (no flex-1) so the title sizes to its content
+          *  and the count chip sits immediately after it instead
+          *  of being flung to the right edge. When the title is
+          *  long it still shrinks + truncates within the 70%-wide
+          *  parent, and the count follows the ellipsis. */}
         <MarqueeText
           text={name}
-          className="min-w-0 flex-1 text-left group-hover:underline group-hover:underline-offset-2 group-hover:decoration-zinc-300 dark:group-hover:decoration-zinc-700"
+          className="min-w-0 text-left group-hover:underline group-hover:underline-offset-2 group-hover:decoration-zinc-300 dark:group-hover:decoration-zinc-700"
         />
         <span className="shrink-0 text-xs font-normal text-zinc-500">· {count}</span>
       </button>
