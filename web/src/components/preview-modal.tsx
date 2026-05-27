@@ -318,7 +318,15 @@ export function PreviewModal({
     if (!ytId(url)) return;
     return () => {
       const t = Math.floor(ytTimeRef.current);
-      if (t > 5) writePref(`resume.${url}`, t);
+      if (t > 5) {
+        writePref(`resume.${url}`, t);
+        // Dispatch a synthetic storage event so WatchedBar /
+        // PlaylistProgress on the SAME tab re-render immediately.
+        // Native `storage` events only fire to OTHER tabs, so
+        // without this the underlying card sits stale until the
+        // SSE watch.changed round-trips back.
+        try { window.dispatchEvent(new StorageEvent('storage', { key: 'minerva.v2.resume.' + url })); } catch { /* tolerate */ }
+      }
       // Phase-4 progress sync — also push to /api/watch-progress
       // so other devices + cross-user comparison views see the
       // same number. Fire-and-forget; failures fall back to the
@@ -334,6 +342,42 @@ export function PreviewModal({
         } catch { /* tolerate network error */ }
       }
     };
+  }, [view?.url, view?.rowId]);
+
+  // Reset the per-video time tracker on every URL change so that
+  // a switch from A → B → C (without B ever playing / sending
+  // postMessages) does NOT save A's last position into B's resume
+  // key. Effect bodies run AFTER cleanups for the same dep change,
+  // so the previous video's save sees its own ytTimeRef intact and
+  // the next one starts at zero until the iframe actually reports.
+  useEffect(() => { ytTimeRef.current = 0; }, [view?.url]);
+
+  // Periodic save while a video is mounted: every 15 s, write the
+  // current position to localStorage + dispatch a storage event so
+  // the per-card progress bar updates while the user watches, then
+  // POST to /api/watch-progress for cross-device sync. Without this
+  // the bar showed 0% the whole time and a tab crash lost
+  // everything since the last switch/close. Same `t > 5` guard the
+  // cleanup uses, so unstarted videos don't spam writes.
+  useEffect(() => {
+    const url = view?.url;
+    const rowId = view?.rowId;
+    if (!url || !ytId(url)) return;
+    const tick = () => {
+      const t = Math.floor(ytTimeRef.current);
+      if (t <= 5) return;
+      writePref(`resume.${url}`, t);
+      try { window.dispatchEvent(new StorageEvent('storage', { key: 'minerva.v2.resume.' + url })); } catch { /* tolerate */ }
+      if (rowId) {
+        void fetch('/api/watch-progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rowId, position: t, url }),
+        }).catch(() => { /* tolerate */ });
+      }
+    };
+    const id = setInterval(tick, 15000);
+    return () => clearInterval(id);
   }, [view?.url, view?.rowId]);
 
   // Paper auto-mirror on first preview-open: fire and forget so
