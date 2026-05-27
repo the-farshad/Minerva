@@ -344,6 +344,39 @@ export function PreviewModal({
     };
   }, [view?.url, view?.rowId]);
 
+  // Conditional resume-seek: YouTube's `start=<sec>` URL param
+  // honours the resume position in the vast majority of cases.
+  // Only force-seek via postMessage when the player has clearly
+  // failed to land near `start` (e.g. pre-roll ad, slow network).
+  // 2.5 s gives the player time to settle + send at least one
+  // infoDelivery currentTime postMessage; the previous
+  // unconditional 800 ms seek-then-replay caused the visible
+  // blink the user reported ("video plays twice").
+  useEffect(() => {
+    const url = view?.url;
+    if (!url || !ytId(url)) return;
+    const start = initialYtResumeRef.current;
+    if (start <= 5) return;
+    const id = setTimeout(() => {
+      const reported = ytTimeRef.current;
+      // If the player never reported (ytTimeRef still 0) it's
+      // likely an ad / autoplay block — issue the seek so the
+      // user lands at the right spot once the real video starts.
+      // If reported is within 10 s of start, the URL param worked
+      // and we skip; no visual jump.
+      if (reported >= start - 10) return;
+      const w = ytIframeRef.current?.contentWindow;
+      if (!w) return;
+      try {
+        // seekTo only — no playVideo. The autoplay was already
+        // started by the URL param; issuing playVideo after seek
+        // is what produced the second-start glitch.
+        w.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [start, true] }), '*');
+      } catch { /* tolerate */ }
+    }, 2500);
+    return () => clearTimeout(id);
+  }, [view?.url, view?.rowId]);
+
   // Reset the per-video time tracker on every URL change so that
   // a switch from A → B → C (without B ever playing / sending
   // postMessages) does NOT save A's last position into B's resume
@@ -1393,22 +1426,15 @@ function YouTubeFrame({
           if (!w) return;
           w.postMessage(JSON.stringify({ event: 'listening' }), '*');
           w.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }), '*');
-          // Belt-and-suspenders seek: the `start=<sec>` query param
-          // is the documented mechanism, but on slow networks or
-          // when YouTube returns ads before the main video, the
-          // initial seek sometimes lands at 0 anyway. A short
-          // delay after the handshake gives the player a moment
-          // to settle, then we force the position with seekTo —
-          // costs nothing when start was already honoured, fixes
-          // the edge cases when it wasn't.
-          if (start > 5) {
-            setTimeout(() => {
-              try {
-                w.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [start, true] }), '*');
-                w.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
-              } catch { /* tolerate */ }
-            }, 800);
-          }
+          // No unconditional belt-and-suspenders seek + playVideo
+          // here — that was the visual "blink" / "plays twice":
+          // YouTube's `start=<sec>` URL param had already begun
+          // playback at the resume point in most cases, and 800 ms
+          // later this block force-seeked again and re-issued
+          // playVideo, which the player rendered as a second
+          // 'start' (brief jump + replay glyph). PreviewModal now
+          // owns a conditional seek that only fires when the
+          // player's reported time is far from start.
         }}
       />
       {stuck && !loaded && (
