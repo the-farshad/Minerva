@@ -1,0 +1,67 @@
+# Minerva — minimal LOCAL run: just the web app + its Postgres, on your own
+# machine. No public host, no networked database — your data lives in a local
+# Docker volume (minerva-pgdata).
+#
+# Dropped vs the full docs/docker-compose.yml: the YouTube PO-token sidecar
+# (minerva-pot) and the Python helper (minerva-services). Those power only the
+# yt-dlp downloads and PDF/arXiv *import* extras; the planner, papers, sketches,
+# Drive sync and everything else run fine without them. Want those extras back?
+# use docker-compose.yml instead.
+#
+# Quick start:
+#   1. cp ../web/.env.example ../web/.env   # then fill AUTH_SECRET + Google OAuth
+#   2. docker compose -f docker-compose.local.yml up -d          # pulls prebuilt image
+#      (or add --build to build from ../web)
+#   3. first time only: restore your data — see RUN-LOCAL.md
+#   open http://localhost:3000
+name: minerva
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: minerva-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: minerva
+      POSTGRES_PASSWORD: minerva
+      POSTGRES_DB: minerva
+    volumes:
+      - minerva-pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${MINERVA_PG_PORT:-5544}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minerva -d minerva"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  minerva-web:
+    # Pulls the published image by default; add `--build` to build from ../web.
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    image: thefarshad/minerva-web:latest
+    container_name: minerva-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # AUTH_SECRET, GOOGLE_OAUTH_CLIENT_ID/SECRET, NEXTAUTH_URL come from here.
+    env_file:
+      - ../web/.env
+    environment:
+      # Reach Postgres over the compose network (overrides any DATABASE_URL
+      # in ../web/.env, which points at the host-published 5544).
+      DATABASE_URL: "postgres://minerva:minerva@postgres:5432/minerva"
+      # NextAuth v5 self-host outside Vercel needs to trust the local host.
+      AUTH_TRUST_HOST: "true"
+      NODE_ENV: "production"
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    ports:
+      - "127.0.0.1:${MINERVA_WEB_PORT:-3000}:3000"
+
+volumes:
+  minerva-pgdata:
+    name: minerva-pgdata

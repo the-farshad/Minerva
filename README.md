@@ -75,9 +75,9 @@ A companion **`minerva-services`** container (Python) handles the things Node sh
 
 ## Run it
 
-**Hosted:** just visit <https://minerva.thefarshad.com> and sign in with Google.
+**Locally (recommended):** run the whole thing on your own machine — the web app plus a local Postgres, with your data in a local Docker volume (no cloud, no networked database). See [`docs/RUN-LOCAL.md`](docs/RUN-LOCAL.md): it's a `docker compose -f docs/docker-compose.local.yml up` plus your own Google OAuth credentials.
 
-**Self-host:** the full setup — environment variables, the Google OAuth client, the Drizzle schema push, and the Docker Compose stack — is documented in [`web/README.md`](web/README.md) and [`docs/`](docs/). In short, it's a `docker compose up` of `docs/docker-compose.yml` (web + Postgres + helper) plus your own OAuth credentials.
+**Full stack / self-host:** to also run the yt-dlp + PDF/arXiv import helpers, use [`docs/docker-compose.yml`](docs/docker-compose.yml) (adds `minerva-services` + `minerva-pot`). The full setup — environment variables, the Google OAuth client, the Drizzle schema push — is documented in [`web/README.md`](web/README.md) and [`docs/`](docs/).
 
 **Develop:**
 
