@@ -29,7 +29,7 @@ Minerva is **multi-user**: you sign in with Google, your data lives in a per-use
 | Database | Postgres via Drizzle ORM, per-user row partitioning |
 | Live updates | Server-Sent Events on every mutation |
 | Helper service | `minerva-services` (Python) — yt-dlp + PDF text extraction |
-| Deploy | Docker Compose on a DigitalOcean droplet; GitHub Actions build → Docker Hub → SSH deploy |
+| Deploy | Render (Docker web service, free tier) + Neon Postgres — no VM to manage. GitHub Actions also publishes images to Docker Hub for self-hosters. |
 
 ### Core planner
 
@@ -69,13 +69,17 @@ Minerva is **multi-user**: you sign in with Google, your data lives in a per-use
 
 The browser talks to a Next.js App Router backend — React Server Components for reads, route handlers (`web/src/app/api/**`) for mutations, every query scoped to the signed-in user. Persistent state lives in **Postgres** (Drizzle ORM); each row carries a JSONB `data` blob so the schema-driven model doesn't need a migration per column. File-shaped artefacts — sketches, uploaded papers, generated PDFs, the iCal/RSS feeds — go to the user's **Google Drive** under `drive.file`.
 
-A companion **`minerva-services`** container (Python) handles the things Node shouldn't: yt-dlp invocations and PDF text extraction. The whole stack — `minerva-web`, `minerva-services`, Postgres, and a PO-token sidecar — runs from one Docker Compose file on a DigitalOcean droplet. GitHub Actions builds the web image, publishes it to Docker Hub, and SSH-deploys to the droplet on every push to `main`.
+A companion **`minerva-services`** container (Python) handles the things Node shouldn't: yt-dlp invocations and PDF text extraction — it's optional and not part of the default hosted deploy below.
+
+The hosted instance (`minerva-web`) runs on **Render** (a free Docker web service, autodeploying from this repo on every push to `main`) with a **Neon** Postgres database — see [`docs/RENDER-DEPLOY.md`](docs/RENDER-DEPLOY.md). GitHub Actions separately publishes `web/` and the optional helper to Docker Hub (`web-publish.yml`, `docker-publish.yml`) for anyone self-hosting the full stack via Docker Compose instead.
 
 ---
 
 ## Run it
 
-**Locally (recommended):** run the whole thing on your own machine — the web app plus a local Postgres, with your data in a local Docker volume (no cloud, no networked database). See [`docs/RUN-LOCAL.md`](docs/RUN-LOCAL.md): it's a `docker compose -f docs/docker-compose.local.yml up` plus your own Google OAuth credentials.
+**Hosted:** the live instance at [minerva.thefarshad.com](https://minerva.thefarshad.com) runs on Render (free Docker web service) + Neon Postgres — no droplet. See [`docs/RENDER-DEPLOY.md`](docs/RENDER-DEPLOY.md) to run your own copy the same way.
+
+**Locally:** run the whole thing on your own machine instead — the web app plus a local Postgres, with your data in a local Docker volume (no cloud, no networked database). See [`docs/RUN-LOCAL.md`](docs/RUN-LOCAL.md): it's a `docker compose -f docs/docker-compose.local.yml up` plus your own Google OAuth credentials.
 
 **Full stack / self-host:** to also run the yt-dlp + PDF/arXiv import helpers, use [`docs/docker-compose.yml`](docs/docker-compose.yml) (adds `minerva-services` + `minerva-pot`). The full setup — environment variables, the Google OAuth client, the Drizzle schema push — is documented in [`web/README.md`](web/README.md) and [`docs/`](docs/).
 

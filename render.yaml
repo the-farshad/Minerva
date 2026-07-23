@@ -1,0 +1,34 @@
+# Render Blueprint — deploys the Minerva web app as a Docker web service,
+# replacing the DigitalOcean droplet (destroyed) as the host for
+# minerva.thefarshad.com + lit.thefarshad.com.
+#
+# One-time: Render dashboard → New → Blueprint → pick this repo. Render
+# reads this file, builds web/Dockerfile, then prompts for the
+# `sync: false` secrets below. See docs/RENDER-DEPLOY.md for the full
+# runbook (Neon Postgres, restoring the archived dump, Google OAuth
+# redirect URIs, custom domains).
+#
+# Not included yet: the `minerva-services` helper (yt-dlp + PDF/arXiv
+# import extras) — the core planner, papers, sketches, sharing, and
+# Drive sync all work without it. Add it as a second Render service
+# later using docs/Dockerfile if you want those extras back.
+services:
+  - type: web
+    name: minerva-web
+    runtime: docker
+    dockerfilePath: web/Dockerfile
+    dockerContext: web
+    plan: free            # sleeps after ~15 min idle; cold start ~20-30s
+    region: oregon
+    healthCheckPath: /api/version
+    autoDeploy: true
+    envVars:
+      - key: AUTH_SECRET
+        generateValue: true          # session cookie signing; regen just forces re-login
+      # --- secrets: set in the Render dashboard (sync:false keeps them out of git) ---
+      - key: DATABASE_URL             # Neon pooled connection string (postgresql://…)
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID    # reuse the existing OAuth client
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
